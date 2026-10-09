@@ -36,7 +36,7 @@ echo "Downloading native binaries from ${REPO} (tag: ${TAG})..."
 
 mkdir -p "${DYLIBS_DIR}" "${BIN_DIR}" "${IOS_BIN_DIR}" "${ANDROID_BIN_DIR}"
 
-for DYLIB in libNativeDevtoolsIos.dylib libKeyboardPatch.dylib libArgentInjectionBootstrap.dylib; do
+for DYLIB in libNativeDevtoolsIos.dylib libKeyboardPatch.dylib libArgentInjectionBootstrap.dylib libArgentAudio.dylib; do
   echo "  Downloading ${DYLIB}..."
   gh release download "${TAG}" \
     --repo "${REPO}" \

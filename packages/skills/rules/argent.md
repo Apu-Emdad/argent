@@ -136,6 +136,11 @@ Skill: `argent-screen-recording`
 When: The user wants an mp4 of an interaction, animation, or bug reproduction. Use `argent-create-flow` instead for a replayable sequence.
 Prompt keywords: record, recording, screen recording, video, capture video, clip, mp4
 
+AUDIO (MICROPHONE INPUT / SPEAKER RECORDING)
+Skill: `argent-audio-mock`
+When: An iOS simulator app must hear a given audio file or tone as its microphone input, or the sound an app plays must be recorded to a WAV. iOS simulators only.
+Prompt keywords: microphone, mic, audio input, voice, speech, sound, record audio, play audio, wav, speaker
+
 RUNNING / BUILDING / DEBUGGING REACT NATIVE APP
 Skill: `argent-react-native-app-workflow`
 When: Project is react-native, starting Metro or running the iOS or Android app, build failures, pod issues, lost Metro connection, reading logs, reloading JS bundle, reinstalling app.

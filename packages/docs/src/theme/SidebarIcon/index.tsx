@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  AudioLines,
   Bug,
   Download,
   FileCode,
@@ -27,6 +28,7 @@ import styles from "./styles.module.css";
  * Keys come from a page's `sidebar_custom_props: { icon: "rocket" }`.
  */
 const ICONS: Record<string, LucideIcon> = {
+  "audio-lines": AudioLines,
   "bug": Bug,
   "download": Download,
   "file-code": FileCode,

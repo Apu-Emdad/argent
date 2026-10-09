@@ -172,6 +172,19 @@ export function buildDyldInsertLibraries(currentValue: string, bootstrapPath: st
   return [...preserved, bootstrapPath].join(":");
 }
 
+/**
+ * Appends one more dylib of ours to the list without disturbing the bootstrap or
+ * foreign entries. An older copy of the same dylib (by basename) is replaced so
+ * an upgrade does not accumulate stale paths. Exported for ios-audio.ts.
+ */
+export function appendDyldInsertLibrary(currentValue: string, dylibPath: string): string {
+  const name = path.basename(dylibPath);
+  const kept = splitDyldInsertLibraries(currentValue).filter(
+    (entry) => entry !== dylibPath && path.basename(entry) !== name
+  );
+  return [...kept, dylibPath].join(":");
+}
+
 async function ensureAccessibilityEnabled(udid: string): Promise<void> {
   // iOS 26+ needs both flags in the simulator's defaults for SwiftUI to populate
   // the accessibility tree; without them UIAccessibility returns nil/0 for
