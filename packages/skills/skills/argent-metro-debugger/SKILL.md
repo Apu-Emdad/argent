@@ -84,7 +84,7 @@ Set to `true` only when debugging filter behavior — e.g., an expected componen
 
 ## 5. Reading Console Logs (Log Registry)
 
-Logs are written to a flat log file on disk. Use the **log-registry → grep** pattern instead of reading logs inline.
+Logs are written to a flat log file on disk. Use the **log-registry → grep** pattern instead of reading logs inline. `restart-app` re-attaches the debugger as the app starts, so restarting is the way to capture a cold start. The same goes for network traffic: call `view-network-logs` once, then `restart-app`, to capture the requests an app makes at launch.
 
 ### Workflow
 
