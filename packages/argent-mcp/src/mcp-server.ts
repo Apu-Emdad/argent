@@ -255,62 +255,65 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
           }
         }
 
-        if (wantScreenshot) {
-          try {
-            const screenshotResult = await callTool("screenshot", { udid });
-            const screenshotContent = await toMcpContent(screenshotResult.result, "image", {
-              toolsUrl: TOOLS_URL,
-              authToken: AUTH_TOKEN,
-              deviceId: udid,
-            });
-            const hasImage = screenshotContent.some((b) => b.type === "image");
-            if (hasImage) {
-              content = [
-                ...content,
-                {
-                  type: "text" as const,
-                  text: "--- Screen after action ---",
-                },
-                ...screenshotContent,
-              ];
-            }
-          } catch {
-            /* best-effort */
-          }
-        }
+        // Screenshot and tree are independent reads of the settled screen:
+        // fetch them concurrently (one round-trip of latency instead of two,
+        // and the two captures land closer together in time).
+        const screenshotTask = wantScreenshot
+          ? (async (): Promise<ContentBlock[]> => {
+              try {
+                const screenshotResult = await callTool("screenshot", { udid });
+                const screenshotContent = await toMcpContent(screenshotResult.result, "image", {
+                  toolsUrl: TOOLS_URL,
+                  authToken: AUTH_TOKEN,
+                  deviceId: udid,
+                });
+                return screenshotContent.some((b) => b.type === "image")
+                  ? [
+                      { type: "text" as const, text: "--- Screen after action ---" },
+                      ...screenshotContent,
+                    ]
+                  : [];
+              } catch {
+                return []; /* best-effort */
+              }
+            })()
+          : Promise.resolve<ContentBlock[]>([]);
 
         // Append the element tree the agent would otherwise have to fetch with
         // a `describe` round-trip before its next tap. Measured on Sonnet over
         // 70 runs: −21% turns, −23% wall time, −17% cost at equal task success
         // (see PR #958). The tree is a few hundred tokens per action.
-        if (wantTree) {
-          const t1 = Date.now();
-          try {
-            const d = await callTool("describe", { udid });
-            const desc = (d.result as { description?: unknown } | null)?.description;
-            if (typeof desc === "string" && desc.length > 0) {
-              content = [
-                ...content,
-                { type: "text" as const, text: `${AUTO_DESCRIBE_HEADER}\n${desc}` },
-              ];
-            }
-            await spyLog({
-              ts: new Date().toISOString(),
-              event: "auto_describe",
-              name: params.name,
-              durationMs: Date.now() - t1,
-              chars: typeof desc === "string" ? desc.length : 0,
-            });
-          } catch (e) {
-            await spyLog({
-              ts: new Date().toISOString(),
-              event: "auto_describe",
-              name: params.name,
-              durationMs: Date.now() - t1,
-              error: String(e instanceof Error ? e.message : e),
-            });
-          }
-        }
+        const treeTask = wantTree
+          ? (async (): Promise<ContentBlock[]> => {
+              const t1 = Date.now();
+              try {
+                const d = await callTool("describe", { udid });
+                const desc = (d.result as { description?: unknown } | null)?.description;
+                await spyLog({
+                  ts: new Date().toISOString(),
+                  event: "auto_describe",
+                  name: params.name,
+                  durationMs: Date.now() - t1,
+                  chars: typeof desc === "string" ? desc.length : 0,
+                });
+                return typeof desc === "string" && desc.length > 0
+                  ? [{ type: "text" as const, text: `${AUTO_DESCRIBE_HEADER}\n${desc}` }]
+                  : [];
+              } catch (e) {
+                await spyLog({
+                  ts: new Date().toISOString(),
+                  event: "auto_describe",
+                  name: params.name,
+                  durationMs: Date.now() - t1,
+                  error: String(e instanceof Error ? e.message : e),
+                });
+                return [];
+              }
+            })()
+          : Promise.resolve<ContentBlock[]>([]);
+
+        const [screenshotBlocks, treeBlocks] = await Promise.all([screenshotTask, treeTask]);
+        content = [...content, ...screenshotBlocks, ...treeBlocks];
       }
 
       if (note) {
