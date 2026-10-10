@@ -35,6 +35,7 @@ import {
   autoDescribeEnabled,
   shouldAutoDescribe,
   AUTO_DESCRIBE_HEADER,
+  compactAutoDescribe,
 } from "./auto-capture.js";
 import { toMcpToolList } from "./tool-mapping.js";
 import { getInstalledVersion } from "./installed-version.js";
@@ -291,7 +292,10 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
             if (typeof desc === "string" && desc.length > 0) {
               content = [
                 ...content,
-                { type: "text" as const, text: `${AUTO_DESCRIBE_HEADER}\n${desc}` },
+                {
+                  type: "text" as const,
+                  text: `${AUTO_DESCRIBE_HEADER}\n${compactAutoDescribe(desc)}`,
+                },
               ];
             }
             await spyLog({

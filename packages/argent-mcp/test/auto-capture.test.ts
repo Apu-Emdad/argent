@@ -6,6 +6,7 @@ import { setFlag } from "@argent/configuration-core";
 import {
   AUTO_SCREENSHOT_TOOLS,
   AUTO_SCREENSHOT_DELAY_MS_BY_TOOL,
+  compactAutoDescribe,
   autoScreenshotEnabled,
   AUTO_DESCRIBE_TOOLS,
   autoDescribeEnabled,
@@ -332,5 +333,45 @@ describe("containsSecretPlaceholder", () => {
       })
     ).toBe(true);
     expect(shouldAutoScreenshot("run-sequence")).toBe(true);
+  });
+});
+
+describe("compactAutoDescribe", () => {
+  const full = [
+    "Source: ax-service",
+    "Mode: flat",
+    "Coordinates are normalized [0,1] fractions of the screen (x, y, width, height), not pixels.",
+    "Pass them straight to gesture-tap / gesture-swipe / gesture-pinch, which expect this same space.",
+    "To tap an element, use its centre: tap_x = frame.x + frame.width / 2, tap_y = frame.y + frame.height / 2.",
+    "",
+    "ROOT  AXGroup (0.000, 0.000, 1.000, 1.000)",
+    "",
+    '  AXButton "Continue"  (0.055, 0.860, 0.891, 0.088)',
+  ].join("\n");
+
+  it("replaces the coordinate preamble with a one-line legend and keeps the tree", () => {
+    const out = compactAutoDescribe(full);
+    expect(out.startsWith("(frames: normalized")).toBe(true);
+    expect(out).toContain('AXButton "Continue"');
+    expect(out).not.toContain("Coordinates are normalized");
+    expect(out.length).toBeLessThan(full.length - 250);
+  });
+
+  it("leaves the Vega and physical iOS preambles untouched", () => {
+    const vega = full.replace(
+      /^Pass them straight.*\n^To tap.*$/m,
+      "Vega is remote-driven, not touch — there is no tap."
+    );
+    expect(compactAutoDescribe(vega)).toBe(vega);
+    const device = full.replace(
+      "gesture-swipe / gesture-pinch, which expect this same space.",
+      "gesture-swipe, which expect this same space. No two-finger gestures on physical iOS."
+    );
+    expect(compactAutoDescribe(device)).toBe(device);
+  });
+
+  it("leaves output without that preamble untouched (hints, TV text)", () => {
+    const hint = "Hint: the tree is empty\n\nROOT  AXGroup (0, 0, 1, 1)";
+    expect(compactAutoDescribe(hint)).toBe(hint);
   });
 });
