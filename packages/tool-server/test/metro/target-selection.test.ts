@@ -206,3 +206,69 @@ describe("selectTarget", () => {
     expect(result.target.id).toBe("second");
   });
 });
+
+describe("selectTarget by list-devices id (device name hint)", () => {
+  const a = makeTarget({
+    id: "a",
+    description: "React Native Bridgeless [C++ connection]",
+    deviceName: "bench-ARG-A",
+    reactNative: { logicalDeviceId: "aaa" },
+  });
+  const b = makeTarget({
+    id: "b",
+    description: "React Native Bridgeless [C++ connection]",
+    deviceName: "bench-ARG-B",
+    reactNative: { logicalDeviceId: "bbb" },
+  });
+
+  it("resolves a UDID to its target on a shared Metro", () => {
+    const result = selectTarget([a, b], 8082, {
+      deviceId: "UDID-B",
+      deviceNames: { names: ["bench-ARG-B"], exact: true },
+    });
+    expect(result.target.id).toBe("b");
+  });
+
+  it("refuses to attach a single other device when the simulator name proves a mismatch", () => {
+    let error: unknown;
+    try {
+      selectTarget([a], 8082, {
+        deviceId: "UDID-B",
+        deviceNames: { names: ["bench-ARG-B"], exact: true },
+      });
+    } catch (e) {
+      error = e;
+    }
+    expect(getFailureSignal(error)?.error_code).toBe(
+      FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH
+    );
+    expect(String((error as Error).message)).toContain("bench-ARG-A");
+  });
+
+  it("keeps the single-device fallback when the name is only a guess (Android)", () => {
+    const result = selectTarget([a], 8082, {
+      deviceId: "emulator-5554",
+      deviceNames: { names: ["sdk_gphone64_arm64 - 15 - API 35", "sdk_gphone64_arm64"], exact: false },
+    });
+    expect(result.target.id).toBe("a");
+  });
+
+  it("matches the Android friendly name", () => {
+    const c = makeTarget({ ...a, id: "c", deviceName: "Pixel 9 - 15 - API 35" });
+    const result = selectTarget([b, c], 8081, {
+      deviceId: "emulator-5554",
+      deviceNames: { names: ["Pixel 9 - 15 - API 35", "Pixel 9"], exact: false },
+    });
+    expect(result.target.id).toBe("c");
+  });
+
+  it("errors with the mapping when two devices share the name", () => {
+    const twin = makeTarget({ ...b, id: "b2", reactNative: { logicalDeviceId: "ccc" } });
+    expect(() =>
+      selectTarget([b, twin], 8081, {
+        deviceId: "emulator-5554",
+        deviceNames: { names: ["bench-ARG-B"], exact: false },
+      })
+    ).toThrow(/same name/);
+  });
+});

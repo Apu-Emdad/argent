@@ -12,6 +12,7 @@ import { classifyDevice } from "../utils/device-info";
 import { assertExternalCapability } from "../utils/external-devices";
 import { proxyStart } from "../utils/sim-remote";
 import { selectTarget } from "../utils/debugger/target-selection";
+import { metroDeviceNamesFor } from "../utils/debugger/metro-device-name";
 import {
   rememberDeviceAlias,
   forgetDeviceAlias,
@@ -218,9 +219,15 @@ export const jsRuntimeDebuggerBlueprint: ServiceBlueprint<JsRuntimeDebuggerApi, 
 
       throw error;
     });
+    // Metro never sees a UDID/serial; look up the name the app reports so the
+    // list-devices id resolves on a shared Metro (skipped when it already is a
+    // logicalDeviceId).
+    const isLogicalId = metro.targets.some((t) => t.reactNative?.logicalDeviceId === deviceId);
+    const deviceNames = isLogicalId ? undefined : await metroDeviceNamesFor(deviceId);
     const selected = selectTarget(metro.targets, port, {
       ...options,
       deviceId,
+      deviceNames,
     });
 
     /**
