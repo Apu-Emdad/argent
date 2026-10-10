@@ -292,3 +292,33 @@ describe("getCachedAndroidRuntimeKind — synchronous cache-only read", () => {
     expect(getCachedAndroidRuntimeKind("emulator-5554")).toBeUndefined();
   });
 });
+
+describe("listAndroidDevices on a device that stops answering", () => {
+  it("keeps the cached form factor instead of re-probing when the avd read fails", async () => {
+    const serial = "emulator-5570";
+    let wedged = false;
+    execFileMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "adb" && args[0] === "devices" && args.length === 1) {
+        return { stdout: `List of devices attached\n${serial}\tdevice\n`, stderr: "" };
+      }
+      if (cmd === "adb" && args[0] === "-s" && args[2] === "shell") {
+        const shell = args[3] ?? "";
+        if (wedged) return new Error("timeout");
+        if (shell.includes("avd_name")) return { stdout: "Pixel_API_34\n", stderr: "" };
+        if (shell === "pm list features") return { stdout: `${PHONE_FEATURES}\n`, stderr: "" };
+        return { stdout: "1\n", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    const first = await listAndroidDevices({ runtimeKind: true });
+    expect(first[0]?.runtimeKind).toBe("mobile");
+
+    wedged = true;
+    execFileMock.mockClear();
+    const second = await listAndroidDevices({ runtimeKind: true });
+    expect(second[0]?.runtimeKind).toBe("mobile");
+    const featureProbes = execFileMock.mock.calls.filter((c) => c[1]?.[3] === "pm list features");
+    expect(featureProbes).toHaveLength(0);
+  });
+});
