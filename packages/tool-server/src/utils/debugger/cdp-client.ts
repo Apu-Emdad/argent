@@ -114,6 +114,24 @@ interface PendingBinding {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+interface RemoteObjectLike {
+  type?: string;
+  subtype?: string;
+  className?: string;
+  objectId?: string;
+  value?: unknown;
+  description?: string;
+}
+
+function runtimeException(details: CDPExceptionDetails): FailureError {
+  return new FailureError(formatExceptionDetails(details), {
+    error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
+    failure_stage: "debugger_cdp_evaluate",
+    failure_area: "tool_server",
+    error_kind: "unknown",
+  });
+}
+
 export class CDPClient {
   readonly events = new TypedEventEmitter<CDPClientEvents>();
 
@@ -394,6 +412,80 @@ export class CDPClient {
     }
 
     return result.result?.value;
+  }
+
+  /**
+   * Evaluate and return the value, settling a Promise result first.
+   *
+   * Hermes acknowledges `awaitPromise` but answers a Promise with its raw
+   * internals (`{_A,_x,_y,_z}`), so agents stashed results on globalThis and
+   * polled by hand. Here the expression runs exactly once, unserialized; a
+   * Promise handle then gets settle callbacks attached in the runtime
+   * (`Runtime.callFunctionOn`) that park the outcome on a global slot, which is
+   * polled. A non-Promise object is serialized from its handle the same way
+   * `returnByValue` would.
+   */
+  async evaluateAwaited(expression: string, options?: { timeout?: number }): Promise<unknown> {
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const first = (await this.send(
+      "Runtime.evaluate",
+      { expression, returnByValue: false, awaitPromise: true },
+      timeout
+    )) as { result?: RemoteObjectLike; exceptionDetails?: CDPExceptionDetails };
+    if (first.exceptionDetails) throw runtimeException(first.exceptionDetails);
+    const remote = first.result;
+    if (!remote?.objectId) return remote?.value;
+
+    // React Native's global Promise is a polyfill (plain objects with
+    // `_x/_y/_z` fields), so detect a thenable in the runtime, not by
+    // className. One round-trip either serializes the value or, for a
+    // thenable, attaches the settle callbacks.
+    const slot = `__argentAwait_${crypto.randomUUID().replace(/-/g, "")}`;
+    const res = (await this.send(
+      "Runtime.callFunctionOn",
+      {
+        objectId: remote.objectId,
+        functionDeclaration:
+          `function(){if(!this||typeof this.then!=="function")return {v:this};` +
+          `var g=globalThis;g.${slot}={s:0};this.then(` +
+          `function(v){g.${slot}={s:1,v:v}},` +
+          `function(e){g.${slot}={s:2,e:(e&&e.stack)||String(e)}});return {pending:true};}`,
+        returnByValue: true,
+      },
+      timeout
+    )) as { result?: RemoteObjectLike; exceptionDetails?: CDPExceptionDetails };
+    if (res.exceptionDetails) throw runtimeException(res.exceptionDetails);
+    const verdict = res.result?.value as { v?: unknown; pending?: true } | undefined;
+    if (!verdict?.pending) return verdict?.v;
+
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const state = (await this.evaluate(
+        `(function(){var r=globalThis.${slot};if(r&&r.s)delete globalThis.${slot};return r;})()`,
+        { timeout }
+      )) as { s: number; v?: unknown; e?: string } | undefined;
+      if (state?.s === 1) return state.v;
+      if (state?.s === 2) {
+        throw new FailureError(`Promise rejected: ${state.e}`, {
+          error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
+          failure_stage: "debugger_cdp_evaluate",
+          failure_area: "tool_server",
+          error_kind: "unknown",
+        });
+      }
+      if (Date.now() >= deadline) {
+        throw new FailureError(
+          `The expression returned a Promise that did not settle within ${timeout}ms.`,
+          {
+            error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
+            failure_stage: "debugger_cdp_evaluate",
+            failure_area: "tool_server",
+            error_kind: "timeout",
+          }
+        );
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
   }
 
   async addBinding(name: string): Promise<void> {
