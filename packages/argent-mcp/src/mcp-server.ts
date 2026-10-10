@@ -174,6 +174,7 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
     }
   });
 
+  const warmedDevices = new Set<string>();
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     const t0 = Date.now();
     await spyLog({
@@ -182,6 +183,19 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
       name: params.name,
       args: params.arguments,
     });
+    // First touch of a device: start its accessibility reader in the
+    // background (a read-only describe), so the first action's element tree
+    // does not pay the ~1.7s cold start after the action itself.
+    const warmUdid = getUdidFromArgs(params.arguments);
+    if (
+      autoDescribeOn &&
+      warmUdid &&
+      !warmedDevices.has(warmUdid) &&
+      shouldAutoDescribe(params.name)
+    ) {
+      warmedDevices.add(warmUdid);
+      void callTool("describe", { udid: warmUdid }).catch(() => {});
+    }
     try {
       const { result, outputHint, note } = await callTool(params.name, params.arguments);
 
