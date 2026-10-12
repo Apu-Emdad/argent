@@ -47,6 +47,15 @@ describe("getTopComponents (profiler-commit-query by_time_range)", () => {
     expect(view!.maxSubtree).toBe(20);
     expect(view!.totalSelf).toBe(3);
   });
+
+  it("ranks components by self time when truncating", () => {
+    const entries = [
+      fiber({ componentName: "Wrapper", actualDuration: 50, selfDuration: 0.5 }),
+      fiber({ componentName: "Leaf", actualDuration: 10, selfDuration: 10 }),
+    ];
+
+    expect(getTopComponents(entries, 1).map((c) => c.name)).toEqual(["Leaf"]);
+  });
 });
 
 describe("renderByComponent (profiler-commit-query by_component)", () => {

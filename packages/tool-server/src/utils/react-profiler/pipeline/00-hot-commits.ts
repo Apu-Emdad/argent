@@ -60,7 +60,7 @@ export function buildHotCommitSummaries(
     });
 
     // All entries, first mounts included, so navigation mount cost stays visible.
-    // Same-named instances nest, so inclusive `actualDuration` is maxed, not summed.
+    // Same-named instances nest, so `actualDuration` is maxed, not summed.
     const componentMap = new Map<
       string,
       {

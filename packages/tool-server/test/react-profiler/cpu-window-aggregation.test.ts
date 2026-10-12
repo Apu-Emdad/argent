@@ -62,12 +62,10 @@ function mixedIndex(disjointSelf: number, innerSelf: number, outerSelf: number):
   };
 }
 
-/** One commit covering the whole index, on `Login`. */
 const oneCommit = {
   commits: [{ commitIndex: 0, timestamp: 0, commitDuration: 10, componentName: "Login" }],
 };
 
-/** `| \`name\` | self | total | loc |` → the two numbers. */
 function readRow(markdown: string, name: string): { self: number; total: number } {
   const row = markdown.split("\n").find((line) => line.startsWith(`| \`${name}\``));
   if (row === undefined) throw new Error(`no row for ${name} in:\n${markdown}`);

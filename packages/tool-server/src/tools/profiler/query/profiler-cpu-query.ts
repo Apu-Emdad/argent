@@ -415,7 +415,6 @@ export function renderComponentCpu(
         });
       }
     }
-    // Commit windows are disjoint, so both columns add across them.
     for (const [name, win] of perWindow) {
       const existing = aggregated.get(name);
       if (existing) {
@@ -460,9 +459,7 @@ function shortenUrl(url: string): string {
   return parts.slice(-2).join("/");
 }
 
-/** True when `ancestor` is `nodeId` itself or one of its call-tree ancestors. */
 function isAncestor(ancestor: number, nodeId: number, childToParent: Map<number, number>): boolean {
-  if (ancestor === nodeId) return true;
   const seen = new Set<number>([nodeId]);
   let current = nodeId;
   while (childToParent.has(current)) {
