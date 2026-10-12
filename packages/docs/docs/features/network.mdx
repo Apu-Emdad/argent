@@ -39,7 +39,7 @@ First the agent reads the list of requests. Each line has this format:
 
 Then the agent reads the details of one request. The details contain the headers of the request and of the response, the times, the initiator, and the body of the response.
 
-For the JS runtime and Chrome DevTools Protocol layers, Argent replaces the values of secret headers with `[REDACTED]`. A header is secret if its name contains `authorization`, `cookie`, `token`, `api-key` or a related word. Argent also shortens a body that is longer than 1000 characters. The message shows the initial length. The native `NSURLProtocol` layer does not redact headers. See the Limits section.
+For the JS runtime and Chrome DevTools Protocol layers, Argent replaces the values of secret headers with `[REDACTED]`. A header is secret if its name contains `authorization`, `cookie`, `token`, `api-key` or a related word. In a JSON or form request body, Argent also replaces the values of fields such as `password`, `secret`, `access_token` and `api_key`. The field names stay visible. A one-time code stays visible. Argent also shortens a body that is longer than 1000 characters. The message shows the initial length. The native `NSURLProtocol` layer does not redact headers. See the Limits section.
 
 Argent removes the bundle traffic and the HMR traffic of Metro from the record. Thus the record contains the requests of your app only.
 
