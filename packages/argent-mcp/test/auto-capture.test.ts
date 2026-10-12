@@ -7,12 +7,15 @@ import {
   AUTO_SCREENSHOT_TOOLS,
   AUTO_SCREENSHOT_DELAY_MS_BY_TOOL,
   autoScreenshotEnabled,
+  AUTO_DESCRIBE_TOOLS,
+  autoDescribeEnabled,
+  shouldAutoDescribe,
   containsSecretPlaceholder,
   getUdidFromArgs,
   normalizeToolName,
   shouldAutoScreenshot,
   getAutoScreenshotDelayMs,
-} from "../src/auto-screenshot.js";
+} from "../src/auto-capture.js";
 
 // ---------------------------------------------------------------------------
 // normalizeToolName
@@ -137,6 +140,57 @@ describe("autoScreenshotEnabled", () => {
 });
 
 // ---------------------------------------------------------------------------
+// autoDescribeEnabled / shouldAutoDescribe — the element tree appended after
+// the auto-screenshot, opt-out via `disable-auto-describe`.
+// ---------------------------------------------------------------------------
+describe("autoDescribeEnabled", () => {
+  let tmpHome: string;
+  let tmpProject: string;
+
+  beforeEach(() => {
+    tmpHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "argent-describe-home-")));
+    tmpProject = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "argent-describe-proj-")));
+    fs.writeFileSync(path.join(tmpProject, "package.json"), "{}");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+    fs.rmSync(tmpProject, { recursive: true, force: true });
+  });
+
+  it("is on by default when the flag is unset", () => {
+    expect(autoDescribeEnabled({ homeDir: tmpHome, cwd: tmpProject })).toBe(true);
+  });
+
+  it("is off when the flag is enabled globally", () => {
+    setFlag("disable-auto-describe", true, "global", { homeDir: tmpHome });
+    expect(autoDescribeEnabled({ homeDir: tmpHome, cwd: tmpProject })).toBe(false);
+  });
+
+  it("is off when the flag is enabled at project scope", () => {
+    setFlag("disable-auto-describe", true, "project", { cwd: tmpProject });
+    expect(autoDescribeEnabled({ homeDir: tmpHome, cwd: tmpProject })).toBe(false);
+  });
+});
+
+describe("shouldAutoDescribe", () => {
+  it("is true for every listed tool, with or without a client prefix", () => {
+    for (const tool of AUTO_DESCRIBE_TOOLS) {
+      expect(shouldAutoDescribe(tool)).toBe(true);
+      expect(shouldAutoDescribe(`mcp__argent__${tool}`)).toBe(true);
+    }
+  });
+
+  it("never follows describe or screenshot, nor non-interaction tools", () => {
+    expect(AUTO_DESCRIBE_TOOLS.has("describe")).toBe(false);
+    expect(shouldAutoDescribe("describe")).toBe(false);
+    expect(shouldAutoDescribe("mcp__argent__describe")).toBe(false);
+    expect(shouldAutoDescribe("screenshot")).toBe(false);
+    expect(shouldAutoDescribe("list-devices")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // getAutoScreenshotDelayMs
 // ---------------------------------------------------------------------------
 describe("getAutoScreenshotDelayMs", () => {
@@ -207,6 +261,7 @@ describe("shouldAutoScreenshot — unified surface", () => {
       "keyboard",
       "paste",
       "rotate",
+      "fold",
       "launch-app",
       "restart-app",
       "open-url",

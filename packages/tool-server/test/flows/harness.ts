@@ -35,6 +35,8 @@ function mockRegistry(calls?: ToolCall[]): Registry {
   return {
     invokeTool: vi.fn(async (id: string, args: Record<string, unknown>) => {
       if (id === "list-devices") return { devices: [] };
+      // A failed step's screenshot (flow-failure-screen.test.ts) is not a step's action.
+      if (id === "screenshot") return {};
       calls?.push({ tool: id, args });
       return { ok: true };
     }),
@@ -68,15 +70,22 @@ export function createFlowTestHarness(options: {
     await fs.writeFile(path.join(dir, `${name}.yaml`), serializeFlow(flow), "utf8");
   }
 
-  async function execute(name: string, calls?: ToolCall[]): Promise<FlowRunResult> {
+  async function execute(
+    name: string,
+    calls?: ToolCall[],
+    device: string = IOS_DEVICE
+  ): Promise<FlowRunResult> {
     const tool = createRunFlowTool(mockRegistry(calls));
-    return asRun(await tool.execute({}, { name, project_root: tmpDir, device: IOS_DEVICE }));
+    return asRun(await tool.execute({}, { name, project_root: tmpDir, device }));
   }
 
   const run = (name: string): Promise<FlowRunResult> => execute(name);
-  const runWithCalls = async (name: string): Promise<FlowRunResult & { calls: ToolCall[] }> => {
+  const runWithCalls = async (
+    name: string,
+    device?: string
+  ): Promise<FlowRunResult & { calls: ToolCall[] }> => {
     const calls: ToolCall[] = [];
-    return Object.assign(await execute(name, calls), { calls });
+    return Object.assign(await execute(name, calls, device), { calls });
   };
 
   return { writeFlow, run, runWithCalls };

@@ -12,7 +12,13 @@ beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "file-inputs-test-"));
 });
 
+// resolveFileInputs hands its caller the cleanup for whatever it materialized;
+// in production the dispatcher calls it. A test that keeps the result must too,
+// or the upload's temp dir outlives the run.
+const cleanups: Array<() => Promise<void>> = [];
+
 afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -28,6 +34,38 @@ describe("resolveFileInputs", () => {
     const { args, fileInputs } = await resolveFileInputs({ fileInputs: FILE_SPEC }, body);
     expect(args).toEqual(body);
     expect(fileInputs).toBeUndefined();
+  });
+
+  it("reports which targets the CLIENT derived, so an error need not read them back", async () => {
+    const filePath = path.join(tmpDir, "derived.yaml");
+    await fs.writeFile(filePath, "steps: []\n");
+    const st = await fs.stat(filePath);
+    const specs: FileInputSpec[] = [
+      { target: "input", path: "${input}", kind: "file" },
+      { target: "derived", path: "${root}/flows/${input}.yaml", kind: "file" },
+    ];
+
+    const { derivedTargets } = await resolveFileInputs(
+      { fileInputs: specs },
+      {
+        input: wire({ path: filePath, size: st.size, mtimeMs: st.mtimeMs }),
+        derived: wire({ path: filePath, size: st.size, mtimeMs: st.mtimeMs }),
+      }
+    );
+
+    expect(derivedTargets).toEqual(["derived"]);
+  });
+
+  it("does not call a derived target the client's when the CALLER set it as a plain value", async () => {
+    const specs: FileInputSpec[] = [
+      { target: "derived", path: "${root}/flows/${input}.yaml", kind: "file" },
+    ];
+    const { args, derivedTargets } = await resolveFileInputs(
+      { fileInputs: specs },
+      { derived: "/caller/wrote/this.yaml" }
+    );
+    expect(derivedTargets).toEqual([]);
+    expect(args.derived).toBe("/caller/wrote/this.yaml");
   });
 
   it("uses the wrapper path in place when it matches on this host", async () => {
@@ -103,7 +141,7 @@ describe("resolveFileInputs", () => {
     await fs.writeFile(filePath, "stale");
     const content = Buffer.from("fresh client bytes");
 
-    const { args, fileInputs } = await resolveFileInputs(
+    const { args, fileInputs, cleanup } = await resolveFileInputs(
       { fileInputs: FILE_SPEC },
       {
         input: wire({
@@ -113,17 +151,48 @@ describe("resolveFileInputs", () => {
         }),
       }
     );
+    cleanups.push(cleanup);
 
     expect(args.input).not.toBe(filePath);
     expect(await fs.readFile(args.input as string, "utf8")).toBe("fresh client bytes");
     expect(fileInputs!.input).toMatchObject({ presentOnHost: false, viaUpload: true });
   });
 
+  it("uses uploaded content even when a host file at that path matches the client's stat", async () => {
+    // A mirrored copy (cp -p, tar) keeps size and mtime, so a matching stat
+    // does not prove the bytes are the client's.
+    const filePath = path.join(tmpDir, "input.yaml");
+    await fs.writeFile(filePath, "stale!");
+    const st = await fs.stat(filePath);
+    const content = Buffer.from("fresh!");
+
+    const { args, fileInputs, cleanup } = await resolveFileInputs(
+      { fileInputs: FILE_SPEC },
+      {
+        input: wire({
+          path: filePath,
+          size: st.size,
+          mtimeMs: st.mtimeMs,
+          content: content.toString("base64"),
+        }),
+      }
+    );
+    cleanups.push(cleanup);
+
+    expect(args.input).not.toBe(filePath);
+    expect(await fs.readFile(args.input as string, "utf8")).toBe("fresh!");
+    expect(fileInputs!.input).toEqual({
+      clientPath: filePath,
+      presentOnHost: true,
+      viaUpload: true,
+    });
+  });
+
   it("materializes uploaded content for a path that does not exist here", async () => {
     const clientPath = path.join(tmpDir, "not-here", "flow.yaml");
     const content = Buffer.from("steps: []\n");
 
-    const { args } = await resolveFileInputs(
+    const { args, cleanup } = await resolveFileInputs(
       { fileInputs: FILE_SPEC },
       {
         input: wire({
@@ -133,6 +202,7 @@ describe("resolveFileInputs", () => {
         }),
       }
     );
+    cleanups.push(cleanup);
 
     expect(await fs.readFile(args.input as string, "utf8")).toBe("steps: []\n");
   });
@@ -158,6 +228,8 @@ describe("resolveFileInputs", () => {
         }),
       }
     );
+
+    cleanups.push(cleanup);
 
     const materialized = args.b as string;
     expect(await fs.readFile(materialized, "utf8")).toBe("uploaded bytes");

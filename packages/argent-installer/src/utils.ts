@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as dns from "node:dns";
 import * as os from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import semver from "semver";
 import { PACKAGE_NAME, NPM_REGISTRY } from "./constants.js";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
@@ -19,6 +19,7 @@ import { resolvePackageRoot } from "./package-root.js";
 // helpers moved into focused modules.
 export {
   formatShellCommand,
+  shellQuotePath,
   detectPackageManager,
   detectProjectPackageManager,
   globalInstallCommand,
@@ -30,7 +31,6 @@ export {
 export type { PackageManager, ShellCommand } from "./package-manager.js";
 export { hasProjectPackageJson, isYarnPnp } from "./preflight.js";
 export {
-  isTempRunnerPath,
   isGloballyInstalled,
   getGloballyInstalledVersion,
   getGloballyInstalledPackageRoot,
@@ -41,7 +41,6 @@ export {
   getLocalArgentBinRelPath,
   probeLocalInstall,
 } from "./topology.js";
-export type { LocalInstallProbe } from "./topology.js";
 export {
   getInstallRecordPath,
   readInstallRecord,
@@ -51,16 +50,15 @@ export {
   resolveInstallModeFromFlags,
   InstallModeFlagError,
 } from "./install-record.js";
-export type { InstallMode, InstallRecord } from "./install-record.js";
+export type { InstallMode } from "./install-record.js";
 export { parseTargetFlags, decideInstallTargets, promptInstallTargets } from "./install-targets.js";
-export type { TargetFlags, DecideTargetsContext, TargetDecision } from "./install-targets.js";
 
 // resolvePackageRoot lives in the leaf package-root.ts module: topology.ts
 // needs it too, and importing it from this barrel — which re-exports topology —
 // was an ESM cycle.
 export { resolvePackageRoot };
 
-export const PACKAGE_ROOT = resolvePackageRoot(import.meta.dirname);
+const PACKAGE_ROOT = resolvePackageRoot(import.meta.dirname);
 
 function resolveBundledDir(dirName: "skills" | "rules" | "agents"): string {
   const packagedDir = path.join(PACKAGE_ROOT, dirName);
@@ -430,10 +428,14 @@ export function getInstalledVersion(): string | null {
 const PROBE_TIMEOUT_MS = 3_000;
 
 export function getLatestVersion(): string {
-  const result = execSync(`npm view ${PACKAGE_NAME} version --registry ${NPM_REGISTRY}`, {
-    encoding: "utf8",
-    timeout: PROBE_TIMEOUT_MS,
-  });
+  const args = ["view", PACKAGE_NAME, "version", "--registry", NPM_REGISTRY];
+  const opts = { encoding: "utf8", timeout: PROBE_TIMEOUT_MS } as const;
+  // npm is a .cmd shim on Windows, which only cmd.exe can run. A finished command
+  // string (not shell: true + args) avoids Node 24's DEP0190 warning.
+  const result =
+    process.platform === "win32"
+      ? execSync(["npm", ...args].join(" "), opts)
+      : execFileSync("npm", args, opts);
   return result.trim();
 }
 
@@ -453,9 +455,25 @@ export function withNpmForce(npxArgs: string[]): string[] {
   return ["--force", ...npxArgs];
 }
 
+// `npx --package <spec> -- argent ...` (and `npx -p <spec> argent ...`) runs
+// argent with `npm_config_package=<spec>` in its environment. A nested `npx`
+// inherits it and npm then installs <spec> in place of the requested package,
+// so `npx skills add ...` re-runs argent instead of the skills CLI (#1335).
+// The skills commands argent spawns get an environment without it.
+export function npxChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const childEnv = { ...env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.toLowerCase() === "npm_config_package") {
+      delete childEnv[key];
+    }
+  }
+  return childEnv;
+}
+
 export function isSkillsCliAvailable(): boolean {
   try {
     execSync("npx --force --no-install skills --version", {
+      env: npxChildEnv(),
       stdio: ["ignore", "ignore", "ignore"],
       timeout: PROBE_TIMEOUT_MS,
     });

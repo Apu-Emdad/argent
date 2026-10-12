@@ -1,6 +1,6 @@
 import type { ToolMeta } from "@argent/tools-client";
 
-export type McpTool = {
+type McpTool = {
   name: string;
   description: string;
   inputSchema: { type: "object" } & Record<string, unknown>;
@@ -22,4 +22,9 @@ export function toMcpTool(t: ToolMeta): McpTool {
     inputSchema: { type: "object", ...t.inputSchema },
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
+}
+
+/** The MCP `tools/list` payload: every tool but those marked `hideFromMcp`. */
+export function toMcpToolList(tools: ToolMeta[]): McpTool[] {
+  return tools.filter((t) => !t.hideFromMcp).map(toMcpTool);
 }

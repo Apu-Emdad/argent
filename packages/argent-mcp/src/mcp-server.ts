@@ -2,16 +2,13 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Server } from "@modelcontextprotocol/sdk/server";
 import {
   ensureToolsServer,
   getResolvedToolsUrl,
-  isRemoteRouted,
   getDeviceIdFromArgs,
-  prepareFileInputs,
-  applyClientFileDirectives,
-  type ToolMeta,
   type ToolsServerPaths,
 } from "@argent/tools-client";
 import {
@@ -35,54 +32,15 @@ import {
   getUdidFromArgs,
   shouldAutoScreenshot,
   getAutoScreenshotDelayMs,
-} from "./auto-screenshot.js";
-import { toMcpTool } from "./tool-mapping.js";
+  autoDescribeEnabled,
+  shouldAutoDescribe,
+  AUTO_DESCRIBE_HEADER,
+} from "./auto-capture.js";
+import { toMcpToolList } from "./tool-mapping.js";
 import { getInstalledVersion } from "./installed-version.js";
+import { createToolCaller } from "./tool-caller.js";
 
-const MAX_RETRIES = 4;
-const EXP_BACKOFF_BASE = 250;
-const FETCH_TIMEOUT_MS = 30_000;
-
-export async function fetchWithReconnect(
-  getUrl: () => string,
-  reconnect: () => Promise<void>,
-  config?: {
-    init?: RequestInit;
-    expBackoffBase?: number;
-    maxRetries?: number;
-    fetchTimeoutMs?: number | null;
-  }
-): Promise<Response> {
-  const {
-    expBackoffBase = EXP_BACKOFF_BASE,
-    maxRetries = MAX_RETRIES,
-    fetchTimeoutMs = FETCH_TIMEOUT_MS,
-    init,
-  } = config ?? {};
-
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const controller = new AbortController();
-    const timer =
-      fetchTimeoutMs !== null ? setTimeout(() => controller.abort(), fetchTimeoutMs) : undefined;
-    try {
-      return await fetch(getUrl(), { ...init, signal: controller.signal });
-    } catch (err) {
-      lastError = err;
-      if (attempt === maxRetries) break;
-      if (attempt === 0) {
-        // First failure: trigger reconnect (spawns new server if dead)
-        await reconnect();
-      }
-      // Exponential backoff: 250ms, 500ms, 1s, 2s (~3.75s total + reconnect time)
-      await new Promise((r) => setTimeout(r, expBackoffBase * Math.pow(2, attempt)));
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastError;
-}
+export { fetchWithReconnect } from "./tool-caller.js";
 
 export interface StartMcpServerOptions {
   /**
@@ -90,6 +48,8 @@ export interface StartMcpServerOptions {
    * remote target is configured and this process must spawn tool-server itself.
    */
   paths: ToolsServerPaths;
+  /** The editor connection. Defaults to stdio; a test passes an in-memory one. */
+  transport?: Transport;
 }
 
 export async function startMcpServer(options: StartMcpServerOptions): Promise<void> {
@@ -104,6 +64,7 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
   // isFlagEnabled hits disk, so resolve it once at startup rather than on every
   // tool call. A flag change therefore needs an MCP restart to take effect.
   const autoScreenshotOn = autoScreenshotEnabled();
+  const autoDescribeOn = autoDescribeEnabled();
 
   let TOOLS_URL: string;
   let AUTH_TOKEN: string;
@@ -111,6 +72,10 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
   // before auto-spawning; it carries its own token, while the local auto-spawn
   // path mints one.
   const resolved = await getResolvedToolsUrl();
+  // Frozen with the URL: a remote-routed session never falls back to a local
+  // spawn, and a call never uses one tool-server with the file rules of
+  // another. `argent link` and `argent unlink` ask for an editor restart.
+  const remote = resolved.url !== null;
   if (resolved.url) {
     TOOLS_URL = resolved.url;
     AUTH_TOKEN = resolved.token ?? "";
@@ -143,7 +108,7 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
   let reconnectPromise: Promise<void> | null = null;
 
   async function reconnect(): Promise<void> {
-    if (await isRemoteRouted()) return;
+    if (remote) return;
     if (!reconnectPromise) {
       reconnectPromise = ensureToolsServer(options.paths)
         .then((handle) => {
@@ -172,59 +137,12 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
     }
   }
 
-  async function fetchTools(): Promise<ToolMeta[]> {
-    const res = await fetchWithReconnect(() => `${TOOLS_URL}/tools`, reconnect, {
-      init: { headers: authHeader() },
-    });
-    const json = (await res.json()) as { tools: ToolMeta[] };
-    return json.tools;
-  }
-
-  interface ToolAPIResponse {
-    data?: unknown;
-    error?: string;
-    message?: string;
-    note?: string;
-  }
-
-  async function callTool(
-    name: string,
-    args: unknown
-  ): Promise<{ result: unknown; outputHint?: string; note?: string }> {
-    const tools = await fetchTools();
-    const meta = tools.find((t) => t.name === name);
-
-    // File boundary, outbound: wrap declared file-path args so the tool-server
-    // can read them in place (co-located) or from inlined content (remote).
-    // An older server that declares no fileInputs gets the args verbatim.
-    let finalArgs = args;
-    if (meta?.fileInputs?.length) {
-      finalArgs = await prepareFileInputs(meta.fileInputs, args ?? {}, {
-        // An external target may not share this process's filesystem, so the
-        // file bytes have to ride along.
-        includeContent: resolved.url !== null,
-      });
-    }
-
-    const res = await fetchWithReconnect(() => `${TOOLS_URL}/tools/${name}`, reconnect, {
-      init: {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader(), ...aiClientHeaders() },
-        body: JSON.stringify(finalArgs ?? {}),
-      },
-      fetchTimeoutMs: meta?.longRunning ? null : FETCH_TIMEOUT_MS,
-    });
-
-    const json = (await res.json()) as ToolAPIResponse;
-
-    if (!res.ok) throw new Error(json.error ?? json.message ?? res.statusText);
-
-    // File boundary, inbound: persist any client-write directives (files that
-    // belong in the agent's project, e.g. recorded flow YAMLs) and rewrite
-    // them to the written paths.
-    const { result: data } = await applyClientFileDirectives(json.data);
-    return { result: data, outputHint: meta?.outputHint, note: json.note };
-  }
+  const { fetchTools, callTool } = createToolCaller({
+    getHandle: () => ({ url: TOOLS_URL, token: AUTH_TOKEN }),
+    remote,
+    reconnect,
+    extraHeaders: aiClientHeaders,
+  });
 
   const server = new Server(
     { name: "argent", version: getInstalledVersion() },
@@ -232,7 +150,7 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
       capabilities: { tools: {} },
       instructions:
         "Argent — iOS Simulator, Android Emulator, and Chromium app control for interacting, testing, profiling and debugging mobile and Chromium applications. " +
-        "Always use discovery tools (describe / debugger-component-tree / screenshot) before tapping — never guess coordinates. " +
+        "Interaction tools return the screen after the action: a screenshot plus the accessibility element tree with normalized tap frames. Take coordinates from that tree; call describe (or debugger-component-tree) only when no fresh tree is available — never guess coordinates from pixels. " +
         "On session end: call stop-all-simulator-servers with devices: [...] naming the devices this session used, and perform any necessary cleanup. " +
         "One tool-server is shared by every agent using this argent install, so an unscoped call tears down their devices too — reserve it for a deliberate machine-wide cleanup. " +
         "Full guidance is in the argent rule loaded from .claude/rules/argent.md.",
@@ -241,13 +159,13 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
-      const tools = await fetchTools();
+      const tools = toMcpToolList(await fetchTools());
       await spyLog({
         ts: new Date().toISOString(),
         event: "list_tools",
         count: tools.length,
       });
-      return { tools: tools.map(toMcpTool) };
+      return { tools };
     } catch (err) {
       process.stderr.write(
         `[argent] Failed to list tools: ${err instanceof Error ? err.message : err}\n`
@@ -298,27 +216,25 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
       }
 
       const udid = getUdidFromArgs(params.arguments);
-      if (
-        autoScreenshotOn &&
-        udid &&
-        shouldAutoScreenshot(params.name) &&
-        containsSecretPlaceholder(params.arguments)
-      ) {
+      const wantScreenshot = autoScreenshotOn && shouldAutoScreenshot(params.name);
+      const wantTree = autoDescribeOn && shouldAutoDescribe(params.name);
+      if (udid && (wantScreenshot || wantTree) && containsSecretPlaceholder(params.arguments)) {
         // The tool-server typed the *resolved* secret; a screenshot of a
         // non-secure-entry field would hand the plaintext back to the model as
-        // pixels. Every instruction in the note must be safe to follow AFTER the
-        // typing, since this branch only fires on a call that already typed it:
-        // hence it forbids re-sending the typing step (a rebuilt `run-sequence`
+        // pixels, and the element tree would hand it back as text. Every
+        // instruction in the note must be safe to follow AFTER the typing,
+        // since this branch only fires on a call that already typed it: hence
+        // it forbids re-sending the typing step (a rebuilt `run-sequence`
         // would type the secret a second time on top of the first) and states
         // that only this call is skipped, the decision being per call's args.
         content = [
           ...content,
           {
             type: "text" as const,
-            text: "Auto-screenshot skipped: the input contains a {{secret:…}} placeholder, and a screenshot of this screen could reveal the typed secret. The secret is already typed — do not send the typing step again, or the field will hold two copies of it. Submit or navigate away, then verify the resulting screen as usual. Only this call is covered: the next call is screenshotted normally, and captures the secret if the field is still on screen. To cover the submit as well, put the typing and the submit in ONE `run-sequence` the next time you type a secret.",
+            text: "Auto-screenshot and element tree skipped: the input contains a {{secret:…}} placeholder, and a capture of this screen could reveal the typed secret. The secret is already typed — do not send the typing step again, or the field will hold two copies of it. Submit or navigate away, then verify the resulting screen as usual. Only this call is covered: the next call is captured normally, and shows the secret if the field is still on screen. To cover the submit as well, put the typing and the submit in ONE `run-sequence` the next time you type a secret.",
           },
         ];
-      } else if (autoScreenshotOn && udid && shouldAutoScreenshot(params.name)) {
+      } else if (udid && (wantScreenshot || wantTree)) {
         // Let the screen settle before capturing, bounded by the per-tool
         // budget: `await-screen-idle` polls the tree server-side and usually
         // returns well under the cap. If the call fails (e.g. a tool-server
@@ -339,26 +255,61 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
           }
         }
 
-        try {
-          const screenshotResult = await callTool("screenshot", { udid });
-          const screenshotContent = await toMcpContent(screenshotResult.result, "image", {
-            toolsUrl: TOOLS_URL,
-            authToken: AUTH_TOKEN,
-            deviceId: udid,
-          });
-          const hasImage = screenshotContent.some((b) => b.type === "image");
-          if (hasImage) {
-            content = [
-              ...content,
-              {
-                type: "text" as const,
-                text: "--- Screen after action ---",
-              },
-              ...screenshotContent,
-            ];
+        if (wantScreenshot) {
+          try {
+            const screenshotResult = await callTool("screenshot", { udid });
+            const screenshotContent = await toMcpContent(screenshotResult.result, "image", {
+              toolsUrl: TOOLS_URL,
+              authToken: AUTH_TOKEN,
+              deviceId: udid,
+            });
+            const hasImage = screenshotContent.some((b) => b.type === "image");
+            if (hasImage) {
+              content = [
+                ...content,
+                {
+                  type: "text" as const,
+                  text: "--- Screen after action ---",
+                },
+                ...screenshotContent,
+              ];
+            }
+          } catch {
+            /* best-effort */
           }
-        } catch {
-          /* best-effort */
+        }
+
+        // Append the element tree the agent would otherwise have to fetch with
+        // a `describe` round-trip before its next tap. Measured on Sonnet over
+        // 70 runs: −21% turns, −23% wall time, −17% cost at equal task success
+        // (see PR #958). The tree is a few hundred tokens per action.
+        if (wantTree) {
+          const t1 = Date.now();
+          try {
+            const d = await callTool("describe", { udid });
+            const desc = (d.result as { description?: unknown } | null)?.description;
+            if (typeof desc === "string" && desc.length > 0) {
+              content = [
+                ...content,
+                { type: "text" as const, text: `${AUTO_DESCRIBE_HEADER}\n${desc}` },
+              ];
+            }
+            await spyLog({
+              ts: new Date().toISOString(),
+              event: "auto_describe",
+              name: params.name,
+              durationMs: Date.now() - t1,
+              chars: typeof desc === "string" ? desc.length : 0,
+            });
+          } catch (e) {
+            await spyLog({
+              ts: new Date().toISOString(),
+              event: "auto_describe",
+              name: params.name,
+              durationMs: Date.now() - t1,
+              error: String(e instanceof Error ? e.message : e),
+            });
+          }
         }
       }
 
@@ -388,12 +339,12 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
     }
   });
 
-  await server.connect(new StdioServerTransport());
+  await server.connect(options.transport ?? new StdioServerTransport());
 
   // Restart the tool server if it dies between requests. Auto-spawned servers
   // only: a remote-routed target is the user's responsibility, and a silent
   // local respawn would mask its outage.
-  if (!(await isRemoteRouted())) {
+  if (!remote) {
     const HEALTH_INTERVAL_MS = 30_000;
     const healthInterval = setInterval(async () => {
       try {

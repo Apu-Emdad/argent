@@ -7,6 +7,7 @@ import {
   buildArgentSkillsSource,
   isOnline,
   isSkillsCliAvailable,
+  npxChildEnv,
   withNpmForce,
 } from "./utils.js";
 import { InitCancelled } from "./init-args.js";
@@ -148,10 +149,11 @@ export async function runSkillsStep(args: {
   return skillsMethod;
 }
 
-export function runNpxSkills(args: string[], interactive: boolean, cwd?: string): Promise<void> {
+function runNpxSkills(args: string[], interactive: boolean, cwd?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
     const child = spawn(npxCmd, args, {
+      env: npxChildEnv(),
       stdio: interactive ? "inherit" : ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
       ...(cwd ? { cwd } : {}),
