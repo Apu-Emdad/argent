@@ -244,19 +244,28 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     );
   }
 
-  // Properties that make an element the containing block of fixed descendants.
-  function containsFixed(style) {
-    return (
+  // Whether an element is the containing block of fixed descendants. Chromium ignores
+  // transforms on inline boxes, and containment wherever it ignores overflow.
+  function containsFixed(el, style) {
+    const willChange = style.willChange || "";
+    if (isSet(style.filter) || isSet(style.backdropFilter) || /filter/.test(willChange)) {
+      return true;
+    }
+    if (style.display === "inline") return false;
+    if (
       isSet(style.transform) ||
       isSet(style.translate) ||
       isSet(style.rotate) ||
       isSet(style.scale) ||
       isSet(style.perspective) ||
-      isSet(style.filter) ||
-      isSet(style.backdropFilter) ||
-      /layout/.test(style.contain || "") ||
-      paintContained(style) ||
-      /transform|perspective|filter/.test(style.willChange || "")
+      style.transformStyle === "preserve-3d" ||
+      /transform|translate|rotate|scale|perspective/.test(willChange)
+    ) {
+      return true;
+    }
+    return (
+      overflowApplies(el, style) &&
+      (/layout/.test(style.contain || "") || paintContained(style) || /contain/.test(willChange))
     );
   }
 
@@ -324,7 +333,7 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
         });
       }
     }
-    const fixedBlock = containsFixed(style);
+    const fixedBlock = containsFixed(el, style);
     return {
       flow: inner,
       abs: fixedBlock || style.position !== "static" ? inner : clips.abs,

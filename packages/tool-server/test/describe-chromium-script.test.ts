@@ -1056,11 +1056,49 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       { backdropFilter: "blur(1px)" },
       { contain: "layout" },
       { contentVisibility: "auto" },
+      { transformStyle: "preserve-3d" },
       { willChange: "transform" },
+      { willChange: "translate" },
+      { willChange: "contain" },
     ];
     for (const style of containingBlocks) {
       const contained = run([scroller([fixed()], { style: { overflow: "hidden", ...style } })]);
       expect(pxFrame(contained.tree, "fixed").h, JSON.stringify(style)).toBe(0);
+    }
+  });
+
+  it("ignores transforms on inline boxes and containment on them and on table rows", () => {
+    const fixedFrame = (style: Record<string, string>) =>
+      pxFrame(
+        run([
+          scroller(
+            [
+              el({
+                rect: { x: 1, y: 1, w: 50, h: 20 },
+                style,
+                children: [row("fixed", { x: 10, y: 500, w: 80, h: 20 }, { position: "fixed" })],
+              }),
+            ],
+            { style: { overflow: "hidden" } }
+          ),
+        ]).tree,
+        "fixed"
+      );
+    const escapes: Record<string, string>[] = [
+      { display: "inline", transform: "matrix(1, 0, 0, 1, 0, 0)" },
+      { display: "inline", willChange: "transform" },
+      { display: "inline", contain: "paint" },
+      { display: "table-row", contain: "layout" },
+    ];
+    for (const style of escapes) {
+      expect(fixedFrame(style), JSON.stringify(style)).toEqual({ x: 10, y: 500, w: 80, h: 20 });
+    }
+    const contained: Record<string, string>[] = [
+      { display: "inline", filter: "blur(1px)" },
+      { display: "table-row", transform: "matrix(1, 0, 0, 1, 0, 0)" },
+    ];
+    for (const style of contained) {
+      expect(fixedFrame(style).h, JSON.stringify(style)).toBe(0);
     }
   });
 
