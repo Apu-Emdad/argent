@@ -76,6 +76,7 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
   const getAttr = Element.prototype.getAttribute;
   const hasAttr = Element.prototype.hasAttribute;
   const getBCR = Element.prototype.getBoundingClientRect;
+  const matchesSel = Element.prototype.matches;
   // Document's named getter is [LegacyOverrideBuiltIns] (like a form's): a
   // <form name="activeElement"> shadows document.activeElement, so both focus
   // reads go through prototype accessors. The typeof guard covers the test
@@ -210,10 +211,20 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
   }
 
   // Overflow clips a descendant only when the clipper is on its containing-block chain,
-  // so an absolute box takes the clip in force at its containing block and a fixed box
-  // the viewport's (a popover or modal escapes an overflow:hidden card). Each entry is
-  // the clip a child with that position gets.
+  // so an absolute or fixed box takes the clip in force at its containing block. Each
+  // entry is the clip a child with that position gets.
   const NO_CLIP = { flow: null, abs: null, fixed: null };
+
+  // A top-layer box (modal dialog, open popover, fullscreen element) escapes every clip.
+  function inTopLayer(el, style) {
+    if (style.position !== "fixed" && style.position !== "absolute") return false;
+    for (const sel of [":modal", ":popover-open", ":fullscreen"]) {
+      try {
+        if (matchesSel.call(el, sel)) return true;
+      } catch (e) {}
+    }
+    return false;
+  }
 
   function ownClip(clips, style) {
     if (style.position === "absolute") return clips.abs;
@@ -240,12 +251,14 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     );
   }
 
-  // Padding box in viewport px, scrollbars excluded. client* and offset* are layout px,
-  // so they are scaled to the rendered (transformed) box. An SVG viewport has no CSS box
-  // to measure (client* read 0) and no offset* at all: its rect is the clip.
+  // Padding box in viewport px, scrollbars excluded, and the scale (sx, sy) from layout
+  // px to the rendered (transformed) box. An SVG viewport has no CSS box to measure
+  // (client* read 0) and no offset* at all: its rect is the clip.
   function paddingBox(el) {
     const r = getBCR.call(el);
-    if (!(el instanceof HTMLElement)) return r;
+    if (!(el instanceof HTMLElement)) {
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, sx: 1, sy: 1 };
+    }
     const ow = getOffsetWidth.call(el);
     const oh = getOffsetHeight.call(el);
     const sx = ow > 0 ? r.width / ow : 1;
@@ -257,7 +270,21 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
       top,
       right: left + getClientWidth.call(el) * sx,
       bottom: top + getClientHeight.call(el) * sy,
+      sx,
+      sy,
     };
+  }
+
+  // How far overflow-clip-margin moves a clip edge out of the padding box. It applies
+  // only where the axis clips by overflow: clip or by paint containment.
+  function clipMargin(style, overflow, side, scale) {
+    if (overflow !== "clip" && overflow !== "visible") return 0;
+    const v = style.overflowClipMargin || "";
+    const len = parseFloat(v.replace(/^[a-z-]+/, "")) || 0;
+    let box = 0;
+    if (v.startsWith("content-box")) box = -(parseFloat(style["padding" + side]) || 0);
+    if (v.startsWith("border-box")) box = parseFloat(style["border" + side + "Width"]) || 0;
+    return (box + len) * scale;
   }
 
   // The root's overflow clips the viewport, not its box, and so does the body's unless
@@ -278,11 +305,13 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
       const cy = paint || style.overflowY !== "visible";
       if (cx || cy) {
         const p = paddingBox(el);
+        const ox = style.overflowX;
+        const oy = style.overflowY;
         inner = intersect(clip, {
-          left: cx ? p.left : -Infinity,
-          top: cy ? p.top : -Infinity,
-          right: cx ? p.right : Infinity,
-          bottom: cy ? p.bottom : Infinity,
+          left: cx ? p.left - clipMargin(style, ox, "Left", p.sx) : -Infinity,
+          top: cy ? p.top - clipMargin(style, oy, "Top", p.sy) : -Infinity,
+          right: cx ? p.right + clipMargin(style, ox, "Right", p.sx) : Infinity,
+          bottom: cy ? p.bottom + clipMargin(style, oy, "Bottom", p.sy) : Infinity,
         });
       }
     }
@@ -405,6 +434,7 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
       nodeBudget--;
     }
 
+    if (inTopLayer(el, style)) clips = NO_CLIP;
     const clip = ownClip(clips, style);
     const inner = childClips(el, style, clips, clip);
     const childResults = [];

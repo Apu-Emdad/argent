@@ -76,6 +76,12 @@ elementProto.getAttribute = function (this: Record<string, unknown>, n: string) 
 elementProto.hasAttribute = function (this: Record<string, unknown>, n: string) {
   return n in ((this.__attrs as Record<string, string>) ?? {});
 };
+// Matches only the fixture's top-layer pseudo-class and throws on any other, as a
+// Chromium does on a pseudo-class it lacks.
+elementProto.matches = function (this: Record<string, unknown>, sel: string) {
+  if (sel !== this.__topLayer) throw new SyntaxError(`unsupported selector ${sel}`);
+  return true;
+};
 elementProto.getBoundingClientRect = function (this: Record<string, unknown>) {
   const r = this.__rect as Rect;
   return { left: r.x, top: r.y, right: r.x + r.w, bottom: r.y + r.h, width: r.w, height: r.h };
@@ -91,6 +97,7 @@ type Opts = {
   offset?: { width: number; height: number }; // untransformed border-box size
   scrollSize?: { width: number; height: number }; // scrollWidth / scrollHeight
   svg?: boolean; // an Element that is not an HTMLElement
+  topLayer?: string; // the pseudo-class (":modal", ...) that puts it in the top layer
   content?: Rect | null; // painted extent of own inline content (Range)
   style?: Record<string, string>;
   attrs?: Record<string, string>;
@@ -111,6 +118,7 @@ function el(opts: Opts = {}): MockElement {
   // getBoundingClientRect methods defined above (the script reads them via the prototype).
   node.__attrs = opts.attrs ?? {};
   node.__rect = rect;
+  node.__topLayer = opts.topLayer;
   if (opts.client) {
     node.__clientLeft = opts.client.left;
     node.__clientTop = opts.client.top;
@@ -1040,6 +1048,67 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       const contained = run([scroller([fixed()], { style: { overflow: "hidden", ...style } })]);
       expect(pxFrame(contained.tree, "fixed").h, JSON.stringify(style)).toBe(0);
     }
+  });
+
+  it("lets a top-layer box and its content escape a clip that contains fixed boxes", () => {
+    for (const topLayer of [":modal", ":popover-open", ":fullscreen"]) {
+      const { tree } = run([
+        scroller(
+          [
+            el({
+              topLayer,
+              attrs: { id: "dialog" },
+              rect: { x: 400, y: 400, w: 200, h: 100 },
+              style: { position: "fixed" },
+              children: [row("confirm", { x: 420, y: 420, w: 80, h: 20 })],
+            }),
+          ],
+          { style: { overflow: "hidden", transform: "matrix(1, 0, 0, 1, 0, 0)" } }
+        ),
+      ]);
+      expect(pxFrame(tree, "dialog"), topLayer).toEqual({ x: 400, y: 400, w: 200, h: 100 });
+      expect(pxFrame(tree, "confirm"), topLayer).toEqual({ x: 420, y: 420, w: 80, h: 20 });
+    }
+  });
+
+  it("extends an overflow: clip or contain: paint edge by overflow-clip-margin", () => {
+    const margin = (style: Record<string, string>, opts: Opts = {}) =>
+      pxFrame(
+        run([
+          scroller([row("near", { x: 1, y: 100, w: 100, h: 40 })], {
+            client: { left: 1, top: 1, width: 298, height: 98 },
+            ...opts,
+            style,
+          }),
+        ]).tree,
+        "near"
+      );
+    // Padding box bottom 99, so the clip edge sits at 129.
+    expect(margin({ overflow: "clip", overflowClipMargin: "30px" }).h).toBe(29);
+    expect(margin({ overflow: "visible", contain: "paint", overflowClipMargin: "30px" }).h).toBe(
+      29
+    );
+    // From the content box (inset by 10px padding) or the border box (1px border).
+    expect(
+      margin({ overflow: "clip", overflowClipMargin: "content-box 30px", paddingBottom: "10px" }).h
+    ).toBe(19);
+    expect(
+      margin({ overflow: "clip", overflowClipMargin: "border-box 30px", borderBottomWidth: "1px" })
+        .h
+    ).toBe(30);
+    // Scaled with the clipper: at 2x the padding box ends at 48 and the clip at 108.
+    expect(
+      margin(
+        { overflow: "clip", overflowClipMargin: "30px" },
+        {
+          rect: { x: 0, y: 0, w: 600, h: 50 },
+          client: { left: 1, top: 1, width: 298, height: 23 },
+          offset: { width: 300, height: 25 },
+        }
+      ).h
+    ).toBe(8);
+    // overflow: hidden ignores the margin.
+    expect(margin({ overflow: "hidden", overflowClipMargin: "30px" }).h).toBe(0);
   });
 
   it("clips only the axes whose overflow is not visible", () => {
