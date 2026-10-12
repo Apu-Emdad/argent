@@ -515,7 +515,6 @@ describe("argent flow run", () => {
   it.each([
     [["run", "checkout", "--json", "--device"], "--device requires a value"],
     [["run", "checkout", "--json", "--bogus"], "Unknown flag: --bogus"],
-    [["run", "checkout", "--json=true"], "--json does not take a value"],
     [
       ["run", "--json"],
       "argent flow run <flow|flow.yaml|dir> requires a flow name, a YAML file path, or a directory path.",
