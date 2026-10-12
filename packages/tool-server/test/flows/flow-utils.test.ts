@@ -19,7 +19,9 @@ import {
   MAX_RECORDINGS,
   getFlowPath,
   appIdForPlatform,
+  authoringPlatform,
   chromiumLaunchSpec,
+  iosLaunchArgs,
   writeNewFlowFile,
   blockSteps,
   BLOCK_DIRECTIVE_KEYS,
@@ -250,6 +252,17 @@ describe("parseFlow", () => {
     expect(entryRejectionMessage(content)).toContain(
       "Unrecognized flow entry (step must be an object)"
     );
+  });
+
+  it.each([
+    ["await.text.in", "steps:\n  - await: { text: { contains: Welcome } }\n"],
+    ["assert.text.in", "steps:\n  - assert: { text: { contains: Welcome } }\n"],
+    ["when.text.in", "steps:\n  - when: { text: { contains: Welcome } }\n    steps: [echo: hi]\n"],
+    ["type.into", "steps:\n  - type: { text: hello }\n"],
+  ])("classifies an omitted %s instead of crashing on the render", (where, content) => {
+    // An absent key reaches badEntry as `undefined`, which JSON.stringify
+    // renders as the value `undefined` rather than a string.
+    expect(entryRejectionMessage(content)).toContain(`Unrecognized flow entry (${where}:`);
   });
 
   it("sugars a bare-string selector into a loose { text } for tap", async () => {
@@ -1454,7 +1467,7 @@ describe("chromium launch parsing", () => {
 
   it("rejects a chromium map with non-string args", async () => {
     expect(() =>
-      parseFlow("steps:\n  - launch: { chromium: { path: ./app, args: [1, 2] } }\n")
+      parseFlow("steps:\n  - launch: { chromium: { path: ./app, args: [[--flag]] } }\n")
     ).toThrow(/launch needs/);
   });
 });
@@ -1486,6 +1499,75 @@ describe("chromiumLaunchSpec", () => {
     );
     expect(appIdForPlatform({ chromium: "./app" }, "chromium")).toBe("./app");
     expect(appIdForPlatform({ ios: "com.acme.app" }, "chromium")).toBeNull();
+  });
+});
+
+describe("ios launch args", () => {
+  it("parses an ios { app, args } entry", async () => {
+    const flow = parseFlow(
+      'steps:\n  - launch: { ios: { app: com.acme.app, args: [-Flag, "YES"] }, android: com.acme.app }\n'
+    );
+    expect(flow.steps).toEqual([
+      {
+        kind: "launch",
+        app: { ios: { app: "com.acme.app", args: ["-Flag", "YES"] }, android: "com.acme.app" },
+      },
+    ]);
+  });
+
+  it("parses an ios { app } entry with no args", async () => {
+    const flow = parseFlow("steps:\n  - launch: { ios: { app: com.acme.app } }\n");
+    expect(flow.steps).toEqual([{ kind: "launch", app: { ios: { app: "com.acme.app" } } }]);
+  });
+
+  it("round-trips an ios { app, args } launch through YAML", async () => {
+    const flow: FlowFile = {
+      executionPrerequisite: "",
+      steps: [{ kind: "launch", app: { ios: { app: "com.acme.app", args: ["-Flag", "YES"] } } }],
+    };
+    expect(parseFlow(serializeFlow(flow)).steps).toEqual(flow.steps);
+  });
+
+  it("rejects an ios map with no app, an empty app, or non-string args", async () => {
+    expect(() => parseFlow("steps:\n  - launch: { ios: { args: [-Flag] } }\n")).toThrow(
+      /launch needs/
+    );
+    expect(() => parseFlow('steps:\n  - launch: { ios: { app: "" } }\n')).toThrow(/launch needs/);
+    expect(() =>
+      parseFlow("steps:\n  - launch: { ios: { app: com.acme.app, args: [[-Flag]] } }\n")
+    ).toThrow(/launch needs/);
+  });
+
+  it("names an unquoted number or boolean arg and says to quote it", async () => {
+    expect(() =>
+      parseFlow("steps:\n  - launch: { ios: { app: com.acme.app, args: [-Count, 5] } }\n")
+    ).toThrow('launch.ios.args[1] is a number (5); quote it so it stays a string: "5"');
+    expect(() =>
+      parseFlow("steps:\n  - launch: { ios: { app: com.acme.app, args: [-Flag, true] } }\n")
+    ).toThrow('launch.ios.args[1] is a boolean (true); quote it so it stays a string: "true"');
+    expect(() =>
+      parseFlow("steps:\n  - launch: { chromium: { path: ./app, args: [--port, 9222] } }\n")
+    ).toThrow("launch.chromium.args[1] is a number (9222)");
+  });
+
+  it("rejects an unknown key in an ios map", async () => {
+    expect(() =>
+      parseFlow("steps:\n  - launch: { ios: { app: com.acme.app, arg: [-Flag] } }\n")
+    ).toThrow(/launch.ios has unknown key `arg`/);
+  });
+
+  it("appIdForPlatform returns the bundle id for ios and ios-remote", async () => {
+    const app = { ios: { app: "com.acme.app", args: ["-Flag"] }, native: "com.acme.native" };
+    expect(appIdForPlatform(app, "ios")).toBe("com.acme.app");
+    expect(appIdForPlatform(app, "ios-remote")).toBe("com.acme.app");
+    expect(appIdForPlatform(app, "android")).toBe("com.acme.native");
+  });
+
+  it("iosLaunchArgs reads only an ios { app, args } entry", async () => {
+    expect(iosLaunchArgs({ ios: { app: "com.acme.app", args: ["-Flag"] } })).toEqual(["-Flag"]);
+    expect(iosLaunchArgs({ ios: "com.acme.app" })).toBeUndefined();
+    expect(iosLaunchArgs("com.acme.app")).toBeUndefined();
+    expect(iosLaunchArgs(undefined)).toBeUndefined();
   });
 });
 
@@ -1526,6 +1608,47 @@ describe("native launch shorthand", () => {
   it("native never applies to chromium (chromium takes a path, not an id)", async () => {
     expect(appIdForPlatform({ native: "com.acme.app" }, "chromium")).toBeNull();
     expect(chromiumLaunchSpec({ native: "com.acme.app" })).toBeNull();
+  });
+});
+
+// ── the authoring platform fold ──────────────────────────────────────
+
+describe("the authoring platform fold", () => {
+  it("folds only ios-remote, and leaves every writable platform alone", async () => {
+    expect(authoringPlatform("ios-remote")).toBe("ios");
+    for (const p of ["ios", "android", "chromium", "vega"]) {
+      expect(authoringPlatform(p)).toBe(p);
+    }
+  });
+
+  it("a launch map resolves its ios entry on a remote simulator", async () => {
+    // A remote sim runs the same app from the same store as a local one, and a
+    // flow file names no host — so the author's `ios` key is its entry.
+    const app = { ios: "com.acme.app", android: "com.acme.app.android" };
+    expect(appIdForPlatform(app, "ios-remote")).toBe("com.acme.app");
+    expect(appIdForPlatform(app, "ios")).toBe("com.acme.app");
+  });
+
+  it("declares nothing on a remote simulator when the map has no ios and no native key", async () => {
+    // The fold shares iOS's entry; it does not invent one out of another
+    // platform's. A flow that only ever ran on Android still fails here.
+    expect(appIdForPlatform({ android: "com.acme.app.android" }, "ios-remote")).toBeNull();
+  });
+
+  it("still falls back to native on a remote simulator", async () => {
+    expect(appIdForPlatform({ native: "com.acme.app" }, "ios-remote")).toBe("com.acme.app");
+    // …and a specific ios key still wins over it.
+    expect(appIdForPlatform({ native: "com.acme.app", ios: "com.acme.dev" }, "ios-remote")).toBe(
+      "com.acme.dev"
+    );
+  });
+
+  it("keeps `ios-remote` unwritable: the launch map still rejects the key", async () => {
+    // The fold exists so no flow file needs a remote key. Accepting one would
+    // let a flow name the host, which is the thing a flow deliberately cannot do.
+    expect(() => parseFlow('steps:\n  - launch: { "ios-remote": com.acme.app }\n')).toThrow(
+      /allowed keys: native, ios, android, chromium, vega/
+    );
   });
 });
 
