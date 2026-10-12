@@ -286,7 +286,7 @@ describe("system-settings on an iOS simulator", () => {
     ],
     ["appearance", "Unable to lookup in current state: Booting", "still booting"],
     ["appearance", "Operation not supported", "try a newer runtime"],
-    ["reduce-motion", "Operation not supported while the device is not booted.", "use boot-device"],
+    ["appearance", "Operation not supported while the device is not booted.", "use boot-device"],
   ] as const)("%s failing with %j hints %j", async (setting, stderr, hint) => {
     execFileFails(stderr);
     const err = await failureOf(ios(setting, setting === "appearance" ? "dark" : "on"));
@@ -550,6 +550,12 @@ describe("system-settings on Android", () => {
       await expect(android("location", "on")).resolves.toMatchObject({
         applied: "location_mode=3",
       });
+    });
+
+    it("propagates a transport failure from the probe unchanged", async () => {
+      const transport = new Error("error: device 'emulator-5554' offline");
+      mockAdbShell.mockRejectedValueOnce(transport);
+      await expect(android("location", "on")).rejects.toBe(transport);
     });
 
     it("wraps a probe failure with the call's context", async () => {
