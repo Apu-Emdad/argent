@@ -52,6 +52,7 @@ The agent reproduces a failed state. The agent restarts the app, reloads the Met
 ## Limits
 
 - Argent collects the logs from the moment the debugger connects. The agent does not see the earlier logs. Do the operation again after the agent connects.
+- When the agent restarts the app, Argent connects again while the app starts. Thus the agent sees the startup logs, for example the warnings at launch. Each restart starts a new log.
 - The native view tree is available on iOS only.
 - The agent connects to one app at a time.
 

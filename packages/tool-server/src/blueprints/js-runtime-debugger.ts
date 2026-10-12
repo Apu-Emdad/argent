@@ -251,52 +251,9 @@ export const jsRuntimeDebuggerBlueprint: ServiceBlueprint<JsRuntimeDebuggerApi, 
     const cdp = new CDPClient(proxied ?? selected.webSocketUrl);
     await cdp.connect();
 
-    const sourceMaps = new SourceMapsRegistry();
-
-    cdp.events.on("scriptParsed", (script) => {
-      sourceMaps.registerFromScriptParsed(script.url, script.scriptId, script.sourceMapURL);
-    });
-
-    const ignore = () => {};
-    const warnOnError = (label: string) => (err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[JsRuntimeDebugger:${port}] ${label} failed (non-fatal): ${msg}\n`);
-    };
-
-    /**
-     * Through a provider's socket Argent is one of several clients on a single
-     * connection, so this setup splits by what it touches.
-     *
-     * These four are per-runtime, not per-client. On a shared session they reach
-     * into someone else's debugger: `setPauseOnExceptions: "none"` would disarm
-     * exception breakpoints a user set, from a tool they did not run. The client
-     * that owns the session owns its global state.
-     *
-     * The rest are unconditional. Enables are idempotent, and a binding only
-     * adds one. Other clients can ignore it by name.
-     */
-    if (!proxied) {
-      await cdp.send("FuseboxClient.setClientMetadata", {}).catch(ignore);
-    }
-
-    await cdp.send("ReactNativeApplication.enable", {}).catch(ignore);
-    await cdp.send("Runtime.enable");
-    await cdp.send("Debugger.enable", { maxScriptsCacheSize: 100_000_000 });
-
-    if (!proxied) {
-      await cdp.send("Debugger.setPauseOnExceptions", { state: "none" });
-      await cdp.send("Debugger.setAsyncCallStackDepth", { maxDepth: 32 }).catch(ignore);
-      await cdp.send("Runtime.runIfWaitingForDebugger").catch(ignore);
-    }
-
-    await cdp.addBinding("__argent_callback");
-
-    await cdp.evaluate(DISABLE_LOGBOX_SCRIPT).catch(warnOnError("DISABLE_LOGBOX_SCRIPT"));
-
-    await sourceMaps.waitForPending();
-
-    const sourceResolver = createSourceResolver(port, metro.projectRoot);
-
+    // Capture console output from the moment the socket is up: the setup below
+    // (enables, binding, source maps) takes seconds on a cold app start, and
+    // logs printed before the listener exists are never replayed.
     const logWriter = new LogFileWriter(port);
     const consoleEvents = new TypedEventEmitter<ConsoleLogEvents>();
     let nextLogId = 0;
@@ -324,74 +281,127 @@ export const jsRuntimeDebuggerBlueprint: ServiceBlueprint<JsRuntimeDebuggerApi, 
       consoleEvents.emit("log", entry);
     });
 
-    const consoleServer = await createConsoleLogServer(consoleEvents, logWriter);
+    try {
+      const sourceMaps = new SourceMapsRegistry();
 
-    const api: JsRuntimeDebuggerApi = {
-      port,
-      projectRoot: metro.projectRoot,
-      deviceName: selected.deviceName,
-      appName: selected.target.title,
-      logicalDeviceId: selected.target.reactNative?.logicalDeviceId,
-      isNewDebugger: selected.isNewDebugger,
-      cdp,
-      sourceResolver,
-      sourceMaps,
-      logWriter,
-      consoleEvents,
-      consoleSocketUrl: consoleServer.url,
-    };
+      cdp.events.on("scriptParsed", (script) => {
+        sourceMaps.registerFromScriptParsed(script.url, script.scriptId, script.sourceMapURL);
+      });
 
-    // Connect is the only place both ids are known at once; the alias keeps a
-    // later tool that forwards the logicalDeviceId on this instance instead of
-    // opening a second one. See utils/debugger/device-alias.ts.
-    rememberDeviceAlias(api.logicalDeviceId, deviceId);
-    // Equal ids mean the caller connected with the logicalDeviceId itself, as
-    // `selectTarget` demands once a second device shares this Metro. Nothing
-    // then joins the session to a udid or serial, so a `list-devices`-scoped
-    // `stop-all-simulator-servers` can only report it, never reach it.
-    rememberLogicalKeyedDevice(api.logicalDeviceId, deviceId);
+      const ignore = () => {};
+      const warnOnError = (label: string) => (err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[JsRuntimeDebugger:${port}] ${label} failed (non-fatal): ${msg}\n`);
+      };
 
-    const events = new TypedEventEmitter<ServiceEvents>();
+      /**
+       * Through a provider's socket Argent is one of several clients on a single
+       * connection, so this setup splits by what it touches.
+       *
+       * These four are per-runtime, not per-client. On a shared session they reach
+       * into someone else's debugger: `setPauseOnExceptions: "none"` would disarm
+       * exception breakpoints a user set, from a tool they did not run. The client
+       * that owns the session owns its global state.
+       *
+       * The rest are unconditional. Enables are idempotent, and a binding only
+       * adds one. Other clients can ignore it by name.
+       */
+      if (!proxied) {
+        await cdp.send("FuseboxClient.setClientMetadata", {}).catch(ignore);
+      }
 
-    cdp.events.on("disconnected", (error) => {
-      events.emit(
-        "terminated",
-        error ??
-          new FailureError("CDP disconnected", {
-            error_code: FAILURE_CODES.JS_RUNTIME_CDP_DISCONNECTED,
-            failure_stage: "js_runtime_debugger_cdp_lifecycle",
-            failure_area: "tool_server",
-            error_kind: "network",
-          })
-      );
-    });
+      await cdp.send("ReactNativeApplication.enable", {}).catch(ignore);
+      await cdp.send("Runtime.enable");
+      await cdp.send("Debugger.enable", { maxScriptsCacheSize: 100_000_000 });
 
-    return {
-      api,
-      dispose: async () => {
-        // `logWriter.close()` below unlinks the log file, and this dispose is
-        // routinely another agent's `stop-all-simulator-servers`. Breadcrumb so
-        // `debugger-log-registry`'s bare `totalEntries: 0` can explain the lost
-        // history — only when there was history to lose, and under both ids,
-        // since `forgetDeviceAlias` below drops the only join between them.
-        const captured = logWriter.getStats().totalEntries;
-        if (captured > 0) {
-          const salvage =
-            `The ${captured} captured console ${captured === 1 ? "entry" : "entries"} went with ` +
-            `it — the log file is deleted on teardown, so this registry starts empty rather ` +
-            `than the app having logged nothing.`;
-          recordReapedSession("js-runtime-debugger", deviceId, salvage);
-          if (api.logicalDeviceId && api.logicalDeviceId !== deviceId) {
-            recordReapedSession("js-runtime-debugger", api.logicalDeviceId, salvage);
+      if (!proxied) {
+        await cdp.send("Debugger.setPauseOnExceptions", { state: "none" });
+        await cdp.send("Debugger.setAsyncCallStackDepth", { maxDepth: 32 }).catch(ignore);
+        await cdp.send("Runtime.runIfWaitingForDebugger").catch(ignore);
+      }
+
+      await cdp.addBinding("__argent_callback");
+
+      await cdp.evaluate(DISABLE_LOGBOX_SCRIPT).catch(warnOnError("DISABLE_LOGBOX_SCRIPT"));
+
+      await sourceMaps.waitForPending();
+
+      const sourceResolver = createSourceResolver(port, metro.projectRoot);
+
+      const consoleServer = await createConsoleLogServer(consoleEvents, logWriter);
+
+      const api: JsRuntimeDebuggerApi = {
+        port,
+        projectRoot: metro.projectRoot,
+        deviceName: selected.deviceName,
+        appName: selected.target.title,
+        logicalDeviceId: selected.target.reactNative?.logicalDeviceId,
+        isNewDebugger: selected.isNewDebugger,
+        cdp,
+        sourceResolver,
+        sourceMaps,
+        logWriter,
+        consoleEvents,
+        consoleSocketUrl: consoleServer.url,
+      };
+
+      // Connect is the only place both ids are known at once; the alias keeps a
+      // later tool that forwards the logicalDeviceId on this instance instead of
+      // opening a second one. See utils/debugger/device-alias.ts.
+      rememberDeviceAlias(api.logicalDeviceId, deviceId);
+      // Equal ids mean the caller connected with the logicalDeviceId itself, as
+      // `selectTarget` demands once a second device shares this Metro. Nothing
+      // then joins the session to a udid or serial, so a `list-devices`-scoped
+      // `stop-all-simulator-servers` can only report it, never reach it.
+      rememberLogicalKeyedDevice(api.logicalDeviceId, deviceId);
+
+      const events = new TypedEventEmitter<ServiceEvents>();
+
+      cdp.events.on("disconnected", (error) => {
+        events.emit(
+          "terminated",
+          error ??
+            new FailureError("CDP disconnected", {
+              error_code: FAILURE_CODES.JS_RUNTIME_CDP_DISCONNECTED,
+              failure_stage: "js_runtime_debugger_cdp_lifecycle",
+              failure_area: "tool_server",
+              error_kind: "network",
+            })
+        );
+      });
+
+      return {
+        api,
+        dispose: async () => {
+          // `logWriter.close()` below unlinks the log file, and this dispose is
+          // routinely another agent's `stop-all-simulator-servers`. Breadcrumb so
+          // `debugger-log-registry`'s bare `totalEntries: 0` can explain the lost
+          // history — only when there was history to lose, and under both ids,
+          // since `forgetDeviceAlias` below drops the only join between them.
+          const captured = logWriter.getStats().totalEntries;
+          if (captured > 0) {
+            const salvage =
+              `The ${captured} captured console ${captured === 1 ? "entry" : "entries"} went with ` +
+              `it — the log file is deleted on teardown, so this registry starts empty rather ` +
+              `than the app having logged nothing.`;
+            recordReapedSession("js-runtime-debugger", deviceId, salvage);
+            if (api.logicalDeviceId && api.logicalDeviceId !== deviceId) {
+              recordReapedSession("js-runtime-debugger", api.logicalDeviceId, salvage);
+            }
           }
-        }
-        forgetDeviceAlias(api.logicalDeviceId);
-        forgetLogicalKeyedDevice(deviceId);
-        await consoleServer.close();
-        logWriter.close();
-        await cdp.disconnect();
-      },
-      events,
-    };
+          forgetDeviceAlias(api.logicalDeviceId);
+          forgetLogicalKeyedDevice(deviceId);
+          await consoleServer.close();
+          logWriter.close();
+          await cdp.disconnect();
+        },
+        events,
+      };
+    } catch (err) {
+      // Capture began before setup; a setup failure must not leave the file behind.
+      logWriter.close();
+      await cdp.disconnect().catch(() => {});
+      throw err;
+    }
   },
 };

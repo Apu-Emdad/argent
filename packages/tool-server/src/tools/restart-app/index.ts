@@ -1,3 +1,4 @@
+import { ServiceState } from "@argent/registry";
 import { z } from "zod";
 import type { Registry, ServiceRef, ToolCapability, ToolDefinition } from "@argent/registry";
 import { nativeDevtoolsRef } from "../../blueprints/native-devtools";
@@ -53,7 +54,7 @@ const capability: ToolCapability = {
 // `services()`. A tvOS sim classifies as platform "ios", and native-devtools
 // covers it too (ensureEnv injects the TVOSSIMULATOR dylib slice).
 export function createRestartAppTool(registry: Registry): ToolDefinition<Params, RestartAppResult> {
-  return {
+  const tool: ToolDefinition<Params, RestartAppResult> = {
     id: "restart-app",
     interaction: {
       startedMsg: ({ params }) => `Restarting ${params.bundleId}`,
@@ -95,4 +96,55 @@ Returns { restarted, bundleId }. Fails if the app is not installed.`,
       vega: vegaImpl,
     }),
   };
+  const relaunch = tool.execute.bind(tool);
+  tool.execute = async (services, params, ctx) => {
+    const sessions = runningDebuggerSessions(registry, params.udid);
+    // End them cleanly first rather than leaving a dead socket for the next
+    // call to trip over; the relaunched app gets a fresh session and log.
+    for (const urn of sessions) await registry.disposeService(urn).catch(() => {});
+    const result = await relaunch(services, params, ctx);
+    for (const urn of sessions) void reattachDebugger(registry, urn);
+    return result;
+  };
+  return tool;
+}
+
+/** JS-runtime debugger sessions currently attached to `udid`'s app. */
+function runningDebuggerSessions(registry: Registry, udid: string): string[] {
+  const urns: string[] = [];
+  // Best effort: a registry without a snapshot (tests, embedders) has nothing to re-attach.
+  const services =
+    typeof registry.getSnapshot === "function" ? registry.getSnapshot().services : [];
+  for (const [urn, node] of services) {
+    if (
+      urn.startsWith("JsRuntimeDebugger:") &&
+      urn.endsWith(`:${udid}`) &&
+      node.state === ServiceState.RUNNING
+    ) {
+      urns.push(urn);
+    }
+  }
+  return urns;
+}
+
+const REATTACH_BUDGET_MS = 30_000;
+const REATTACH_INTERVAL_MS = 250;
+
+/**
+ * Reconnect a debugger session as soon as the relaunched app's runtime shows up
+ * on Metro, so console logs from its startup are captured.
+ * Logs printed while no session is attached are lost for good — the runtime
+ * does not replay them — so waiting for the agent's next debugger call (the old
+ * behaviour) dropped the whole cold start.
+ */
+async function reattachDebugger(registry: Registry, urn: string): Promise<void> {
+  const deadline = Date.now() + REATTACH_BUDGET_MS;
+  while (Date.now() < deadline) {
+    try {
+      await registry.resolveService(urn);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, REATTACH_INTERVAL_MS));
+    }
+  }
 }
