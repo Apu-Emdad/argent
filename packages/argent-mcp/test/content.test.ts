@@ -366,6 +366,26 @@ describe("toMcpContent with artifact ctx", () => {
     expect(text).toContain(out);
   });
 
+  it("refuses a directory-shaped `out` instead of writing a file there", async () => {
+    const dir = join(root, "shots");
+    const out = `${dir}${path.sep}`;
+
+    const result = await toMcpContent(
+      { image: artifactHandle("img6", "shot.png", "image/png") },
+      "image",
+      {
+        toolsUrl: "http://remote:3001",
+        deviceId: "DEV-1",
+        fetchImpl: fetchReturning([...PNG_SIGNATURE]),
+      },
+      { udid: "DEV-1", out, includeImageInContext: false }
+    );
+
+    await expect(fs.stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
+    const text = (result[0] as { text: string }).text;
+    expect(text).toMatch(/^Saved: .*shot\.png\nCould not save to /);
+  });
+
   it("rewrites non-image artifacts to local paths inside the JSON result", async () => {
     const result = await toMcpContent(
       { exportedFiles: { cpu: artifactHandle("cpu1", "cpu.xml", "application/xml") } },

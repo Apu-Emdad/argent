@@ -100,7 +100,8 @@ async function savedText(scratchPath: string, data: Buffer, args: unknown): Prom
   const target = resolve(out);
   try {
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, data);
+    // Not `target`: resolve() drops a trailing separator, so "shots/" would become a file.
+    await writeFile(out, data);
     return `Saved: ${target}`;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

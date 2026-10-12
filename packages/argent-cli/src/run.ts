@@ -99,7 +99,7 @@ function printToolHelp(meta: ToolMeta): void {
 
 function withoutGlobalFlags(schema: JsonSchema | undefined): JsonSchema | undefined {
   if (!schema?.properties) return schema;
-  const { json: _json, out: _out, ...properties } = schema.properties;
+  const { out: _out, ...properties } = schema.properties;
   return { ...schema, properties };
 }
 
