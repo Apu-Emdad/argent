@@ -143,21 +143,23 @@ describe("probeGlobalInstallTarget", () => {
     }
   });
 
-  it("flags a global directory inside the Nix store", () => {
+  it.skipIf(!canTestUnwritable)("flags a blocked directory inside the Nix store", () => {
     const storeDir = path.join(tmpRoot, "nix", "store");
     const globalRoot = path.join(storeDir, "abc123-nodejs-22", "lib", "node_modules");
     fs.mkdirSync(globalRoot, { recursive: true });
+    fs.chmodSync(globalRoot, 0o555);
     mockExecFileSync.mockReturnValue(`${globalRoot}\n`);
     vi.stubEnv("NIX_STORE_DIR", storeDir);
 
     try {
       expect(probeGlobalInstallTarget("npm")).toEqual({
         dir: globalRoot,
-        blocked: false,
+        blocked: true,
         nixStore: true,
       });
     } finally {
       vi.unstubAllEnvs();
+      fs.chmodSync(globalRoot, 0o755);
     }
   });
 
