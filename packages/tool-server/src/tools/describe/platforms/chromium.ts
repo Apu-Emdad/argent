@@ -130,6 +130,7 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
       // (=== 3 already made a clobbered nodeType safe; this removes the lone
       // directly-read member so no read's safety rests on the comparison semantics.)
       if (getNodeType.call(child) === 3) s += getNodeValue.call(child);
+      else if (getNodeType.call(child) === 1 && getTagName.call(child).toLowerCase() === "br") s += " ";
     }
     return s.replace(/\\s+/g, " ").trim();
   }
