@@ -69,8 +69,7 @@ export class LogFileWriter {
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch {
-      // An unwritable ~/.argent must not fail the debugger connection: open()
-      // fails below and the writer runs fileless, which hasFile() reports.
+      // Unwritable ~/.argent: open() fails too and the writer runs fileless.
     }
     this.filePath = path.join(dir, `argent-logs-${port}-${timestamp}.log`);
     this.open();

@@ -292,30 +292,47 @@ describe("a debugger session reaped by stop-all-simulator-servers", () => {
 describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "a debugger session under an unwritable ~/.argent",
   () => {
-    let argentDir: string;
+    const argentDir = () => path.join(os.homedir(), ".argent");
 
-    beforeEach(() => {
-      argentDir = path.join(os.homedir(), ".argent");
-      fs.rmSync(path.join(argentDir, "tmp"), { recursive: true, force: true });
-      fs.mkdirSync(argentDir, { recursive: true });
-      fs.chmodSync(argentDir, 0o500);
-    });
+    function makeArgentUnwritable() {
+      fs.rmSync(path.join(argentDir(), "tmp"), { recursive: true, force: true });
+      fs.mkdirSync(argentDir(), { recursive: true });
+      fs.chmodSync(argentDir(), 0o500);
+    }
 
     afterEach(() => {
-      fs.chmodSync(argentDir, 0o700);
+      fs.chmodSync(argentDir(), 0o700);
     });
 
-    it("connects, and the registry says its log file does not exist", async () => {
-      await connectAndCapture(LOGICAL_ID, 2);
-
-      const result = (await registry.invokeTool("debugger-log-registry", {
+    async function readRegistry() {
+      return (await registry.invokeTool("debugger-log-registry", {
         port: mockPort,
         device_id: LOGICAL_ID,
       })) as { status: string; file: string; totalEntries: number; note?: string };
+    }
+
+    it("connects, and the registry says its log file does not exist and how to get one", async () => {
+      makeArgentUnwritable();
+      await connectAndCapture(LOGICAL_ID, 2);
+
+      const result = await readRegistry();
 
       expect(result.status).toBe("connected");
       expect(result.totalEntries).toBe(2);
       expect(fs.existsSync(result.file)).toBe(false);
+      expect(result.note).toContain(`No log file exists at ${result.file}`);
+      expect(result.note).toContain(`stop-all-simulator-servers with devices: ["${LOGICAL_ID}"]`);
+    });
+
+    it("keeps the reaped-session explanation alongside the missing-file one", async () => {
+      const urn = await connectAndCapture(LOGICAL_ID, 7);
+      await registry.disposeService(urn);
+      makeArgentUnwritable();
+
+      const result = await readRegistry();
+
+      expect(result.totalEntries).toBe(0);
+      expect(result.note).toContain("7 captured console entries");
       expect(result.note).toContain(`No log file exists at ${result.file}`);
     });
   }
