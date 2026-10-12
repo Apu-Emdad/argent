@@ -282,6 +282,21 @@ describe("run-sequence", () => {
     expect(verdicts).toEqual([undefined, true, undefined]);
   });
 
+  it("does not stop on another tool's verified: false", async () => {
+    const registry = mockRegistry(() => ({ verified: false }));
+    const result = await createRunSequenceTool(registry).execute(
+      {},
+      {
+        udid: IOS,
+        steps: [
+          { tool: "gesture-tap", args: { x: 0.5, y: 0.5 } },
+          { tool: "gesture-tap", args: { x: 0.5, y: 0.6 } },
+        ],
+      }
+    );
+    expect(result.completed).toBe(2);
+  });
+
   it("forwards the request abort signal into each sub-tool invocation", async () => {
     const registry = mockRegistry(() => ({ tapped: true }));
     const tool = createRunSequenceTool(registry);
