@@ -207,7 +207,7 @@ describe("screenshotDiffTool", () => {
     expect(captureBaseline.description).not.toContain("full resolution");
     expect(captureCurrent.description).not.toContain("full resolution");
     expect(screenshotDiffTool.description).toContain(
-      "or the default screenshot scale if that capture fails"
+      "full resolution; on an iOS simulator or Android device, the default screenshot scale if that capture fails"
     );
     expect(screenshotDiffTool.description).toContain("diffPath is the diff image at compared size");
 

@@ -112,7 +112,7 @@ export const screenshotDiffTool: ToolDefinition<Params, ScreenshotDiffResult> = 
     failedMsg: ({ failureSignal }) => `Failed to compare screenshots: ${failureSignal.error_code}`,
   },
   description: `Compare two PNG screenshots and return a compact visual-diff summary.
-Accepts saved baseline/current PNG paths, or one saved PNG plus one live capture from a device (full resolution, or the default screenshot scale if that capture fails). Always provide udid so the capture backend can be resolved.
+Accepts saved baseline/current PNG paths, or one saved PNG plus one live capture from a device (full resolution; on an iOS simulator or Android device, the default screenshot scale if that capture fails). Always provide udid so the capture backend can be resolved.
 Use when stable before/after screenshots exist and the expected result is pixel-visible: layout, spacing, color, typography, image/icon rendering, clipping, overflow, or text rendering.
 For live captures, set exactly one of captureBaseline or captureCurrent; use baselinePath + captureCurrent for the common visual-regression flow.
 Physical iPhones: live captures are device-wide and need no registered app. Keep baselines per device model; different aspect ratios fail as a dimension mismatch.
