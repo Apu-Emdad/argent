@@ -1,10 +1,6 @@
 /**
  * Stage 00-cpu-correlate: rank the JS functions sampled inside each hot commit's
  * [timestamp, timestamp + commitDuration] window.
- *
- * Attribution is per call-tree NODE, one row per node that captured samples: a
- * function reached at several call sites appears once per site, so callers must
- * merge by ancestry before summing inclusive time.
  */
 import type { HermesCpuProfile, HermesProfileNode } from "../types/input";
 import type { CpuCommitHotspot } from "../types/output";
@@ -207,7 +203,6 @@ export function queryCpuWindow(
   };
 }
 
-/** Child id → parent id, from the call tree. Exported for query tools merging rows by node ancestry. */
 export function buildChildToParent(nodeMap: Map<number, HermesProfileNode>): Map<number, number> {
   const childToParent = new Map<number, number>();
   for (const node of nodeMap.values()) {

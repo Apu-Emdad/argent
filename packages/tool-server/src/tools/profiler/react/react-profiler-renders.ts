@@ -9,7 +9,7 @@ import { HEARTBEAT_SCRIPT, FIBER_ROOT_TRACKER_SCRIPT } from "../../../utils/reac
 import { NO_DEVTOOLS_HOOK_ERROR, NO_RENDERERS_ATTACHED_ERROR } from "./react-profiler-start";
 import { metroPort, metroPortField } from "../../../utils/debugger/metro-port";
 
-const COLLECT_RENDERS_SCRIPT = `
+export const COLLECT_RENDERS_SCRIPT = `
 (function() {
   try {
     var hook = globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__;
@@ -18,10 +18,7 @@ const COLLECT_RENDERS_SCRIPT = `
     var renderers = hook._renderers || hook.renderers;
     if (!renderers) return JSON.stringify({ error: 'no renderers attached to hook' });
 
-    // Null prototype: a fiber named "__proto__" or "constructor" must become
-    // an own data property, not write through an inherited accessor onto
-    // Object.prototype of the debuggee app.
-    var results = Object.create(null);
+    var results = {};
 
     function walkFiber(fiber, depth) {
       if (!fiber || depth > 30) return;
@@ -113,9 +110,6 @@ const zodSchema = z.object({
     .describe("Number of top components to return, by self render time (default 20)"),
 });
 
-/** Exposed for tests: the injected script runs on the debuggee, so its object handling is load-bearing. */
-export const __testables = { COLLECT_RENDERS_SCRIPT };
-
 export const reactProfilerRendersTool: ToolDefinition<z.infer<typeof zodSchema>, string> = {
   id: "react-profiler-renders",
   interaction: {
@@ -125,7 +119,7 @@ export const reactProfilerRendersTool: ToolDefinition<z.infer<typeof zodSchema>,
       `Failed to read React render activity: ${failureSignal.error_code}`,
   },
   description: `Scan the live React fiber tree for the components costing the most render time right now.
-Returns a markdown table sorted by self time: how many instances of each component are mounted, the largest single instance's subtree time, and total self time. It is a snapshot of the tree as it stands, not a recording, so the instance count is how many exist — not how many times they re-rendered.
+Returns a markdown table sorted by self time: how many instances of each component are mounted within the top 30 levels of the tree, the largest single instance's subtree time, and total self time. It is a snapshot, not a recording, so the instance count is how many exist, not how many times they re-rendered.
 Use for a quick read on which components are expensive without starting a profiling session; use react-profiler-start/stop when you need re-render counts and the reasons behind them.
 Fails if the React DevTools hook is not present in the runtime or the app is not connected.`,
   zodSchema,
@@ -188,14 +182,6 @@ Fails if the React DevTools hook is not present in the runtime or the app is not
     if (firstError !== null && HOOK_NOT_PRESENT_ERRORS.has(firstError)) {
       await cdp.evaluate(FIBER_ROOT_TRACKER_SCRIPT).catch(() => {});
       result = await evalRenders();
-      if (result?.exceptionDetails) {
-        throw new FailureError(`Runtime exception: ${result.exceptionDetails.text ?? "unknown"}`, {
-          error_code: FAILURE_CODES.REACT_PROFILER_RUNTIME_EXCEPTION,
-          failure_stage: "react_profiler_renders_runtime_eval",
-          failure_area: "tool_server",
-          error_kind: "subprocess",
-        });
-      }
       if (result?.result?.value) {
         parsed = JSON.parse(result.result.value) as ParsedRenders;
       }
@@ -216,11 +202,9 @@ Fails if the React DevTools hook is not present in the runtime or the app is not
     const entries: RenderEntry[] = Object.entries(parsed)
       .map(([component, data]) => ({
         component,
-        // These cross the debuggee→host boundary as JSON; a non-finite duration
-        // serializes to null, and null.toFixed throws.
-        instanceCount: data.instanceCount ?? 0,
-        maxActualDuration_ms: data.maxActualDuration ?? 0,
-        selfBaseDuration_ms: data.selfBaseDuration ?? 0,
+        instanceCount: data.instanceCount,
+        maxActualDuration_ms: data.maxActualDuration,
+        selfBaseDuration_ms: data.selfBaseDuration,
       }))
       .sort((a, b) => b.selfBaseDuration_ms - a.selfBaseDuration_ms)
       .slice(0, params.top_n);

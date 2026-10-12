@@ -105,7 +105,7 @@ function formatReason(commit: DevToolsFiberCommit): string {
   return parts.join(" ");
 }
 
-function renderByComponent(
+export function renderByComponent(
   commits: DevToolsFiberCommit[],
   componentName: string,
   topN: number
@@ -143,25 +143,14 @@ function renderByComponent(
     .map(([idx, entries]) => ({
       commitIndex: idx,
       instances: entries.length,
-      // `actualDuration` is inclusive (self + subtree), and same-named instances
-      // in one commit are routinely nested — a `View` inside a `View` — so the
-      // ancestor's figure already contains its descendants'. Summing produces
-      // a row claiming more time than the commit printed beside it. The largest
-      // single instance is a real subtree cost and cannot exceed the commit.
-      // `?? 0` matches 00-hot-commits: durations read back from a session dump
-      // can be null or absent (non-finite values become null through JSON),
-      // and an absent one makes these reduces NaN, printing "NaN".
-      maxSubtree: entries.reduce((m, e) => Math.max(m, e.actualDuration ?? 0), 0),
-      totalSelf: entries.reduce((s, e) => s + (e.selfDuration ?? 0), 0),
-      commitDuration: entries[0]!.commitDuration ?? 0,
-      timestamp: entries[0]!.timestamp ?? 0,
+      // Same-named instances nest, so inclusive durations can't be summed.
+      maxSubtree: entries.reduce((m, e) => Math.max(m, e.actualDuration), 0),
+      totalSelf: entries.reduce((s, e) => s + e.selfDuration, 0),
+      commitDuration: entries[0]!.commitDuration,
+      timestamp: entries[0]!.timestamp,
       reason: formatReason(entries[0]!),
       parentName: entries[0]!.parentName ?? "—",
     }))
-    // Rank by self time, the additive column — the same key every other
-    // grouping site uses. `maxSubtree` is an order statistic over one
-    // instance, so letting it pick the truncated set would drop commits where
-    // the component did more total work.
     .sort((a, b) => b.totalSelf - a.totalSelf)
     .slice(0, topN);
 
@@ -210,8 +199,8 @@ function renderByTimeRange(
     .map(([idx, entries]) => ({
       commitIndex: idx,
       componentCount: new Set(entries.map((e) => e.componentName)).size,
-      commitDuration: entries[0]!.commitDuration ?? 0,
-      timestamp: entries[0]!.timestamp ?? 0,
+      commitDuration: entries[0]!.commitDuration,
+      timestamp: entries[0]!.timestamp,
       topComponents: getTopComponents(entries, 5),
     }))
     .sort((a, b) => b.commitDuration - a.commitDuration)
@@ -250,10 +239,10 @@ export function renderByIndex(
     return `_Commit #${commitIndex} not found in stored data._`;
   }
 
-  const commitDuration = matching[0]!.commitDuration ?? 0;
-  const timestamp = matching[0]!.timestamp ?? 0;
+  const commitDuration = matching[0]!.commitDuration;
+  const timestamp = matching[0]!.timestamp;
 
-  const sorted = [...matching].sort((a, b) => (b.actualDuration ?? 0) - (a.actualDuration ?? 0));
+  const sorted = [...matching].sort((a, b) => b.actualDuration - a.actualDuration);
   // Uncapped by default: rows are fibers, so a small cap would show less than
   // the analyze report that points here.
   const shown = topN !== undefined ? sorted.slice(0, topN) : sorted;
@@ -274,7 +263,7 @@ export function renderByIndex(
     const parent = c.parentName ?? "—";
     const compiler = c.isCompilerOptimized ? "✓" : "";
     lines.push(
-      `| \`${c.componentName}\` | ${(c.actualDuration ?? 0).toFixed(1)} | ${(c.selfDuration ?? 0).toFixed(1)} | ${reason} | \`${parent}\` | ${compiler} |`
+      `| \`${c.componentName}\` | ${c.actualDuration.toFixed(1)} | ${c.selfDuration.toFixed(1)} | ${reason} | \`${parent}\` | ${compiler} |`
     );
   }
 
@@ -331,12 +320,12 @@ function renderCascadeTree(commits: DevToolsFiberCommit[], commitIndex: number):
 
   const rendered = new Set<string>();
 
-  function renderNode(name: string, depth: number, path: Set<string>): void {
+  function renderNode(name: string, depth: number): void {
     if (rendered.has(`${name}:${depth}`)) return;
     rendered.add(`${name}:${depth}`);
 
     const instances = matching.filter((c) => c.componentName === name);
-    const totalSelf = instances.reduce((s, c) => s + (c.selfDuration ?? 0), 0);
+    const totalSelf = instances.reduce((s, c) => s + c.selfDuration, 0);
     const count = instances.length;
     const reason = instances[0] ? formatReason(instances[0]) : "";
     const indent = "  ".repeat(depth);
@@ -346,35 +335,20 @@ function renderCascadeTree(commits: DevToolsFiberCommit[], commitIndex: number):
 
     const childCommits = children.get(name) ?? [];
     const childNames = new Set(childCommits.map((c) => c.componentName));
-    // Mutually recursive components (A renders B renders A) form a cycle in the
-    // name→parentName edges; without a path guard, `name:depth` dedupe never
-    // repeats and the walk descends until the stack overflows.
-    const nextPath = new Set(path);
-    nextPath.add(name);
     for (const childName of childNames) {
-      if (nextPath.has(childName)) continue;
-      renderNode(childName, depth + 1, nextPath);
+      renderNode(childName, depth + 1);
     }
   }
 
   const rootNames = new Set(roots.map((r) => r.componentName));
   for (const name of rootNames) {
-    renderNode(name, 0, new Set());
+    renderNode(name, 0);
   }
 
   return lines.join("\n");
 }
 
-/**
- * Group one commit's fibers by component name.
- *
- * `selfDuration` is exclusive, so it sums. `actualDuration` is inclusive — it
- * covers the fiber's whole subtree — and same-named instances in a commit are
- * routinely nested inside one another, so summing it counts the inner ones
- * twice and can exceed the commit's own duration. The largest single instance
- * is reported instead: a real subtree cost, bounded by the commit.
- */
-function getTopComponents(
+export function getTopComponents(
   entries: DevToolsFiberCommit[],
   topN: number
 ): { name: string; count: number; totalSelf: number; maxSubtree: number; reason: string }[] {
@@ -386,13 +360,13 @@ function getTopComponents(
     const existing = byName.get(e.componentName);
     if (existing) {
       existing.count++;
-      existing.totalSelf += e.selfDuration ?? 0;
-      existing.maxSubtree = Math.max(existing.maxSubtree, e.actualDuration ?? 0);
+      existing.totalSelf += e.selfDuration;
+      existing.maxSubtree = Math.max(existing.maxSubtree, e.actualDuration);
     } else {
       byName.set(e.componentName, {
         count: 1,
-        totalSelf: e.selfDuration ?? 0,
-        maxSubtree: e.actualDuration ?? 0,
+        totalSelf: e.selfDuration,
+        maxSubtree: e.actualDuration,
         first: e,
       });
     }
@@ -409,14 +383,6 @@ function getTopComponents(
       reason: formatReason(first),
     }));
 }
-
-/** Exposed for tests: the grouping whose inclusive-duration handling is load-bearing. */
-export const __testables = {
-  getTopComponents,
-  renderByComponent,
-  renderByIndex,
-  renderCascadeTree,
-};
 
 export const profilerCommitQueryTool: ToolDefinition<z.infer<typeof zodSchema>, string> = {
   id: "profiler-commit-query",

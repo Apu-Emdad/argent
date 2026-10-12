@@ -613,10 +613,7 @@ export const RESOLVE_FIBER_META_SCRIPT = `
     return null;
   }
 
-  // Null prototype: component display names are untrusted, and on a plain
-  // object a fiber named "__proto__" or "constructor" would fail the
-  // membership check (inherited member) and its row would be silently skipped.
-  var out = Object.create(null);
+  var out = {};
   function walk(fiber) {
     if (!fiber) return;
     try {

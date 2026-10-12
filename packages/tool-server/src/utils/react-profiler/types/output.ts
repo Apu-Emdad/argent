@@ -10,15 +10,7 @@ export type ReRenderReason =
 export interface HotCommitComponentEntry {
   name: string;
   selfDurationMs: number; // total across all instances in this commit
-  /**
-   * Inclusive render time: self + the entire subtree the component owns.
-   *
-   * With `count > 1` this is the LARGEST single instance's subtree, not a total
-   * across them — inclusive times cannot be added across instances, because
-   * same-named instances are routinely nested inside one another and the outer
-   * one's figure already contains the inner one's. Do not sum this across rows
-   * either, for the same reason.
-   */
+  // Inclusive: self + subtree, of the largest instance. Never sum: instances and rows nest.
   actualDurationMs: number;
   count: number; // fiber instances with this name (>1 = list items)
   isFirstMount?: boolean; // only when every instance in the group was a mount
@@ -32,7 +24,6 @@ export interface CpuCommitHotspot {
   name: string;
   selfMs: number;
   totalMs: number;
-  /** Hermes profile node this row was computed from; lets callers merge same-name rows by call-tree ancestry. */
   nodeId: number;
   url?: string;
   lineNumber?: number;

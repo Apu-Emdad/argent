@@ -59,11 +59,8 @@ export function buildHotCommitSummaries(
       return !(cd === null || cd.isFirstMount === true);
     });
 
-    // All entries, first mounts included, so navigation mount cost stays visible
-    //
-    // `selfDuration` sums (exclusive); `actualDuration` does not — same-named
-    // instances are routinely nested, so each ancestor's inclusive figure already
-    // contains its descendants'. Keep the largest single instance instead.
+    // All entries, first mounts included, so navigation mount cost stays visible.
+    // Same-named instances nest, so inclusive `actualDuration` is maxed, not summed.
     const componentMap = new Map<
       string,
       {
