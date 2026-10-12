@@ -456,8 +456,6 @@ async function startCaptureLocked(
 
   try {
     await waitForEncoderReady(child, stderrRef);
-    // Readiness can settle on its grace timer after dispose killed the child.
-    assertNotDisposed(api, "screen_recording_start");
   } catch (err) {
     stream.close();
     if (logoFile) await fs.rm(logoFile, { force: true }).catch(() => {});
@@ -535,8 +533,6 @@ async function startCaptureLocked(
     // costs the touch markers, surfaced as a warning at stop.
     api.pointerDisable = params.pointer.disable;
     api.pointerFailed = !(await params.pointer.enable());
-    // A dispose during that await already tore this capture down.
-    assertNotDisposed(api, "screen_recording_start");
   }
 
   api.recordingTimeout = setTimeout(() => {
