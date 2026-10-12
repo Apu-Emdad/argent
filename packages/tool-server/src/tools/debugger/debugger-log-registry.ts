@@ -16,6 +16,8 @@ import {
 interface LogRegistryResponse extends LogStats {
   status: "connected";
   clusters: MessageCluster[];
+  /** The newest `tail` entries (optionally filtered by level), oldest first. */
+  entries?: Array<{ id: number; timestamp: string; level: string; message: string }>;
   deviceName: string;
   appName: string;
   logicalDeviceId: string | undefined;
@@ -34,6 +36,19 @@ const zodSchema = z.object({
     .describe(
       "Device id from list-devices — the SAME id you passed to debugger-connect (iOS simulator UDID, Android serial, Vega serial, or Chromium device id). The logicalDeviceId debugger-connect returns also resolves here, but prefer the stable list-devices id."
     ),
+  tail: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe(
+      "Also return the newest N entries (oldest first, messages cut at 500 chars), so you can read the logs without opening the file."
+    ),
+  levels: z
+    .array(z.string())
+    .optional()
+    .describe('Only with tail: keep entries of these levels, e.g. ["warning","error"].'),
 });
 
 export function createDebuggerLogRegistryTool(
@@ -51,7 +66,7 @@ export function createDebuggerLogRegistryTool(
     },
     description: `Get a summary of all console logs captured from the app's JS runtime.
 Returns the log file path, entry counts by level, and message clusters (grouped by similarity). Works against Hermes (iOS / Android / Vega) and V8 (Chromium).
-Use when investigating warnings, errors, or unexpected output — call this first for an overview, then read the returned file for details. Returns empty stats if no log data has been captured yet — but check { note }, which is present only when the stats are empty BECAUSE a stop-all-simulator-servers tore the previous debugger session down and deleted its log file. Absent that note, empty really does mean the app has logged nothing.
+Use when investigating warnings, errors, or unexpected output — call this first for an overview. Pass tail (and optionally levels) to get the newest entries in the result itself, since the log file may sit outside the directories you can read. Returns empty stats if no log data has been captured yet — but check { note }, which is present only when the stats are empty BECAUSE a stop-all-simulator-servers tore the previous debugger session down and deleted its log file. Absent that note, empty really does mean the app has logged nothing.
 When the debugger cannot be reached, this tool does not fail: it returns { status: "not_connected", reason, detail, guidance } with NO log file — follow the guidance (do not retry in a loop, and do not try to read a log file from this state). A "connected" result's stats may come from a session whose socket has since died — use debugger-status, not this tool, to judge debugger health.`,
     zodSchema,
     capability: DEBUGGER_TOOL_CAPABILITY,
@@ -69,10 +84,25 @@ When the debugger cannot be reached, this tool does not fail: it returns { statu
         const clusters = api.logWriter.getClusters(20);
 
         trackDebuggerOutcome("debugger-log-registry", "connected", params, ctx);
+        let entries: LogRegistryResponse["entries"];
+        if (params.tail) {
+          const wanted = params.levels?.map((l) => l.toLowerCase());
+          entries = api.logWriter
+            .readAll()
+            .filter((e) => !wanted || wanted.includes(e.level.toLowerCase()))
+            .slice(-params.tail)
+            .map((e) => ({
+              id: e.id,
+              timestamp: e.timestamp,
+              level: e.level,
+              message: e.message.length > 500 ? `${e.message.slice(0, 500)}…` : e.message,
+            }));
+        }
         const response: LogRegistryResponse = {
           status: "connected" as const,
           ...stats,
           clusters,
+          ...(entries ? { entries } : {}),
           deviceName: api.deviceName,
           appName: api.appName,
           logicalDeviceId: api.logicalDeviceId,

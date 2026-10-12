@@ -47,12 +47,12 @@ With two or more devices on one Metro, `debugger-connect` refuses a udid/serial 
 
 ### Inspection & console
 
-| Tool                       | Purpose                                                                                                                                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `debugger-component-tree`  | Full React fiber tree (names, depth, bounding rects, tap coordinates).                                                                                                                                        |
-| `debugger-inspect-element` | Inspect at (x, y) using **logical pixel coordinates** (not normalized 0-1): component hierarchy with source file:line and code fragment. See `references/source-maps.md`.                                     |
-| `debugger-log-registry`    | Get log summary (counts, clusters, file path). Then use `Grep` on the flat log file for details. If it returns `status: "not_connected"`, there is **no** `file` — follow its `guidance` instead of grepping. |
-| `debugger-evaluate`        | Run a JS expression in the app runtime.                                                                                                                                                                       |
+| Tool                       | Purpose                                                                                                                                                                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `debugger-component-tree`  | Full React fiber tree (names, depth, bounding rects, tap coordinates).                                                                                                                                                                           |
+| `debugger-inspect-element` | Inspect at (x, y) using **logical pixel coordinates** (not normalized 0-1): component hierarchy with source file:line and code fragment. See `references/source-maps.md`.                                                                        |
+| `debugger-log-registry`    | Get log summary (counts, clusters, file path). Pass `tail` (+ `levels`) to get the newest entries inline; the file itself lives outside your workspace. If it returns `status: "not_connected"`, there is **no** `file` — follow its `guidance`. |
+| `debugger-evaluate`        | Run a JS expression in the app runtime.                                                                                                                                                                                                          |
 
 ---
 
@@ -84,7 +84,7 @@ Set to `true` only when debugging filter behavior — e.g., an expected componen
 
 ## 5. Reading Console Logs (Log Registry)
 
-Logs are written to a flat log file on disk. Use the **log-registry → grep** pattern instead of reading logs inline.
+Logs are written to a flat log file on disk. Use `debugger-log-registry` with `tail`/`levels` to read the newest entries inline, or the **log-registry → grep** pattern for large logs.
 
 ### Workflow
 

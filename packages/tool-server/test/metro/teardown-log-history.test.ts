@@ -280,3 +280,46 @@ describe("a debugger session reaped by stop-all-simulator-servers", () => {
     });
   });
 });
+
+describe("debugger-log-registry tail", () => {
+  beforeEach(async () => {
+    // A session another case connected under a different id still answers to
+    // LOGICAL_ID, so drop every debugger before reading this one.
+    for (const urn of registry.getSnapshot().services.keys()) {
+      if (urn.startsWith("JsRuntimeDebugger:")) await registry.disposeService(urn).catch(() => {});
+    }
+  });
+
+  it("returns the newest entries inline, filtered by level", async () => {
+    const urn = `JsRuntimeDebugger:${mockPort}:${LOGICAL_ID}`;
+    await registry.invokeTool("debugger-connect", { port: mockPort, device_id: LOGICAL_ID });
+    const api = await registry.resolveService<JsRuntimeDebuggerApi>(urn);
+    for (let i = 0; i < 6; i++) {
+      api.logWriter.write({
+        id: i,
+        timestamp: new Date(1710000000000 + i * 1000).toISOString(),
+        level: i % 2 ? "warning" : "log",
+        message: `entry ${i}`,
+      });
+    }
+
+    const result = (await registry.invokeTool("debugger-log-registry", {
+      port: mockPort,
+      device_id: LOGICAL_ID,
+      tail: 2,
+      levels: ["WARNING"],
+    })) as { totalEntries: number; entries?: Array<{ level: string; message: string }> };
+
+    expect(result.totalEntries).toBe(6);
+    expect(result.entries?.map((e) => e.message)).toEqual(["entry 3", "entry 5"]);
+  });
+
+  it("leaves entries out when tail is not passed", async () => {
+    await registry.invokeTool("debugger-connect", { port: mockPort, device_id: LOGICAL_ID });
+    const result = (await registry.invokeTool("debugger-log-registry", {
+      port: mockPort,
+      device_id: LOGICAL_ID,
+    })) as { entries?: unknown };
+    expect(result.entries).toBeUndefined();
+  });
+});
