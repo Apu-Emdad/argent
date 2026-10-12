@@ -65,6 +65,11 @@ export interface InstallationGlobalInstallDecisionProps {
    * package manager's global directory cannot be written; `unrecoverable` is
    * the end of a global choice on a manager whose directory argent cannot
    * relocate.
+   *
+   * Every decision but `set_prefix` ends the run's global path, so counting
+   * events counts runs. `set_prefix` is the exception: it says the prefix move
+   * was chosen, and an `install` follows it in the same run whenever the moved
+   * prefix turns out to be usable.
    */
   decision:
     | "install"

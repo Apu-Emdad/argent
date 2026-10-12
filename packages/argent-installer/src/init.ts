@@ -15,6 +15,7 @@ import {
   resolveProjectRoot,
   resolveInstallModeFromFlags,
   InstallModeFlagError,
+  hasProjectPackageJson,
   isDeclaredLocally,
   isGloballyInstalled,
   readInstallRecord,
@@ -33,7 +34,7 @@ import {
   INSTALL_UNCLASSIFIED_FAILED,
 } from "./init-telemetry.js";
 import { promptInstallMode, type BlockedGlobalInstall } from "./init-mode-prompt.js";
-import { probeGlobalInstallTarget } from "./global-prefix.js";
+import { canRecoverBlockedGlobal, probeGlobalInstallTarget } from "./global-prefix.js";
 import { runInstall } from "./install-runner.js";
 import { chooseAdapters } from "./init-adapters.js";
 import { chooseScope, type Scope } from "./init-scope.js";
@@ -128,8 +129,24 @@ export async function init(args: string[]): Promise<void> {
       ? { target: globalTarget, pm: detectPackageManager() }
       : null;
 
+    // A blocked global install leaves nothing to ask when argent could carry
+    // out none of the remedies even if one were chosen. Fall back to what the
+    // project already recorded, the same answer resolveInstallModeFromFlags
+    // gives `--yes` for this situation; without a record the global path makes
+    // the install step below say why, with the remedies spelled out, instead of
+    // offering a choice that ends there.
+    const skipBlockedModePrompt =
+      blockedGlobal !== null &&
+      !canRecoverBlockedGlobal(
+        blockedGlobal.pm,
+        hasProjectPackageJson(initProjectRoot),
+        blockedGlobal.target.dir
+      );
     tel.installMode =
-      modeFromFlags ?? (await promptInstallMode(recordedMode ?? "global", blockedGlobal));
+      modeFromFlags ??
+      (skipBlockedModePrompt
+        ? (recordedMode ?? "global")
+        : await promptInstallMode(recordedMode ?? "global", blockedGlobal));
     track("installation:install_mode_decision", { install_mode: tel.installMode });
 
     // Step 0 — install / update check.
@@ -140,7 +157,8 @@ export async function init(args: string[]): Promise<void> {
       nonInteractive: parsed.nonInteractive,
       version,
       globalTarget,
-      globalBlockAcknowledged: modeFromFlags === null && blockedGlobal !== null,
+      globalBlockAcknowledged:
+        modeFromFlags === null && blockedGlobal !== null && !skipBlockedModePrompt,
       tel,
     });
     version = installed.version;
@@ -149,10 +167,11 @@ export async function init(args: string[]): Promise<void> {
     // that was asked for.
     tel.installMode = installed.installMode;
 
-    // The global opt-out above only covers this machine; an install that landed
-    // local is meant to be committed, so record the opt-out in the project
-    // config too — `false` there wins on every clone. After runInstall, because
-    // the unwritable-global recovery can land a global run here.
+    // `--no-telemetry` with a local install: the global opt-out above only
+    // covers this machine. A local install is meant to be committed, so also
+    // record the opt-out in the project config — `false` there wins on every
+    // clone. Reads the mode the install landed in, which a recovery can have
+    // changed from the one that was asked for.
     let wroteProjectTelemetryOptOut = false;
     if (parsed.noTelemetry && tel.installMode === "local") {
       try {
