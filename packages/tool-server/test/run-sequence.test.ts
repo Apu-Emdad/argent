@@ -112,6 +112,32 @@ describe("run-sequence", () => {
       y: 0.3,
       udid: IOS,
     });
+    // The tap may start a transition, so the screen settles before typing.
+    expect(registry.invokeTool).toHaveBeenNthCalledWith(
+      2,
+      "await-screen-idle",
+      expect.objectContaining({ udid: IOS, timeoutMs: 1000 })
+    );
+    expect(registry.invokeTool).toHaveBeenNthCalledWith(3, "keyboard", { text: "hi", udid: IOS });
+  });
+
+  it("skips the settle wait with settle:false", async () => {
+    const registry = mockRegistry();
+    const tool = createRunSequenceTool(registry);
+
+    await tool.execute(
+      {},
+      {
+        udid: IOS,
+        settle: false,
+        steps: [
+          { tool: "gesture-tap", args: { x: 0.5, y: 0.3 }, delayMs: 0 },
+          { tool: "keyboard", args: { text: "hi" }, delayMs: 0 },
+        ],
+      }
+    );
+
+    expect(registry.invokeTool).toHaveBeenCalledTimes(2);
     expect(registry.invokeTool).toHaveBeenNthCalledWith(2, "keyboard", { text: "hi", udid: IOS });
   });
 
@@ -207,6 +233,7 @@ describe("run-sequence", () => {
       {},
       {
         udid: IOS,
+        settle: false,
         steps: [
           { tool: "gesture-tap", args: { x: 0.5, y: 0.9 } },
           { tool: "gesture-tap", args: { x: 0.5, y: 0.5 } },
@@ -265,6 +292,7 @@ describe("run-sequence", () => {
       {},
       {
         udid: IOS,
+        settle: false,
         steps: [
           { tool: "gesture-tap", args: { x: 0.5, y: 0.3 }, delayMs: 0 },
           { tool: "gesture-swipe", args: { fromX: 0.5 }, delayMs: 0 },
