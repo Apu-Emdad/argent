@@ -63,7 +63,6 @@ import { runFlowScriptStep } from "./flow-script-step";
 import { describeWhenCondition, stepTarget } from "./flow-step-definitions";
 import { sleepOrAbort } from "../../utils/timing";
 import { invokeSubTool, describeNestedParamError } from "../../utils/sub-invoke";
-import { assertSupported } from "../../utils/capability";
 import { supportsFlowTree } from "./flow-tree";
 import { iosDeviceRunnerRef } from "../../blueprints/ios-device-runner";
 import { isUnmetUiWaitResult } from "../await-ui-element";
@@ -2886,16 +2885,7 @@ async function execLeafStep(
         step.args,
         state.deviceIsExplicit
       );
-      const def = registry.getTool(step.name);
-      const outputHint = def?.outputHint;
-      // `invokeTool` skips the capability gate; check it as run-sequence does.
-      if (device && def?.capability) {
-        try {
-          assertSupported(def.id, def.capability, device);
-        } catch (err) {
-          return { ...base, status: "error", tool: step.name, reason: errMsg(err) };
-        }
-      }
+      const outputHint = registry.getTool(step.name)?.outputHint;
       if (step.delayMs && !(await sleepOrAbort(step.delayMs, signal))) {
         return { ...base, status: "skip", tool: step.name, reason: "run aborted during delay" };
       }
