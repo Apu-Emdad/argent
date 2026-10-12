@@ -1072,10 +1072,11 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
   });
 
   it("extends an overflow: clip or contain: paint edge by overflow-clip-margin", () => {
-    const margin = (style: Record<string, string>, opts: Opts = {}) =>
+    const BELOW = { x: 1, y: 100, w: 100, h: 40 };
+    const margin = (style: Record<string, string>, opts: Opts = {}, near = BELOW) =>
       pxFrame(
         run([
-          scroller([row("near", { x: 1, y: 100, w: 100, h: 40 })], {
+          scroller([row("near", near)], {
             client: { left: 1, top: 1, width: 298, height: 98 },
             ...opts,
             style,
@@ -1083,8 +1084,12 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
         ]).tree,
         "near"
       );
-    // Padding box bottom 99, so the clip edge sits at 129.
+    // Padding box bottom 99, so the clip edge sits at 129; right 299, so 329.
     expect(margin({ overflow: "clip", overflowClipMargin: "30px" }).h).toBe(29);
+    expect(
+      margin({ overflow: "clip", overflowClipMargin: "30px" }, {}, { x: 290, y: 10, w: 60, h: 20 })
+        .w
+    ).toBe(39);
     expect(margin({ overflow: "visible", contain: "paint", overflowClipMargin: "30px" }).h).toBe(
       29
     );
