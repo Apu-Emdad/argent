@@ -263,6 +263,7 @@ describe("shouldAutoScreenshot — unified surface", () => {
       "keyboard",
       "paste",
       "rotate",
+      "fold",
       "launch-app",
       "restart-app",
       "open-url",
