@@ -479,7 +479,6 @@ screen, or before tapping an element that appears asynchronously.`,
           ? "unsettled"
           : poll.lastAttempt === "tree" &&
               poll.lastData !== null &&
-              !poll.lastData.stale &&
               !isBlindRead(poll.lastData, everMatched)
             ? "trusted"
             : "untrusted";
