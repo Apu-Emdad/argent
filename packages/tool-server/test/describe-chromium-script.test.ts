@@ -1145,11 +1145,12 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
   });
 
   it("clips under paint containment with overflow visible", () => {
-    for (const style of [
+    const contained: Record<string, string>[] = [
       { contain: "paint" },
       { contentVisibility: "auto" },
       { contentVisibility: "hidden" },
-    ]) {
+    ];
+    for (const style of contained) {
       const { tree } = run([
         scroller([row("out", { x: 1, y: 150, w: 100, h: 20 })], {
           style: { overflow: "visible", ...style },
