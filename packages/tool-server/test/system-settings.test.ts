@@ -323,10 +323,6 @@ describe("system-settings on an iOS simulator", () => {
 });
 
 describe("system-settings on Android", () => {
-  function shellCommand(): string {
-    return (mockRunAdb.mock.calls[0]![0] as string[])[3]!;
-  }
-
   it.each<[SystemSetting, string, string, string]>([
     ["appearance", "dark", "cmd uimode night yes", "night_mode=yes"],
     ["appearance", "light", "cmd uimode night no", "night_mode=no"],
