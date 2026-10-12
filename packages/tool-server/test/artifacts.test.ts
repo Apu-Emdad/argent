@@ -338,7 +338,7 @@ describe("GET /artifacts/:id", () => {
     }
 
     it("cuts the response off when tar abandoned the archive", async () => {
-      process.env.FAKE_TAR_BYTES = "2560"; // the first member and a half
+      process.env.FAKE_TAR_BYTES = "2560"; // a header boundary, so the cut tar still reads cleanly
       await expect(download()).rejects.toThrow();
     });
 

@@ -51,7 +51,7 @@ export function archiveFormatsFromAccept(accept: string | undefined): ArchiveFor
   return ARCHIVE_FORMATS.filter((f) => accept?.includes(ARCHIVE_CONTENT_TYPES[f]));
 }
 
-// zlib's default 16 KiB chunks make piping a large tar 2-3x slower.
+// zlib's default 16 KiB chunks slow zstd decompression up to 2x.
 const CHUNK_BYTES = 1 << 20;
 
 export function createCompressor(format: ArchiveFormat): zlib.Gzip | zlib.ZstdCompress {
