@@ -402,14 +402,7 @@ export class CDPClient {
       exceptionDetails?: CDPExceptionDetails;
     };
 
-    if (result.exceptionDetails) {
-      throw new FailureError(formatExceptionDetails(result.exceptionDetails), {
-        error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
-        failure_stage: "debugger_cdp_evaluate",
-        failure_area: "tool_server",
-        error_kind: "unknown",
-      });
-    }
+    if (result.exceptionDetails) throw runtimeException(result.exceptionDetails);
 
     return result.result?.value;
   }
