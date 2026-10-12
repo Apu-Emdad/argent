@@ -384,7 +384,7 @@ export async function update(args: string[]): Promise<void> {
 
       // Before the confirm prompt and the tool-server teardown below.
       if (mode === "global") {
-        const globalTarget = probeGlobalInstallTarget(pm, getGloballyInstalledPackageRoot());
+        const globalTarget = probeGlobalInstallTarget(pm);
         if (globalTarget?.blocked) {
           await trackPackageAction(
             "update_failed",

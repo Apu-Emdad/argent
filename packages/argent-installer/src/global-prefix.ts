@@ -34,12 +34,11 @@ function queryGlobalInstallDir(pm: PackageManager): string | null {
     .filter(Boolean)
     .pop();
   if (line === undefined || !path.isAbsolute(line)) return null;
-  // npm prints UUID-shaped segments as `***`; probing the ancestor of a path
-  // that does not exist would judge the wrong directory.
+  // npm prints UUID-shaped segments as `***`; probing that path's nearest
+  // existing ancestor would judge the wrong directory.
   return line.includes("***") ? null : line;
 }
 
-/** True when `target` is inside the Nix store (`NIX_STORE_DIR`, default /nix/store). */
 export function isNixStorePath(target: string): boolean {
   const storeDir = path.resolve(process.env.NIX_STORE_DIR || "/nix/store");
   const resolved = path.resolve(target);
@@ -60,55 +59,56 @@ function nearestExistingDir(dir: string): string | null {
   }
 }
 
+function isRealDirectory(target: string): boolean {
+  try {
+    return fs.lstatSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 interface GlobalInstallTarget {
-  /** Existing directory the global install has to write into. */
+  /** The directory that was judged; when blocked, the one that cannot be written. */
   dir: string;
   blocked: boolean;
   nixStore: boolean;
 }
 
-// Only errnos that prove the directory cannot be written block an install.
+// Only these errnos prove a directory cannot be written.
 const BLOCKING_ERRNOS = new Set(["EACCES", "EPERM", "EROFS"]);
 
 /**
- * Where a global install by `pm` would write, and whether this user can.
- * `installedPackageRoot` is the fallback when the manager's query fails.
+ * Whether this user can write where a global install by `pm` would.
  * Anything inconclusive returns null: wrongly refusing an install that would
  * work is worse than the failure being prevented.
  */
-export function probeGlobalInstallTarget(
-  pm: PackageManager,
-  installedPackageRoot: string | null = null
-): GlobalInstallTarget | null {
+export function probeGlobalInstallTarget(pm: PackageManager): GlobalInstallTarget | null {
   // Windows access(W_OK) reflects only the read-only attribute, not ACLs.
   if (process.platform === "win32") return null;
 
-  // npm renames inside the package's parent, so a root-owned `@swmansion`
-  // left by an earlier `sudo npm i -g` blocks it under a writable root.
   const queried = queryGlobalInstallDir(pm);
-  const packagePath = queried ? path.join(queried, PACKAGE_NAME) : installedPackageRoot;
-  if (packagePath === null) return null;
-  const dir = nearestExistingDir(path.dirname(packagePath));
-  if (dir === null) return null;
+  if (queried === null) return null;
+  const packageDir = path.join(queried, PACKAGE_NAME);
+  const parent = nearestExistingDir(path.dirname(packageDir));
+  if (parent === null) return null;
 
-  const describe = (blocked: boolean): GlobalInstallTarget => ({
-    dir,
-    blocked,
-    nixStore: isNixStorePath(dir),
-  });
-  try {
-    fs.accessSync(dir, fs.constants.W_OK);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return code !== undefined && BLOCKING_ERRNOS.has(code) ? describe(true) : null;
+  // npm renames the package directory inside its parent, so either one left
+  // root-owned by an earlier `sudo npm i -g` blocks it. A symlinked package
+  // is only unlinked; its target is never written.
+  const dirs = isRealDirectory(packageDir) ? [parent, packageDir] : [parent];
+  for (const dir of dirs) {
+    try {
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === undefined || !BLOCKING_ERRNOS.has(code)) return null;
+      return { dir, blocked: true, nixStore: isNixStorePath(dir) };
+    }
   }
-  return describe(false);
+  return { dir: parent, blocked: false, nixStore: isNixStorePath(parent) };
 }
 
-/**
- * The cause of a blocked global install or update, and the ways out.
- * `localInit` is the per-project command as the user can run it from here.
- */
+/** `localInit` is the per-project command as the user can run it from here. */
 export function unwritableGlobalTargetMessage(
   target: GlobalInstallTarget,
   pm: PackageManager,

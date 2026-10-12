@@ -106,17 +106,62 @@ describe("probeGlobalInstallTarget", () => {
     }
   );
 
-  it("falls back to the installed package's parent when the manager query fails", () => {
-    mockExecFileSync.mockImplementation(() => {
-      throw new Error("npm not found");
-    });
-    const scopeDir = path.join(tmpRoot, "lib", "node_modules", "@swmansion");
-    fs.mkdirSync(scopeDir, { recursive: true });
+  it.skipIf(!canTestUnwritable)(
+    "blocks on a read-only package directory under a writable scope directory",
+    () => {
+      const globalRoot = path.join(tmpRoot, "lib", "node_modules");
+      const packageDir = path.join(globalRoot, "@swmansion", "argent");
+      fs.mkdirSync(packageDir, { recursive: true });
+      fs.chmodSync(packageDir, 0o555);
+      mockExecFileSync.mockReturnValue(`${globalRoot}\n`);
 
-    expect(probeGlobalInstallTarget("npm", path.join(scopeDir, "argent"))?.dir).toBe(scopeDir);
+      try {
+        expect(probeGlobalInstallTarget("npm")).toEqual({
+          dir: packageDir,
+          blocked: true,
+          nixStore: false,
+        });
+      } finally {
+        fs.chmodSync(packageDir, 0o755);
+      }
+    }
+  );
+
+  it.skipIf(!canTestUnwritable)("does not probe through a symlinked package directory", () => {
+    const globalRoot = path.join(tmpRoot, "lib", "node_modules");
+    const linkTarget = path.join(tmpRoot, "linked-argent");
+    fs.mkdirSync(path.join(globalRoot, "@swmansion"), { recursive: true });
+    fs.mkdirSync(linkTarget);
+    fs.chmodSync(linkTarget, 0o555);
+    fs.symlinkSync(linkTarget, path.join(globalRoot, "@swmansion", "argent"));
+    mockExecFileSync.mockReturnValue(`${globalRoot}\n`);
+
+    try {
+      expect(probeGlobalInstallTarget("npm")?.blocked).toBe(false);
+    } finally {
+      fs.chmodSync(linkTarget, 0o755);
+    }
   });
 
-  it("returns null when neither the query nor a fallback yields a directory", () => {
+  it("flags a global directory inside the Nix store", () => {
+    const storeDir = path.join(tmpRoot, "nix", "store");
+    const globalRoot = path.join(storeDir, "abc123-nodejs-22", "lib", "node_modules");
+    fs.mkdirSync(globalRoot, { recursive: true });
+    mockExecFileSync.mockReturnValue(`${globalRoot}\n`);
+    vi.stubEnv("NIX_STORE_DIR", storeDir);
+
+    try {
+      expect(probeGlobalInstallTarget("npm")).toEqual({
+        dir: globalRoot,
+        blocked: false,
+        nixStore: true,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("returns null when the manager query fails", () => {
     mockExecFileSync.mockImplementation(() => {
       throw new Error("npm not found");
     });
@@ -129,6 +174,7 @@ describe("probeGlobalInstallTarget", () => {
 
     expect(probeGlobalInstallTarget("npm")).toBeNull();
   });
+
   it.skipIf(!canTestUnwritable)("ignores a path npm printed with a redacted segment", () => {
     // Probing `***`'s nearest existing ancestor would judge this read-only dir.
     fs.chmodSync(tmpRoot, 0o555);

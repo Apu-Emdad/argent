@@ -228,6 +228,38 @@ describe("update — read-only global directory", () => {
       );
     }
   );
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "does not judge the installed copy's directory when npm cannot name its own",
+    async () => {
+      // argent on PATH from a prefix whose scope directory is read-only.
+      const scopeDir = path.join(tmpDir, "other", "lib", "node_modules", "@swmansion");
+      const packageRoot = path.join(scopeDir, "argent");
+      fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+      fs.writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({ name: "@swmansion/argent", version: "1.0.0" })
+      );
+      fs.writeFileSync(path.join(packageRoot, "dist", "cli.js"), "");
+      childProcessMock.which.mockReturnValue(`${path.join(packageRoot, "dist", "cli.js")}\n`);
+      fs.chmodSync(scopeDir, 0o555);
+      childProcessMock.execFileSync.mockImplementation(((_bin: string, args: string[]) => {
+        if (args[0] === "root") return `${path.join(tmpDir, "***", "lib", "node_modules")}\n`;
+        if (args[0] === "install") topologyState.globalVersion = "99.0.0";
+        return undefined;
+      }) as never);
+
+      try {
+        await update(["--yes"]);
+      } finally {
+        fs.chmodSync(scopeDir, 0o755);
+        childProcessMock.which.mockReset();
+      }
+
+      expect(promptsMock.log.error).not.toHaveBeenCalled();
+      expect(npmInstallCalls()).toHaveLength(1);
+    }
+  );
 });
 
 // Install runs only: adapter detection and the global-prefix preflight also

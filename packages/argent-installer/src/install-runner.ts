@@ -3,7 +3,6 @@ import pc from "picocolors";
 import { track } from "@argent/telemetry";
 import {
   getInstalledVersion,
-  getGloballyInstalledPackageRoot,
   getGloballyInstalledVersion,
   getLatestVersion,
   isNewerVersion,
@@ -282,7 +281,7 @@ async function runGlobal(opts: {
     // Developer-only reinstall (`--from`) — not a product install decision, so
     // no decision event.
     const pm = detectPackageManager();
-    const globalTarget = probeGlobalInstallTarget(pm, getGloballyInstalledPackageRoot());
+    const globalTarget = probeGlobalInstallTarget(pm);
     if (globalTarget?.blocked) {
       p.log.error(unwritableGlobalTargetMessage(globalTarget, pm, "install"));
       await tel.finalize(INSTALL_GLOBAL_PREFIX_UNWRITABLE);
@@ -339,9 +338,7 @@ async function runGlobal(opts: {
     const toMajor = Number.parseInt(latest.split(".")[0] ?? "0", 10) || 0;
     const updatePm = detectPackageManager();
     // --yes skips the update, so it skips the probe too.
-    const globalTarget = nonInteractive
-      ? null
-      : probeGlobalInstallTarget(updatePm, getGloballyInstalledPackageRoot());
+    const globalTarget = nonInteractive ? null : probeGlobalInstallTarget(updatePm);
     if (nonInteractive) {
       // Emit the same update_decision as the interactive branches so the
       // upgrade funnel isn't blind to --yes/CI runs.
@@ -354,6 +351,11 @@ async function runGlobal(opts: {
     } else if (globalTarget?.blocked) {
       // init still works against the installed version, so warn, don't abort.
       p.log.warn(unwritableGlobalTargetMessage(globalTarget, updatePm, "update"));
+      track("installation:update_decision", {
+        from_major: fromMajor,
+        to_major: toMajor,
+        decision: "skip",
+      });
       await tel.trackPackageAction(
         "update_failed",
         packageActionStartedAt,

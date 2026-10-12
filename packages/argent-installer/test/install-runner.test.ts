@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
+import { track } from "@argent/telemetry";
 import { runInstall } from "../src/install-runner.js";
 import { runShellCommand, ShellCommandError } from "../src/shell.js";
 import { isGloballyInstalled, isLocallyInstalled, resolveProjectRoot } from "../src/utils.js";
@@ -36,7 +37,6 @@ vi.mock("../src/utils.js", async (importOriginal) => {
     detectPackageManager: vi.fn(() => "npm" as const),
     isGloballyInstalled: vi.fn(() => false),
     getGloballyInstalledVersion: vi.fn(() => "1.0.0"),
-    getGloballyInstalledPackageRoot: vi.fn(() => null),
     getLatestVersion: vi.fn(() => "2.0.0"),
   };
 });
@@ -307,5 +307,10 @@ describe("global install preflight", () => {
     expect(p.select).not.toHaveBeenCalled();
     expect(runShellCommand).not.toHaveBeenCalled();
     expect(String(vi.mocked(p.log.warn).mock.calls[0]?.[0])).toContain("cannot update");
+    expect(track).toHaveBeenCalledWith("installation:update_decision", {
+      from_major: 1,
+      to_major: 2,
+      decision: "skip",
+    });
   });
 });
