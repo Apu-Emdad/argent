@@ -16,6 +16,7 @@ import { ensureDeps } from "../../utils/check-deps";
 import { pollDescribeTree } from "../../utils/poll-describe-tree";
 import type { DescribeNode, DescribeTreeData } from "../describe/contract";
 import { describeIos, iosRequires } from "../describe/platforms/ios";
+import { describeIosDevice } from "../describe/platforms/ios-device";
 import { describeAndroid, androidRequires } from "../describe/platforms/android";
 import { describeChromium } from "../describe/platforms/chromium";
 
@@ -25,37 +26,39 @@ const DEFAULT_TIMEOUT_MS = 3000;
 const DEFAULT_POLL_INTERVAL_MS = 200;
 const DEFAULT_MIN_STABLE_MS = 250;
 
-const zodSchema = z.object({
-  udid: z
-    .string()
-    .min(1)
-    .describe("Target device id from `list-devices` (iOS UDID, Android serial, or Chromium id)."),
-  timeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .max(120_000)
-    .optional()
-    .describe(
-      `Max time to wait for the screen to settle before giving up (default ${DEFAULT_TIMEOUT_MS}).`
-    ),
-  pollIntervalMs: z
-    .number()
-    .int()
-    .min(50)
-    .max(5000)
-    .optional()
-    .describe(`How often to re-read the tree (default ${DEFAULT_POLL_INTERVAL_MS}).`),
-  minStableMs: z
-    .number()
-    .int()
-    .min(0)
-    .max(10_000)
-    .optional()
-    .describe(
-      `The screen must hold the same content for at least this long to count as settled (default ${DEFAULT_MIN_STABLE_MS}).`
-    ),
-});
+const zodSchema = z
+  .object({
+    udid: z
+      .string()
+      .min(1)
+      .describe("Target device id from `list-devices` (iOS UDID, Android serial, or Chromium id)."),
+    timeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(120_000)
+      .optional()
+      .describe(
+        `Max time to wait for the screen to settle before giving up (default ${DEFAULT_TIMEOUT_MS}).`
+      ),
+    pollIntervalMs: z
+      .number()
+      .int()
+      .min(50)
+      .max(5000)
+      .optional()
+      .describe(`How often to re-read the tree (default ${DEFAULT_POLL_INTERVAL_MS}).`),
+    minStableMs: z
+      .number()
+      .int()
+      .min(0)
+      .max(10_000)
+      .optional()
+      .describe(
+        `The screen must hold the same content for at least this long to count as settled (default ${DEFAULT_MIN_STABLE_MS}).`
+      ),
+  })
+  .strict();
 
 type Params = z.infer<typeof zodSchema>;
 
@@ -68,6 +71,7 @@ interface IdleResult {
 
 const capability: ToolCapability = {
   apple: { simulator: true, device: true },
+  appleRemote: { simulator: true },
   android: { emulator: true, device: true, unknown: true },
   chromium: { app: true },
 };
@@ -97,7 +101,14 @@ export function createAwaitScreenIdleTool(registry: Registry): ToolDefinition<Pa
     isTvOs: boolean,
     androidIsTv: boolean
   ): Promise<DescribeTreeData> {
-    if (device.platform === "ios") {
+    // ios-remote reads the same AX tree through describeIos: the ax-service
+    // blueprint routes it over the sim-remote tunnel, so only the preflight dep
+    // differs from the local branch. `isTvOs` is false for it, matching describe.
+    if (device.platform === "ios" || device.platform === "ios-remote") {
+      // Physical devices poll the same XCUITest runner snapshot as describe.
+      if (device.kind === "device") {
+        return describeIosDevice(registry, device);
+      }
       return describeIos(registry, device, {}, { isTvOs });
     }
     if (device.platform === "android") {
@@ -137,12 +148,12 @@ still before the timeout. Use after a launch/navigation to wait for the UI to re
       const device = resolveDevice(params.udid);
       assertSupported(AWAIT_SCREEN_IDLE_TOOL_ID, capability, device);
       if (device.platform === "ios") await ensureDeps(iosRequires);
+      else if (device.platform === "ios-remote") await ensureDeps(["sim-remote"]);
       else if (device.platform === "android") await ensureDeps(androidRequires);
 
-      // Hoisted out of the poll loop: `isAndroidTv` runs `adb devices` (plus an
-      // avdName getprop) on every call, even on a cache hit, so letting
-      // `describeAndroid` probe would pay that per poll.
-      const isTvOs = device.platform === "ios" && (await isTvOsSimulator(device.id));
+      // Resolve tvOS / Android-TV once. Physical devices skip the tvOS probe. They are never tvOS simulators.
+      const isTvOs =
+        device.platform === "ios" && device.kind !== "device" && (await isTvOsSimulator(device.id));
       const androidIsTv = device.platform === "android" && (await isAndroidTv(device.id));
       const minStableMs = params.minStableMs ?? DEFAULT_MIN_STABLE_MS;
 
