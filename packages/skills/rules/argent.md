@@ -98,88 +98,28 @@ When `is_react_native` is true: load `argent-react-native-app-workflow` skill. U
 </react_native_detection>
 
 <skill_routing>
-Load the matching skill before starting work and executing tools from argent-mcp — skills contain the full step-by-step
-procedure and edge-case handling for each workflow.
+Load the matching skill before running argent tools for that workflow; skills hold the step-by-step procedure and edge cases.
+No platform named → `list-devices` first and pick the booted target (do not default to iOS); a `platform:"vega"` entry → `argent-tv-interact`.
 
-PLATFORM DETECTION
-If the user did not specify a platform, call `list-devices` first and pick the booted target — do not default to iOS. Vega (Amazon Fire TV) devices appear as `platform:"vega"`, when present load `argent-tv-interact`
+- `argent-ios-simulator-setup` — iOS simulator task, none booted yet, need a UDID or simulator-server
+- `argent-android-emulator-setup` — Android emulator task, none running, need an adb serial, or installing an APK
+- `argent-ios-device-setup` (cable, trust, signing) → `argent-ios-device-interact` (app-scoped contract) — ONLY when the user names a physical iPhone / real device / "on my phone" / USB / hardware, or the target iOS entry has kind `"device"`. Never for a simulator, never because a cabled phone is listed first. On hardware every interaction starts with `launch-app`; `paste`, `settings-permissions`, two-finger gestures, `rotate`, `shake`, screen recording, `debugger-*`, `react-profiler-*`, `native-profiler-*` and `native-*` do not exist
+- `argent-device-interact` — tapping, swiping, typing, gestures, hardware buttons, launching/restarting apps, opening URLs, rotate/fold, standalone screenshots, verifying a visible UI change. Phone/tablet simulators and emulators only: not TV, not a physical iPhone
+- `argent-tv-interact` — any TV: `runtimeKind: "tv"` (Apple TV sim, Android TV emulator), `platform:"vega"` / `kind:"vvd"` (Fire TV), or Apple TV / tvOS / Android TV / leanback / Vega / Fire TV / D-pad mentioned. Focus-driven: `describe` (focus) + `tv-remote` + `keyboard`, never `gesture-*`. Covers boot, app lifecycle, focus navigation, typing, screenshots; on Vega also VVD lifecycle, Fast Refresh and JS debugging (evaluate, logs, network). Saved flows (`argent-create-flow`, `argent-qa-flows`, recorded as `tool: tv-remote` steps) exist on Vega only; on Apple TV / Android TV report that limitation
+- `argent-settings-permissions` — grant/deny/revoke/reset a runtime permission the app itself can't flip (camera, microphone, photos, contacts, notifications, calendar, location, location-always, media-library, motion, reminders; TCC/privacy): pre-authorize or deny before the app asks, re-enable after a denial (iOS never re-prompts), or reset so the first-run dialog reappears. iOS simulator and Android emulator/device. Not when the app has an in-app toggle or shows its own permission dialog — tap that (`argent-device-interact`); not for permissions/settings outside that list
+- `argent-screenshot-diff` — visual regression, screenshot diff/compare, before/after comparison, or a visible UI change where stable pixel comparison adds evidence
+- `argent-screen-recording` — record a video / mp4 / clip of an interaction, animation or bug reproduction (use `argent-create-flow` for a replayable sequence)
+- `argent-react-native-app-workflow` — RN project: starting Metro, running/building the iOS or Android app, build failures, pods, lost Metro connection, reading logs, reloading the JS bundle, reinstalling
+- `argent-metro-debugger` — JS evaluation, inspecting the React component tree at source level, element placement via `debugger-component-tree`
+- `argent-react-native-profiler` — measuring specific components or app-wide bottlenecks, re-renders, CPU hotspots, ranked perf reports
+- `argent-native-profiler` — native CPU hotspots, UI hangs, memory leaks (iOS via xctrace; Android via Perfetto); also the native half of dual profiling with `argent-react-native-profiler`
+- `argent-react-native-optimization` — app feels slow, optimize, bundle size, startup time, re-renders, lists/images/navigation, any perf task. Entry point for all perf work; delegates measurement to `argent-react-native-profiler`
+- `argent-test-ui-flow` — one-off interact → screenshot → verify check, nothing saved
+- `argent-create-flow` — save or replay a repeatable path ("flow", repeat, test X times) for profiling, A/B comparison, retry or reuse
+- `argent-qa-flows` — save a test case / ticket / acceptance criteria as a regression (e2e/QA) test; needs stable evidence and two unchanged full passes. iOS, Android, Chromium, Vega; not Apple TV / Android TV
+- Saved-artifact routing: one-off check → `argent-test-ui-flow`; saved path → `argent-create-flow`; saved acceptance test → `argent-qa-flows`
+- `argent-lens` — the user asks for design variants / options / A-B choices for a screen or component, or you have more than one candidate look and want a human to pick before committing (propose_variant loop + one blocking await_user_selection). Off by default: `argent enable argent-lens` first
 
-iOS SIMULATOR SETUP
-Skill: `argent-ios-simulator-setup`
-When: Beginning a task that involves the iOS simulator, no simulator booted yet, need UDID or simulator-server.
-
-ANDROID EMULATOR SETUP
-Skill: `argent-android-emulator-setup`
-When: Beginning a task that involves the Android emulator, no emulator running yet, need an adb serial, or about to install an APK.
-
-PHYSICAL iPHONE (USB)
-Skills: `argent-ios-device-setup` (cable, trust, signing), then `argent-ios-device-interact` (the app-scoped interaction contract)
-When: The user names a physical iPhone, a real device, or hardware, or the target `list-devices` iOS entry has kind `"device"`. Never for a simulator, and never because a cabled phone is listed first. On hardware every interaction starts with `launch-app`; `paste`, `settings-permissions`, two-finger gestures, `rotate`, `shake`, screen recording, `debugger-*`, `react-profiler-*`, `native-profiler-*` and `native-*` do not exist there.
-Prompt keywords: physical iPhone, real device, on my phone, USB, hardware
-
-TAPPING, SWIPING, TYPING, GESTURES, SCREENSHOTS, SCROLLING
-Skill: `argent-device-interact`
-When: Performing touch interactions, typing, pressing hardware buttons, launching/restarting apps, opening URLs, rotating or folding the device, taking standalone screenshots, or verifying a visible UI code change. Phone/tablet iOS and Android simulators and emulators only: for any TV target use the TV skill below, and for a physical iPhone use the entry above.
-
-APP PERMISSIONS (GRANT / DENY / RESET WITHOUT THE SETTINGS UI)
-Skill: `argent-settings-permissions`
-When: You must change an app runtime permission (camera, microphone, photos, contacts, notifications, calendar, location, location-always, media-library, motion, reminders) that the app itself can't flip — pre-authorize or deny it before the app asks, re-enable one the user already denied (iOS never re-prompts), or reset it so the first-run dialog reappears. Works on the iOS simulator and Android emulator/device. Do NOT use it when the app has an in-app toggle or is showing its own permission dialog — tap that instead (see `argent-device-interact`); nor for permissions/settings outside that list.
-Prompt keywords: permission, grant, deny, revoke, reset permission, privacy, camera access, location access, TCC
-
-TV INTERACTION (APPLE TV / ANDROID TV / FIRE TV)
-Skill: `argent-tv-interact`
-When: Any TV target — a `list-devices` entry with `runtimeKind: "tv"` (Apple TV simulator or Android TV emulator) or `platform:"vega"` / `kind:"vvd"` (Amazon Fire TV / VVD), or the user mentions Apple TV / tvOS / Android TV / leanback / Vega / Fire TV. A TV UI is focus-driven, not touch-driven: drive it with `describe` (read focus) + `tv-remote` (D-pad presses) + `keyboard` (type); `gesture-*` tools do NOT apply. Covers booting the target, app lifecycle, focus navigation, typing, screenshots, and (Vega) VVD lifecycle + Fast Refresh + JS-runtime debugging (evaluate, console logs, network inspector).
-Prompt keywords: apple tv, tvos, android tv, leanback, vega, fire tv, vvd, d-pad
-Saved artifacts: on Vega, a replayable path is `argent-create-flow` and an acceptance-criteria regression test is `argent-qa-flows` — both record D-pad navigation as `tool: tv-remote` steps. Apple TV and Android TV have no saved-flow support; report that limitation.
-
-SCREENSHOT DIFF & VISUAL REGRESSION
-Skill: `argent-screenshot-diff`
-When: Explicit visual regression, screenshot diff, compare screenshots, before/after visual comparison requests, or visible UI changes where stable pixel comparison would add useful evidence.
-
-SCREEN RECORDING (VIDEO CAPTURE)
-Skill: `argent-screen-recording`
-When: The user wants an mp4 of an interaction, animation, or bug reproduction. Use `argent-create-flow` instead for a replayable sequence.
-Prompt keywords: record, recording, screen recording, video, capture video, clip, mp4
-
-RUNNING / BUILDING / DEBUGGING REACT NATIVE APP
-Skill: `argent-react-native-app-workflow`
-When: Project is react-native, starting Metro or running the iOS or Android app, build failures, pod issues, lost Metro connection, reading logs, reloading JS bundle, reinstalling app.
-
-JS EVALUATION, METRO CONNECTION, REACT NATIVE
-Skill: `argent-metro-debugger`
-When: evaluating expressions, inspecting React component tree at source level, finding element placement via `debugger-component-tree`.
-
-REACT APP & COMPONENT PROFILING
-Use skill: `argent-react-native-profiler`
-When: To measure performance of specific components, to find app-wide bottlenecks. Investigating re-renders or CPU hotspots, producing ranked performance reports.
-
-NATIVE PROFILING
-Use skill: `argent-native-profiler`
-When: Profiling native performance (CPU hotspots, UI hangs, memory leaks). iOS only today; Android on the roadmap. Useful as a reference for platform-specific investigation when running dual profiling via `argent-react-native-profiler`.
-
-PERFORMANCE OPTIMIZATION
-Use skill: `argent-react-native-optimization`
-When: App feels slow, user asks to optimize, reducing bundle size, improving startup time, fixing re-renders, optimizing lists/images/navigation, or any performance-related task. This is the entry-point skill for all performance work — it delegates to `argent-react-native-profiler` for measurement.
-
-INTERACTIVE UI TESTING (ONE-OFF, NOT SAVED)
-Skill: `argent-test-ui-flow`
-When: Running a one-off interact → screenshot → verify check with no saved regression artifact.
-
-RECORDING & REPLAYING FLOWS
-Use skill: `argent-create-flow`
-When: Saving or replaying a repeatable path for profiling, A/B comparison, retry, or reuse. For acceptance-driven regression tests, use `argent-qa-flows`.
-Prompt keywords: flow, repeat, test X times
-
-GENERATED QA REGRESSION TESTS
-Use skill: `argent-qa-flows`
-When: Saving a test case, ticket, or acceptance criteria as a repeatable regression test. Requires stable evidence and two unchanged full passes. iOS, Android, Chromium, and Vega (D-pad navigation records as `tool: tv-remote` steps); not Apple TV or Android TV.
-Prompt keywords: QA test, regression test, test case, automate this test, automate an e2e test, keep this e2e test, generate a test
-Routing: one-off check → `argent-test-ui-flow`; saved path → `argent-create-flow`; saved acceptance test → `argent-qa-flows`.
-
-PROPOSING DESIGN VARIANTS FOR HUMAN SELECTION
-Use skill: `argent-lens`
-When: The user asks for design alternatives / options / A-B choices for a screen or component, or you have produced more than one candidate look for an element and want a human to pick before committing. Covers the build → navigate → screenshot → propose_variant loop and the single blocking await_user_selection call. (Gated behind the `argent-lens` flag, off by default — run `argent enable argent-lens` first.)
-Prompt keywords: variant, design option, alternative, A/B, "let me pick", "show me options"
 </skill_routing>
 
 <subagents>
