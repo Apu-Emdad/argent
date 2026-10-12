@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  childFailureReason,
   classifyMcpEntry,
   platformChecks,
   renderDoctorReport,
@@ -183,5 +184,34 @@ describe("stripPackageBinDirs", () => {
       "/usr/bin",
     ].join(d);
     expect(stripPackageBinDirs(input)).toBe(["/opt/homebrew/bin", "/usr/bin"].join(d));
+  });
+});
+
+describe("childFailureReason", () => {
+  it("picks the error line out of a Node crash dump", () => {
+    const stderr = [
+      "node:internal/modules/cjs/loader:1228",
+      "  throw err;",
+      "  ^",
+      "",
+      "Error: Cannot find module '@argent/registry'",
+      "Require stack:",
+      "- /pkg/dist/tool-server.cjs",
+      "",
+      "Node.js v24.21.0",
+    ].join("\n");
+    expect(childFailureReason(stderr, "Command failed")).toBe(
+      "Error: Cannot find module '@argent/registry'"
+    );
+  });
+
+  it("uses a plain stderr message as is", () => {
+    expect(childFailureReason("keychain locked\n", "Command failed")).toBe("keychain locked");
+  });
+
+  it("falls back to the exec error when stderr is empty", () => {
+    expect(childFailureReason("", "Command failed: node x --check-deps")).toBe(
+      "Command failed: node x --check-deps"
+    );
   });
 });

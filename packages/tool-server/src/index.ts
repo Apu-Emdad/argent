@@ -571,8 +571,12 @@ if (require.main === module) {
   } else if (cmd === "-t" || cmd === "--get-available-tools") {
     writeAndExit(process.stdout, JSON.stringify(getAvailableTools(), null, 2) + "\n", 0);
   } else if (cmd === "--check-deps") {
-    void collectHostDepsReport().then((report) =>
-      writeAndExit(process.stdout, JSON.stringify(report, null, 2) + "\n", 0)
+    // Runs outside start(), so no unhandledRejection handler is registered:
+    // report the cause on stderr for `argent doctor` to show.
+    void collectHostDepsReport().then(
+      (report) => writeAndExit(process.stdout, JSON.stringify(report, null, 2) + "\n", 0),
+      (err: unknown) =>
+        writeAndExit(process.stderr, `${err instanceof Error ? err.message : String(err)}\n`, 1)
     );
   } else if (cmd === "-h" || cmd === "--help") {
     writeAndExit(process.stdout, usageText(), 0);

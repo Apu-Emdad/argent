@@ -473,8 +473,23 @@ async function probeHostDeps(paths: ToolsServerPaths): Promise<HostDepsReport | 
     });
     return JSON.parse(stdout) as HostDepsReport;
   } catch (err) {
-    return err instanceof Error ? err.message.split("\n")[0]! : String(err);
+    const stderr = (err as { stderr?: unknown }).stderr;
+    const fallback = err instanceof Error ? err.message.split("\n")[0]! : String(err);
+    return childFailureReason(typeof stderr === "string" ? stderr : "", fallback);
   }
+}
+
+/**
+ * The cause of a failed `--check-deps` run. execFile's message starts with a
+ * bare "Command failed: <cmd>"; the reason is in stderr. A crash on load
+ * prints a code frame and a stack around the error line, so pick that line.
+ */
+export function childFailureReason(stderr: string, fallback: string): string {
+  const lines = stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines.find((l) => /^[\w.]*Error\b/.test(l)) ?? lines[0] ?? fallback;
 }
 
 export function platformChecks(report: HostDepsReport): DoctorCheck[] {
