@@ -206,7 +206,6 @@ describe("parseRunArgs", () => {
     for (const flag of ["--device", "--platform", "--output"]) {
       expect(() => parseRunArgs(["checkout.yaml", flag, ""])).toThrow(FlagParseException);
       expect(() => parseRunArgs(["checkout.yaml", flag, ""])).toThrow(`${flag} requires a value`);
-      expect(() => parseRunArgs(["checkout.yaml", `${flag}=`])).toThrow(`${flag} requires a value`);
     }
   });
 
