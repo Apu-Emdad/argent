@@ -2931,8 +2931,7 @@ async function execLeafStep(
         const result = await invokeSubTool(registry, ctx, step.name, prepared.args, {
           ...(prepared.fileInputs ? { fileInputs: prepared.fileInputs } : {}),
           // The two tools that can start a nested run continue this run's
-          // stack, so a flow that runs itself stops at the cycle guard, and
-          // share its secret holder.
+          // stack, so a flow that runs itself stops at the cycle guard.
           ...(FLOW_STARTING_TOOLS.has(step.name)
             ? { flowStack: scope.runStack, flowSecret: state.secret }
             : {}),
