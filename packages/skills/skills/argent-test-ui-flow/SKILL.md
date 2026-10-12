@@ -24,7 +24,7 @@ All interactions go through argent MCP tools. Ensure the simulator/emulator is r
 
 For implementation tasks that modify visible UI, this workflow can also serve as a visual acceptance path.
 
-1. **Baseline screenshot**: Call `screenshot` to see the current UI state. For visual regression comparison or UI change verification, capture the baseline at `scale: 1.0` with `includeImageInContext: false` and a run-unique `out` path before editing whenever feasible - without `out` the PNG only exists on a scratch temp path you did not choose, and a shared name lets a concurrent session overwrite it.
+1. **Baseline screenshot**: Call `screenshot` to see the current UI state. For visual regression comparison or UI change verification, capture the baseline at `scale: 1.0` with `includeImageInContext: false` and a run-unique absolute `out` path before editing whenever feasible.
 2. **Find target**: Before tapping, use a discovery tool to get element coordinates:
    - **React Native apps**: use `debugger-component-tree` — it returns component names with (tap: x,y) coordinates. This is the preferred tool for RN apps on either platform. To use it, resolve the `argent-react-native-app-workflow` skill for setup; on Android you must also run `adb -s <serial> reverse tcp:8081 tcp:8081` so Metro is reachable from the device.
    - **Standard app screens and in-app modals**: use `describe`. On iOS this returns the AX tree (falls back to native-devtools when AX is empty); on Android it returns the uiautomator tree in the same DescribeNode shape.

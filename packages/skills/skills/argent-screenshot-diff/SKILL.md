@@ -23,7 +23,7 @@ Use `screenshot-diff` when pixel comparison can answer the verification question
 
 ## 3. Capture Rules
 
-Use normal downscaled `screenshot` calls for UI context and state checks. Use full-resolution screenshots only when saving baseline/current PNG files for visual regression comparison. Suppress the image block so the full-size PNG is not loaded into context, and name the file with `out` - without it the PNG only exists on a scratch temp path you did not choose. Make the name unique to this run: several agents share this filesystem, so a shared name lets another session overwrite your baseline between capture and diff.
+Use normal downscaled `screenshot` calls for UI context and state checks. Use full-resolution screenshots only when saving baseline/current PNG files for visual regression comparison. Suppress the image block so the full-size PNG is not loaded into context, and save the file with `out` at an absolute path unique to this run, so another session cannot overwrite it:
 
 ```json
 {
@@ -48,7 +48,7 @@ Provide `udid` and exactly one input for the baseline side and exactly one input
 ## 5. Deterministic Flow
 
 1. Navigate to the known-good state.
-2. Capture a baseline PNG with `screenshot` using `scale: 1.0`, `includeImageInContext: false` and a run-unique `out` path; pass on the absolute path reported in `Saved:`, since `screenshot-diff` resolves a relative one against the tool-server's working directory rather than yours.
+2. Capture a baseline PNG with `screenshot` using `scale: 1.0`, `includeImageInContext: false` and a run-unique absolute `out` path.
 3. Perform the interaction, apply the code change and navigate to the state under test.
 4. Call `screenshot-diff` with the saved `baselinePath`, `captureCurrent: true`, `udid`, and `outputDir`.
 5. Inspect the summary and artifact paths, then combine the diff with normal visual inspection and any structural/runtime evidence needed for the assertion.

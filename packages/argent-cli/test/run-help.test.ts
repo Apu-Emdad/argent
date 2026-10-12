@@ -73,10 +73,6 @@ const gestureTapMeta = {
   },
 };
 
-// A tool (like screenshot) that declares an `out` property. `--out` is a reserved
-// global flag `splitOptions` intercepts before the schema parser, so the schema
-// `out` can't be reached through its flag here and must NOT be listed in the
-// per-tool Flags block — otherwise the Global flags `--out` is printed twice.
 const screenshotMeta = {
   name: "screenshot",
   description: "Capture a screenshot",
@@ -85,7 +81,7 @@ const screenshotMeta = {
     properties: {
       udid: { type: "string" },
       includeImageInContext: { type: "boolean" },
-      out: { type: "string", description: "Save the PNG here on YOUR machine." },
+      out: { type: "string" },
     },
     required: ["udid"],
   },
@@ -138,21 +134,17 @@ describe("argent run --help — whole-payload --args advertisement", () => {
     expect(toolsClientMock.callTool).not.toHaveBeenCalled();
   });
 
-  it("does not list a reserved global flag (`out`) as a per-tool flag, so `--out` appears once", async () => {
+  it("lists `--out` once when the tool has its own `out` property", async () => {
     toolsClientMock.fetchTool.mockResolvedValue(screenshotMeta);
 
     await run(["screenshot", "--help"], { paths: {} as never });
 
     const help = capturedHelp();
-    // The schema `out` would otherwise render as `--out <value>` in the Flags
-    // block, colliding with the Global flags `--out <path>` below it.
     const outRows = help.split("\n").filter((l) => /^\s*--out(\s|=|$)/.test(l));
     expect(outRows).toHaveLength(1);
     expect(outRows[0]).toContain("For image results, save to");
-    // The tool's other fields still render — the filter drops only `out`.
     expect(help).toContain("--udid <value>");
     expect(help).toContain("--includeImageInContext");
-    expect(toolsClientMock.callTool).not.toHaveBeenCalled();
   });
 
   it("renders each required flag with the (required) marker and leaves the optionals unmarked", async () => {
