@@ -136,6 +136,8 @@ describe("classifyTypedText", () => {
     ["a doubled injection", "", "abcabc", "abc"],
     ["residue that contains the text", "abc", "abcac", "abc"],
     ["a right-length field without the text", "", "abd", "abc"],
+    ["a doubled injection into a field already holding the text", "abc", "abcabcabc", "abc"],
+    ["the text where no selection could have put it", "kab", "kXab", "ab"],
   ])("rejects %s", (_name, before, after, text) => {
     expect(classifyTypedText(before, after, text)).toBe("not-landed");
   });

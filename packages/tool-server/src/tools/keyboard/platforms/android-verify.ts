@@ -152,9 +152,7 @@ async function resolveDevtools(
   if (until !== undefined && Date.now() < until) return null;
   try {
     const ref = androidDevtoolsRef(device);
-    const devtools = await registry.resolveService<AndroidDevtoolsApi>(ref.urn, ref.options);
-    helperUnavailableUntil.delete(device.id);
-    return devtools;
+    return await registry.resolveService<AndroidDevtoolsApi>(ref.urn, ref.options);
   } catch {
     helperUnavailableUntil.set(device.id, Date.now() + HELPER_UNAVAILABLE_TTL_MS);
     return null;
