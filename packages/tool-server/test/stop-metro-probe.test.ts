@@ -1,7 +1,3 @@
-// Coverage for stop-metro's split between "the probe says nothing is listening"
-// and "the probe never ran". Only the first may be answered with
-// `stopped: false`, which is a positive claim that the port is free.
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const execFileSyncMock = vi.fn();
@@ -13,73 +9,68 @@ vi.mock("node:child_process", async () => {
 
 import { stopMetroTool } from "../src/tools/simulator/stop-metro";
 
-// Production spawns lsof by absolute path (LSOF_BIN); match on basename so the
-// assertion holds wherever the binary lives.
-const isLsof = (cmd: unknown): boolean =>
-  typeof cmd === "string" && (cmd === "lsof" || cmd.endsWith("/lsof"));
-
 const runStopMetro = (port: number) => stopMetroTool.execute({}, { port });
 
+const probeThrows = (fields: Record<string, unknown>) =>
+  execFileSyncMock.mockImplementation(() => {
+    throw Object.assign(new Error(String(fields.message)), fields);
+  });
+
 describe("stop-metro port probe", () => {
+  let kill: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     execFileSyncMock.mockReset();
+    kill = vi.spyOn(process, "kill").mockReturnValue(true);
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("reports stopped:false when the probe exits non-zero, which is how lsof says the port is free", async () => {
-    // A real non-zero exit carries a numeric `status`.
-    execFileSyncMock.mockImplementation(() => {
-      throw Object.assign(new Error("Command failed: lsof -ti tcp:8081 -sTCP:LISTEN"), {
-        status: 1,
-        signal: null,
-      });
-    });
+  it("reports stopped:false when lsof exits non-zero", async () => {
+    probeThrows({ message: "Command failed: lsof -ti tcp:8081 -sTCP:LISTEN", status: 1 });
 
     await expect(runStopMetro(8081)).resolves.toEqual({ stopped: false, port: 8081, pids: [] });
   });
 
-  it("fails instead of claiming the port is free when the probe binary is absent", async () => {
-    // spawnSync reports "could not run it at all" with a null `status` and an
-    // errno code, which is exactly what a host without lsof produces.
-    execFileSyncMock.mockImplementation(() => {
-      throw Object.assign(new Error("spawnSync /usr/sbin/lsof ENOENT"), {
-        code: "ENOENT",
-        status: null,
-        signal: null,
-        errno: -2,
-      });
-    });
+  it("fails instead of claiming the port is free when lsof is absent", async () => {
+    probeThrows({ message: "spawnSync lsof ENOENT", code: "ENOENT", status: null });
 
-    await expect(runStopMetro(8081)).rejects.toThrow(/port 8081.*lsof ENOENT/);
+    await expect(runStopMetro(8081)).rejects.toThrow(
+      "Could not determine what is listening on port 8081: spawnSync lsof ENOENT"
+    );
   });
 
-  it("fails instead of claiming the port is free when the probe times out", async () => {
-    execFileSyncMock.mockImplementation(() => {
-      throw Object.assign(new Error("spawnSync /usr/sbin/lsof ETIMEDOUT"), {
-        code: "ETIMEDOUT",
-        status: null,
-        signal: "SIGTERM",
-        errno: -60,
-      });
-    });
+  it("fails instead of claiming the port is free when lsof times out", async () => {
+    probeThrows({ message: "spawnSync lsof ETIMEDOUT", code: "ETIMEDOUT", status: null });
 
-    await expect(runStopMetro(8081)).rejects.toThrow(/port 8081.*ETIMEDOUT/);
+    await expect(runStopMetro(8081)).rejects.toThrow(
+      "Could not determine what is listening on port 8081: spawnSync lsof ETIMEDOUT"
+    );
   });
 
-  it("kills the listener the probe reports", async () => {
-    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
-    execFileSyncMock.mockImplementation((cmd: unknown) => {
-      expect(isLsof(cmd)).toBe(true);
-      return "4242\n";
-    });
+  it("kills nothing when lsof prints something other than PIDs", async () => {
+    execFileSyncMock.mockReturnValue(
+      "1\t/bin/busybox\t0\t/dev/null\n9\t/bin/busybox\t1\tpipe:[1]\n"
+    );
+
+    await expect(runStopMetro(8081)).rejects.toThrow(
+      "Could not determine what is listening on port 8081: lsof did not print a PID list: 1\t/bin/busybox\t0\t/dev/null"
+    );
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("kills every PID lsof reports", async () => {
+    execFileSyncMock.mockReturnValue("4242\n4243\n");
 
     await expect(runStopMetro(8081)).resolves.toEqual({
       stopped: true,
       port: 8081,
-      pids: [4242],
+      pids: [4242, 4243],
     });
-    expect(kill).toHaveBeenCalledWith(4242, "SIGTERM");
+    expect(kill.mock.calls).toEqual([
+      [4242, "SIGTERM"],
+      [4243, "SIGTERM"],
+    ]);
   });
 });
