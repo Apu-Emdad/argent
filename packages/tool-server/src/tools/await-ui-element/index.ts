@@ -13,8 +13,7 @@ import { isTvOsSimulator } from "../../utils/ios-devices";
 import { isAndroidTv } from "../../utils/adb";
 import { assertSupported } from "../../utils/capability";
 import { ensureDeps } from "../../utils/check-deps";
-import { pollDescribeTree, readCaveats } from "../../utils/poll-describe-tree";
-import { READ_CAVEAT_SOURCES } from "../describe/contract";
+import { pollDescribeTree } from "../../utils/poll-describe-tree";
 import type { DescribeNode, DescribeTreeData } from "../describe/contract";
 import { isBlindRead } from "../describe/blind-read";
 import { describeIos, iosRequires } from "../describe/platforms/ios";
@@ -270,7 +269,14 @@ export function evaluateMatches(params: Params, matches: DescribeNode[]): boolea
 // Fold the read's hint / restart prompt into the timeout note so the agent sees
 // the real cause rather than a bare "no element matched".
 function appendDiagnostics(base: string, lastData: DescribeTreeData | null): string {
-  const extras = readCaveats(lastData);
+  if (!lastData) return base;
+  const extras: string[] = [];
+  if (lastData.should_restart) {
+    extras.push(
+      "the foreground app may need a restart for native inspection — call restart-app and retry"
+    );
+  }
+  if (lastData.hint) extras.push(lastData.hint);
   return extras.length === 0 ? base : `${base} (${extras.join("; ")})`;
 }
 
@@ -375,16 +381,12 @@ It polls the same accessibility / DOM tree as \`describe\`
 Vega automation toolkit, HarmonyOS \`uitest dumpLayout\`) every pollIntervalMs
 (default ${DEFAULT_POLL_INTERVAL_MS}ms) until timeoutMs (default ${DEFAULT_TIMEOUT_MS}ms).
 
-Returns { success: boolean, elapsed: number, note?, cause? }, and the \`note\` is worth reading on either
-outcome. success=false means the wait ended without the condition holding, which is not always a verdict on
-the condition: \`cause\` says which it was — \`unmet\` (the tree was read and the condition was false there),
-\`unreadable\` (no trustworthy read, so nothing was judged) or \`cancelled\` — and \`note\` describes what was
-seen. Only \`unmet\` licenses rewriting the check. A \`note\` on success=true says why the pass is weaker than
-it looks: either \`hidden\` was satisfied by a selector that never matched anything (so the element may have
-been gone all along, or the selector is wrong — treat that as a failed check and fix the selector), or the
-tree it matched is not the whole live screen (a suspended HarmonyOS panel still serving its last frame, a
-Chromium page truncated at the walker's node budget). Use this after a tap/navigation to wait for the next
-screen, or before tapping an element that appears asynchronously.`,
+Returns { success: boolean, elapsed: number, note?, cause? } — success=false means the wait ended without the
+condition holding, which is not always a verdict on the condition: \`cause\` says which it was — \`unmet\` (the tree
+was read and the condition was false there), \`unreadable\` (no trustworthy read, so nothing was judged) or
+\`cancelled\` — and \`note\` describes what was seen. Only \`unmet\` licenses rewriting the check. A \`note\` on
+success=true can also say the tree was read off a suspended HarmonyOS panel, which is not the live screen. Use this
+after a tap/navigation to wait for the next screen, or before tapping an element that appears asynchronously.`,
     alwaysLoad: true,
     searchHint:
       "wait await poll until visible hidden exists text appears disappears timeout element condition settle",
@@ -452,7 +454,7 @@ screen, or before tapping an element that appears asynchronously.`,
                 ? "condition met immediately — the selector never matched any element, " +
                   "so it may have already been hidden before the wait, or the selector is wrong"
                 : null,
-              data.hint && READ_CAVEAT_SOURCES.has(data.source) ? data.hint : null,
+              data.stale && data.hint ? data.hint : null,
             ].filter((n): n is string => n !== null);
             if (notes.length > 0) result.note = notes.join(" ");
             return { done: true, result };

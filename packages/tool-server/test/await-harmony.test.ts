@@ -330,19 +330,6 @@ describe("await-screen-idle on HarmonyOS", () => {
     expect(result.note).toMatch(/taps land nowhere/i);
   });
 
-  it("says why the screen was never readable, not just that it never settled", async () => {
-    sequenceDumps([dumpWith()]);
-    const tool = createAwaitScreenIdleTool(harmonyRegistry());
-
-    const result = await tool.execute(
-      {},
-      { udid: HARMONY_ID, timeoutMs: 600, pollIntervalMs: 50, minStableMs: 10 }
-    );
-
-    expect(result.settled).toBe(false);
-    expect(result.note).toMatch(/no windows/i);
-  });
-
   it("gives the read only what is left of the wait, so an abandoned dump frees the queue", async () => {
     // An abandoned `uitest` read holds the device queue until killed.
     const budgets: (number | undefined)[] = [];

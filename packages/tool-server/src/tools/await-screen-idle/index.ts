@@ -13,12 +13,7 @@ import { isTvOsSimulator } from "../../utils/ios-devices";
 import { isAndroidTv } from "../../utils/adb";
 import { assertSupported } from "../../utils/capability";
 import { ensureDeps } from "../../utils/check-deps";
-import {
-  pollDescribeTree,
-  readCaveats,
-  type PollDescribeTreeResult,
-} from "../../utils/poll-describe-tree";
-import { READ_CAVEAT_SOURCES } from "../describe/contract";
+import { pollDescribeTree } from "../../utils/poll-describe-tree";
 import type { DescribeNode, DescribeTreeData } from "../describe/contract";
 import { describeIos, iosRequires } from "../describe/platforms/ios";
 import { describeIosDevice } from "../describe/platforms/ios-device";
@@ -75,7 +70,7 @@ interface IdleResult {
   settled: boolean;
   waitedMs: number;
   polls: number;
-  /** Why the wait did not plainly settle, or why what it settled on may not be live. */
+  /** Why what it settled on may not be the live screen. */
   note?: string;
 }
 
@@ -101,19 +96,6 @@ function treeSignature(root: DescribeNode): string {
   };
   for (const child of root.children) walk(child);
   return parts.join("\n");
-}
-
-// A failed fetch outranks the read's own caveats; on success only
-// {@link READ_CAVEAT_SOURCES} hints apply.
-function idleNote(poll: PollDescribeTreeResult<true>): string | undefined {
-  if (poll.result !== true) {
-    if (poll.lastError) return `last tree fetch failed: ${poll.lastError}`;
-    const caveats = readCaveats(poll.lastData);
-    return caveats.length === 0 ? undefined : caveats.join("; ");
-  }
-  const settledOn = poll.lastData;
-  if (!settledOn?.hint || !READ_CAVEAT_SOURCES.has(settledOn.source)) return undefined;
-  return settledOn.hint;
 }
 
 // The MCP layer times its auto-screenshot with this: capture once the screen is
@@ -158,14 +140,9 @@ export function createAwaitScreenIdleTool(registry: Registry): ToolDefinition<Pa
 
 Polls the same accessibility / DOM tree as \`describe\` every pollIntervalMs (default ${DEFAULT_POLL_INTERVAL_MS}ms) until it
 has content and that content holds identical for minStableMs (default ${DEFAULT_MIN_STABLE_MS}ms), or timeoutMs (default
-${DEFAULT_TIMEOUT_MS}ms) is reached. Returns { settled, waitedMs, polls }, plus a note whenever the wait ended somewhere
-other than a screen that plainly settled. A settled=false without a note is the ordinary one: the screen kept changing
-for the whole timeout. With one, the note says the tree read failed (a device that went away, not a screen that never
-went still) or what the last read said about itself — a degraded accessibility tree, a panel that is off, an app
-needing a restart before native inspection can see it. On settled=true it instead means the tree it
-settled on is not the whole live screen: a suspended HarmonyOS panel settles instantly on its last composited frame and
-taps land nowhere until it is woken, and a Chromium page past the walker's node budget settles on a partial tree. Read
-the note before acting on what settled.
+${DEFAULT_TIMEOUT_MS}ms) is reached. Returns { settled, waitedMs, polls, note? } — settled=false means the screen never went
+still before the timeout. A note on settled=true means the screen it settled on is not live: a suspended HarmonyOS
+panel settles instantly on its last frame, and taps land nowhere until it is woken.
 Use after a launch/navigation to wait for the UI to render before screenshotting or tapping.`,
     searchHint:
       "wait until screen settles idle stable stops changing animation transition rendered ready before screenshot",
@@ -220,7 +197,7 @@ Use after a launch/navigation to wait for the UI to render before screenshotting
         },
       });
 
-      const note = idleNote(poll);
+      const note = poll.result === true && poll.lastData?.stale ? poll.lastData.hint : undefined;
       return {
         settled: poll.result === true,
         waitedMs: poll.elapsedMs,

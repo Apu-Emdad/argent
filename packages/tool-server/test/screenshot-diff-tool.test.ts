@@ -32,15 +32,6 @@ async function makeTempDir(prefix: string): Promise<string> {
 vi.mock("../src/utils/harmony-screen", () => ({ captureHarmonyScreenshotPng: vi.fn() }));
 vi.mock("../src/utils/check-deps", () => ({ ensureDep: vi.fn(async () => {}) }));
 
-// null (unreadable rotation) keeps the unrotated request path.
-const readAndroidSurfaceRotation = vi.hoisted(() =>
-  vi.fn(async (_serial: string): Promise<0 | 1 | 2 | 3 | null> => null)
-);
-vi.mock("../src/utils/device-orientation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/utils/device-orientation")>();
-  return { ...actual, readAndroidSurfaceRotation };
-});
-
 describe("screenshotDiffTool", () => {
   it("rejects public tuning options so defaults stay internal", () => {
     const result = screenshotDiffTool.zodSchema!.safeParse({
@@ -180,30 +171,6 @@ describe("screenshotDiffTool", () => {
     });
   });
 
-  it("asks for the rotation a landscape Android device is actually in", async () => {
-    // #609: the live side must come back upright.
-    readAndroidSurfaceRotation.mockResolvedValueOnce(1);
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "argent-screenshot-diff-rotated-"));
-    const baselinePath = path.join(dir, "baseline.png");
-    const capturedPath = path.join(dir, "captured.png");
-    await writePng(baselinePath, 2, 2, { r: 0, g: 0, b: 0 });
-    await writePng(capturedPath, 2, 2, { r: 0, g: 0, b: 0 });
-    const captureScreenshot = vi.fn(async (_api: unknown, _rotation?: string) => ({
-      url: "http://localhost/current.png",
-      path: capturedPath,
-    }));
-
-    await executeScreenshotDiffTool(
-      { simulatorServer: { apiUrl: "http://localhost:4949" } },
-      { baselinePath, captureCurrent: true, udid: "emulator-5554", outputDir: dir },
-      { artifacts: new ArtifactStore() },
-      captureScreenshot as never
-    );
-
-    expect(readAndroidSurfaceRotation).toHaveBeenCalledWith("emulator-5554", undefined);
-    expect(captureScreenshot.mock.calls[0]![1]).toBe("LandscapeLeft");
-  });
-
   it("falls back to the default scale when the full-resolution capture fails (Android framebuffer mismatch)", async () => {
     const dir = await makeTempDir("argent-screenshot-diff-fallback-");
     const baselinePath = path.join(dir, "baseline.png");
@@ -265,10 +232,11 @@ describe("screenshotDiffTool", () => {
     const baselinePath = path.join(dir, "baseline.png");
     const capturedPath = path.join(dir, "captured.png");
     await writePng(baselinePath, 2, 2, { r: 0, g: 0, b: 0 });
-    const captureScreenshot = vi.fn(async () => {
-      await writePng(capturedPath, 2, 2, { r: 0, g: 0, b: 0 });
-      return { url: "http://localhost/current.png", path: capturedPath };
-    });
+    await writePng(capturedPath, 2, 2, { r: 0, g: 0, b: 0 });
+    const captureScreenshot = vi.fn(async () => ({
+      url: "http://localhost/current.png",
+      path: capturedPath,
+    }));
 
     await executeScreenshotDiffTool(
       { simulatorServer: { apiUrl: "http://localhost:4949" } },
@@ -290,59 +258,6 @@ describe("screenshotDiffTool", () => {
     expect(new Set(liveCaptures).size).toBe(2);
   });
 
-  it("does not leave the backend's own capture behind once it has been copied in", async () => {
-    // Backend captures land in `tmpdir()`, which nothing prunes.
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "argent-screenshot-diff-scratch-"));
-    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "argent-fake-backend-"));
-    const baselinePath = path.join(dir, "baseline.png");
-    const capturedPath = path.join(scratch, "backend-capture.png");
-    await writePng(baselinePath, 2, 2, { r: 0, g: 0, b: 0 });
-    const captureScreenshot = vi.fn(async () => {
-      await writePng(capturedPath, 2, 2, { r: 0, g: 0, b: 0 });
-      return { url: "http://localhost/current.png", path: capturedPath };
-    });
-
-    await executeScreenshotDiffTool(
-      { simulatorServer: { apiUrl: "http://localhost:4949" } },
-      { baselinePath, captureCurrent: true, udid: "ABC", outputDir: dir },
-      { artifacts: new ArtifactStore() },
-      captureScreenshot as never
-    );
-
-    expect(await fs.readdir(scratch)).toEqual([]);
-    expect(
-      (await fs.readdir(dir)).filter((n) => /^current-[a-f0-9]{8}\.live\.png$/.test(n))
-    ).toHaveLength(1);
-  });
-
-  it("does not leave the capture behind when the copy into `outputDir` fails", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "argent-screenshot-diff-ro-"));
-    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "argent-fake-backend-"));
-    const baselinePath = path.join(dir, "baseline.png");
-    const capturedPath = path.join(scratch, "backend-capture.png");
-    await writePng(baselinePath, 2, 2, { r: 0, g: 0, b: 0 });
-    const captureScreenshot = vi.fn(async () => {
-      await writePng(capturedPath, 2, 2, { r: 0, g: 0, b: 0 });
-      return { url: "http://localhost/current.png", path: capturedPath };
-    });
-    await fs.chmod(dir, 0o500);
-
-    try {
-      await expect(
-        executeScreenshotDiffTool(
-          { simulatorServer: { apiUrl: "http://localhost:4949" } },
-          { baselinePath, captureCurrent: true, udid: "ABC", outputDir: dir },
-          { artifacts: new ArtifactStore() },
-          captureScreenshot as never
-        )
-      ).rejects.toThrow();
-    } finally {
-      await fs.chmod(dir, 0o700);
-    }
-
-    expect(await fs.readdir(scratch)).toEqual([]);
-  });
-
   it("validates mutually exclusive saved and live inputs at execute time", async () => {
     await expect(
       executeScreenshotDiffTool(
@@ -360,8 +275,9 @@ describe("screenshotDiffTool", () => {
 
   it("captures a live HarmonyOS side over hdc instead of the simulator-server", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "argent-screenshot-diff-harmony-"));
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "argent-harmony-capture-"));
     const baselinePath = path.join(dir, "baseline.png");
-    const capturedPath = path.join(dir, "captured.png");
+    const capturedPath = path.join(scratch, "captured.png");
     await writePng(baselinePath, 2, 2, { r: 0, g: 0, b: 0 });
     await writePng(capturedPath, 2, 2, { r: 0, g: 0, b: 0 });
     vi.mocked(captureHarmonyScreenshotPng).mockResolvedValue(capturedPath);
@@ -384,6 +300,7 @@ describe("screenshotDiffTool", () => {
     );
     expect(liveCaptures).toHaveLength(1);
     expect(result.diffPath).toBeTruthy();
+    expect(await fs.readdir(scratch)).toEqual([]);
   });
 
   it("rejects a rotation override on a live HarmonyOS capture", async () => {

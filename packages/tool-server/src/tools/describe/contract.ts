@@ -79,15 +79,6 @@ export type DescribeSource =
   // Physical iOS: the XCUITest runner accessibility snapshot.
   | "xcuitest-runner";
 
-// Sources whose `hint` questions the tree just read (a suspended HarmonyOS
-// panel's last frame, a Chromium walk cut at its node budget), so a wait owes
-// it even on success. Other hints are standing facts about the target and stay
-// on the timeout note.
-export const READ_CAVEAT_SOURCES: ReadonlySet<DescribeSource> = new Set([
-  "harmony-uitest",
-  "cdp-dom",
-]);
-
 // Adapter-internal: `tree` is rendered by `format-tree.ts` and then dropped —
 // callers get `DescribeResult` below, i.e. only the rendered text.
 export interface DescribeTreeData {
@@ -97,8 +88,7 @@ export interface DescribeTreeData {
   // "degraded" means boot-state on the simulator path and a truncated snapshot on the device path.
   // Each path writes this hint once.
   hint?: string;
-  // Possibly not the live screen (a suspended HarmonyOS panel), so it cannot
-  // confirm a condition is unmet.
+  // Possibly not the live screen (a suspended HarmonyOS panel); `hint` says why.
   stale?: boolean;
   // Size the frames were normalized against, in the source's native units
   // (Android px, iOS pt), so only the aspect ratio compares across sources —

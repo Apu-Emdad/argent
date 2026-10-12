@@ -27,7 +27,7 @@ interface PollDescribeTreeArgs<R> {
   onSample: (data: DescribeTreeData, nowMs: number) => PollVerdict<R>;
 }
 
-export interface PollDescribeTreeResult<R> {
+interface PollDescribeTreeResult<R> {
   /** Result from the first `onSample` that returned done. */
   result: R | undefined;
   aborted: boolean;
@@ -43,19 +43,6 @@ export interface PollDescribeTreeResult<R> {
    * the deadline). An unset `lastError` does not mean it succeeded.
    */
   lastAttempt: "tree" | "error" | "unsettled";
-}
-
-/** The last read's own caveats (degraded tree, needed restart), for a wait's note. */
-export function readCaveats(lastData: DescribeTreeData | null): string[] {
-  if (!lastData) return [];
-  const caveats: string[] = [];
-  if (lastData.should_restart) {
-    caveats.push(
-      "the foreground app may need a restart for native inspection — call restart-app and retry"
-    );
-  }
-  if (lastData.hint) caveats.push(lastData.hint);
-  return caveats;
 }
 
 export async function pollDescribeTree<R>(

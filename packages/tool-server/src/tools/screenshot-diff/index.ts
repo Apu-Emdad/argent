@@ -283,8 +283,19 @@ async function resolveInputPaths(
   // What the live captures had to say: on a foldable whose panel could not be
   // resolved, that the capture is of the cover panel.
   const warnings: string[] = [];
+  // Physical iPhones capture through the on-device XCUITest runner, HarmonyOS
+  // through `uitest screenCap`. Simulators and Android capture through the
+  // simulator-server.
   const captureLive = async (name: "baseline" | "current"): Promise<string> => {
     const device = resolveDevice(params.udid);
+    if (device.platform === "harmony") {
+      return captureHarmonyLiveInput({
+        connectKey: harmonyConnectKey(device.id),
+        rotation: params.rotation,
+        outputDir,
+        name,
+      });
+    }
     if (isIosPhysicalDevice(device)) {
       return captureIosDeviceLiveInput({
         runner: requireIosDeviceRunner(services),
@@ -293,9 +304,14 @@ async function resolveInputPaths(
       });
     }
     const captured = await captureLiveInput({
-      capture: liveCapture(services, params, options, captureScreenshot, peekFor),
+      api: requireSimulatorServer(services),
+      device,
+      peekFor,
       outputDir,
       name,
+      rotation: params.rotation,
+      signal: options?.signal,
+      captureScreenshot,
     });
     if (captured.warning !== undefined) warnings.push(captured.warning);
     return captured.path;
@@ -307,80 +323,6 @@ async function resolveInputPaths(
   const currentPath = params.captureCurrent ? await captureLive("current") : params.currentPath!;
 
   return { baselinePath, currentPath, warnings };
-}
-
-interface LiveCaptureResult {
-  path: string;
-  warning?: string;
-}
-
-/** HarmonyOS captures on-device with `uitest screenCap`; the rest via simulator-server. */
-function liveCapture(
-  services: Record<string, unknown>,
-  params: Params,
-  options: Partial<ToolContext> | undefined,
-  captureScreenshot: CaptureScreenshot,
-  peekFor?: (device: DeviceInfo) => RotationPeek
-): () => Promise<LiveCaptureResult> {
-  const device = resolveDevice(params.udid);
-
-  if (device.platform === "harmony") {
-    return async () => {
-      if (params.rotation) {
-        // Refused only for a live capture: rotation is inert on a two-path diff.
-        throw new InvalidToolInputError(
-          "rotation is not supported for a live HarmonyOS capture: `uitest screenCap` captures the display in its current orientation and has no override. Rotate the device itself, or drop the rotation parameter.",
-          {
-            error_code: FAILURE_CODES.TOOL_INPUT_INVALID,
-            failure_stage: "harmony_screenshot_diff_rotation",
-          }
-        );
-      }
-      await ensureDep("hdc");
-      return {
-        path: await captureHarmonyScreenshotPng({
-          connectKey: harmonyConnectKey(device.id),
-          scale: 1.0,
-        }),
-      };
-    };
-  }
-
-  return async () => {
-    const api = requireSimulatorServer(services);
-    // Full-res gives the best diff fidelity, but some Android emulators reject a
-    // full-res frame ("wrong data size" framebuffer mismatch), which broke the whole
-    // baselinePath + captureCurrent flow there. The server's default scale captures
-    // reliably, and diffPngFiles' same-aspect normalization keeps a scaled capture
-    // comparable to a baseline saved at any scale. Captured upright so a rotated
-    // Android device does not diff at ~100% against an upright saved baseline.
-    // On a foldable the panel is resolved now, whoever moved the hinge, and
-    // handed to both attempts, so the retry is of the same panel.
-    const panel = await resolveCapturePanel(api);
-    const capturePanel: CaptureScreenshot = panel
-      ? (a, r, s, sc) => captureScreenshot(a, r, s, sc, panel.screen)
-      : captureScreenshot;
-    const captureAt = (scale: number | undefined) =>
-      captureScreenshotUpright(
-        api,
-        device,
-        params.rotation,
-        options?.signal,
-        scale,
-        capturePanel,
-        peekFor?.(device)
-      );
-    let capture: Awaited<ReturnType<CaptureScreenshot>>;
-    try {
-      capture = await captureAt(1.0);
-    } catch {
-      capture = await captureAt(undefined);
-    }
-    return {
-      path: capture.path,
-      ...(panel?.warning !== undefined ? { warning: panel.warning } : {}),
-    };
-  };
 }
 
 function validateInputSources(params: Params): void {
@@ -468,20 +410,88 @@ async function captureIosDeviceLiveInput(params: {
   return destination;
 }
 
-async function captureLiveInput(params: {
-  capture: () => Promise<LiveCaptureResult>;
+async function captureHarmonyLiveInput(params: {
+  connectKey: string;
+  rotation?: Params["rotation"];
   outputDir: string;
   name: "baseline" | "current";
-}): Promise<LiveCaptureResult> {
-  const { path: capturedPath, warning } = await params.capture();
+}): Promise<string> {
+  if (params.rotation) {
+    // Refused only for a live capture: rotation is inert on a two-path diff.
+    throw new InvalidToolInputError(
+      "rotation is not supported for a live HarmonyOS capture: `uitest screenCap` captures the display in its current orientation and has no override. Rotate the device itself, or drop the rotation parameter.",
+      {
+        error_code: FAILURE_CODES.TOOL_INPUT_INVALID,
+        failure_stage: "harmony_screenshot_diff_rotation",
+      }
+    );
+  }
+  await ensureDep("hdc");
+  const captured = await captureHarmonyScreenshotPng({ connectKey: params.connectKey, scale: 1.0 });
   const suffix = crypto.randomBytes(4).toString("hex");
   const destination = path.join(params.outputDir, `${params.name}-${suffix}.live.png`);
-  // The capture is scratch nothing else prunes; only the copy outlives the call.
+  // The capture is temp-dir scratch nothing else prunes.
   try {
     await fs.mkdir(params.outputDir, { recursive: true });
-    await fs.copyFile(capturedPath, destination);
+    await fs.copyFile(captured, destination);
   } finally {
-    await fs.rm(capturedPath, { force: true }).catch(() => {});
+    await fs.rm(captured, { force: true }).catch(() => {});
   }
-  return { path: destination, ...(warning !== undefined ? { warning } : {}) };
+  return destination;
+}
+
+async function captureLiveInput(params: {
+  api: SimulatorServerApi;
+  // Needed so a live capture picks up the device's rotation the same way the
+  // `screenshot` tool does. Without it a rotated-Android `captureCurrent` would
+  // come back sideways and diff at ~100% against an upright saved baseline.
+  device: DeviceInfo;
+  peekFor?: (device: DeviceInfo) => RotationPeek;
+  outputDir: string;
+  name: "baseline" | "current";
+  rotation?: Params["rotation"];
+  signal?: AbortSignal;
+  captureScreenshot: CaptureScreenshot;
+}): Promise<{ path: string; warning?: string }> {
+  // Full-res gives the best diff fidelity, but some Android emulators reject a
+  // full-res frame ("wrong data size" framebuffer mismatch), which broke the whole
+  // baselinePath + captureCurrent flow there. The server's default scale captures
+  // reliably, and diffPngFiles' same-aspect normalization keeps a scaled capture
+  // comparable to a baseline saved at any scale.
+  // On a foldable the panel is resolved now, whoever moved the hinge, and
+  // handed to both attempts, so the retry is of the same panel.
+  const panel = await resolveCapturePanel(params.api);
+  const captureScreenshot: CaptureScreenshot = panel
+    ? (a, r, s, sc) => params.captureScreenshot(a, r, s, sc, panel.screen)
+    : params.captureScreenshot;
+  let capture: Awaited<ReturnType<CaptureScreenshot>>;
+  try {
+    capture = await captureScreenshotUpright(
+      params.api,
+      params.device,
+      params.rotation,
+      params.signal,
+      1.0,
+      captureScreenshot,
+      params.peekFor?.(params.device)
+    );
+  } catch {
+    capture = await captureScreenshotUpright(
+      params.api,
+      params.device,
+      params.rotation,
+      params.signal,
+      undefined,
+      captureScreenshot,
+      params.peekFor?.(params.device)
+    );
+  }
+  const suffix = crypto.randomBytes(4).toString("hex");
+  const destination = path.join(params.outputDir, `${params.name}-${suffix}.live.png`);
+  await fs.mkdir(params.outputDir, { recursive: true });
+  await fs.copyFile(capture.path, destination);
+  return {
+    path: destination,
+    ...(panel?.warning !== undefined ? { warning: panel.warning } : {}),
+  };
 }
