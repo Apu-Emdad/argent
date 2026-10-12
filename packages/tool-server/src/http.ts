@@ -492,14 +492,13 @@ export function createHttpApp(registry: Registry, options?: HttpAppOptions): Htt
   });
 
   // Snapshotted at startup; the launcher generates it and passes it in via env
-  // (see ensureToolsServer). Empty or absent ⇒ auth disabled — the launcher
-  // ships the empty string on purpose for `argent server start --no-auth` —
-  // which is why stderr gets a one-shot warning.
+  // (see ensureToolsServer). Empty or absent ⇒ auth disabled (`--no-auth`,
+  // `npm run dev`), hence the one-shot stderr warning.
   const expectedToken = process.env[AUTH_TOKEN_ENV] ?? "";
   if (!expectedToken) {
     process.stderr.write(
       `[tool-server] WARNING: ${AUTH_TOKEN_ENV} is empty or not set; running with authentication disabled. ` +
-        `Anyone who can reach the port can drive the tool-server. This is only safe when the server binds a loopback address.\n`
+        `Any local process can drive the tool-server. This is only safe for development.\n`
     );
   }
 

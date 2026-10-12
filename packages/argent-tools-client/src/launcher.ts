@@ -23,10 +23,8 @@ export const AUTH_TOKEN_ENV = "ARGENT_AUTH_TOKEN";
 // own (0 = never).
 const AUTOSPAWN_IDLE_TIMEOUT_MINUTES = 30;
 
-// Bind address for auto-spawned servers. Passed to the child explicitly, not
-// left to the tool-server's own default: the child inherits this process's
-// environment, so an exported ARGENT_HOST would otherwise bind it away from
-// the url and state file recorded here.
+// Passed explicitly: the child inherits this process's env, so an exported
+// ARGENT_HOST would bind it away from the url and state file recorded here.
 const AUTOSPAWN_HOST = "127.0.0.1";
 
 /**
@@ -61,23 +59,14 @@ export interface ToolsServerPaths {
 }
 
 export interface BuildToolsServerEnvOptions {
-  /**
-   * Bind host, exported as `ARGENT_HOST`. Omitting it leaves the key at
-   * whatever `baseEnv` carries — for `process.env`, the developer's own export.
-   */
+  /** Bind host. Omit to keep `baseEnv`'s `ARGENT_HOST`. */
   host?: string;
-  /**
-   * Idle-timeout minutes (0 disables), exported as `ARGENT_IDLE_TIMEOUT_MINUTES`.
-   * Omitting it leaves the key at whatever `baseEnv` carries.
-   */
+  /** Idle-timeout minutes (0 disables). Omit to keep `baseEnv`'s value. */
   idleTimeoutMinutes?: number;
   /**
    * Auth token, exported as `ARGENT_AUTH_TOKEN` so the tool-server enforces
    * `Authorization: Bearer <token>`. Omit (or pass empty) to run it
-   * unauthenticated (`argent server start --no-auth`): the key is then set to
-   * the empty string, which the tool-server reads as auth disabled — it must
-   * not stay at whatever `baseEnv` carries, or a developer's own export would
-   * authenticate a server that every client was told is open.
+   * unauthenticated (`argent server start --no-auth`).
    */
   token?: string;
 }
@@ -98,9 +87,7 @@ export function buildToolsServerEnv(
   if (options.idleTimeoutMinutes !== undefined) {
     env.ARGENT_IDLE_TIMEOUT_MINUTES = String(options.idleTimeoutMinutes);
   }
-  // Always written, never inherited: the empty string is the tool-server's
-  // "auth disabled" value, so an exported ARGENT_AUTH_TOKEN cannot authenticate
-  // a server spawned with `--no-auth`.
+  // Never inherited: an exported token would authenticate a `--no-auth` server.
   env[AUTH_TOKEN_ENV] = options.token ?? "";
   if (paths.installKind) env.ARGENT_INSTALL_KIND = paths.installKind;
   if (paths.installProjectRoot) env.ARGENT_PROJECT_ROOT = paths.installProjectRoot;

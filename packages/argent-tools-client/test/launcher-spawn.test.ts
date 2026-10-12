@@ -309,8 +309,7 @@ describe("ensureToolsServer", () => {
   });
 
   it("binds the child to 127.0.0.1 even when ARGENT_HOST names another address", async () => {
-    // ::1 is IPv6-loopback only, so a child that took the export would not
-    // answer on the 127.0.0.1 the handle and the state file both promise.
+    // A child bound to ::1 would not answer on the promised 127.0.0.1.
     process.env.ARGENT_HOST = "::1";
     try {
       const handle = await launcher.ensureToolsServer(fakePaths());
