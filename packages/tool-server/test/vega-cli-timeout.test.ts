@@ -98,7 +98,7 @@ if (cmd === "hang") {
   // pgid, like the real CLI's setsid'd worker), so the group-only SIGKILL can't reach
   // it — only the descendant sweep does. It also inherits our stdout, reproducing the
   // pipe-held-open freeze. \`secs\` is a per-test sentinel so pgrep finds strays
-  // unambiguously. The ignored TERM survives exec, so only SIGKILL reaps the worker.
+  // unambiguously.
   const worker = spawn("sh", ["-c", "trap '' TERM; exec sleep " + secs], { detached: true, stdio: ["ignore", "inherit", "ignore"] });
   worker.unref();
   // The launcher itself also hangs so it stays alive to be timed out and snapshotted.
