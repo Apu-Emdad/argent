@@ -1175,23 +1175,27 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       const kid = (tag: string, id: string, y: number, opts: Opts = {}) =>
         el({ tag, attrs: { id }, rect: { x: 5, y, w: 72, h: 20 }, ...opts });
       const { tree } = run([
-        scroller([
-          select(true, [
-            kid("button", "lead", 170),
-            kid("option", "gone", 0, { style: { display: "none" } }),
-            kid("option", "floating", 231, { style: { position: "absolute" } }),
-            kid("option", "pinned", 240, { style: { position: "fixed" } }),
-            kid("option", "first", 147, {
-              offsetPos: { left: 4, top: 166 },
-              style: { marginLeft: "0px", marginTop: "2px" },
-            }),
-            kid("button", "late", 169, { rect: { x: 5, y: 169, w: 100, h: 20 } }),
-            kid("option", "cut", 211),
-            kid("option", "past", 231),
-          ]),
-          select(true, [kid("option", "only", 165, { offsetPos: { left: 4, top: 164 } })]),
-          select(false, [kid("option", "closed", 170)]),
-        ]),
+        scroller(
+          [
+            select(true, [
+              kid("button", "lead", 170),
+              kid("option", "gone", 0, { style: { display: "none" } }),
+              kid("option", "floating", 231, { style: { position: "absolute" } }),
+              kid("option", "pinned", 240, { style: { position: "fixed" } }),
+              kid("option", "first", 147, {
+                offsetPos: { left: 4, top: 166 },
+                style: { marginLeft: "0px", marginTop: "2px" },
+              }),
+              kid("button", "late", 169, { rect: { x: 5, y: 169, w: 100, h: 20 } }),
+              kid("option", "cut", 211),
+              kid("option", "past", 231),
+            ]),
+            select(true, [kid("option", "only", 165, { offsetPos: { left: 4, top: 164 } })]),
+            select(true, [kid("option", "loose", 170, { style: { position: "absolute" } })]),
+            select(false, [kid("option", "closed", 170)]),
+          ],
+          { style: { position: "relative" } }
+        ),
       ]);
       const at = picker.boxSizing;
       expect(pxFrame(tree, "lead").h, at).toBe(0);
@@ -1202,6 +1206,7 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       expect(pxFrame(tree, "cut"), at).toEqual({ x: 5, y: 211, w: 72, h: 10 });
       expect(pxFrame(tree, "past").h, at).toBe(0);
       expect(pxFrame(tree, "only"), at).toEqual({ x: 5, y: 165, w: 72, h: 20 });
+      expect(pxFrame(tree, "loose"), at).toEqual({ x: 5, y: 170, w: 72, h: 20 });
       expect(pxFrame(tree, "closed").h, at).toBe(0);
     }
   });
