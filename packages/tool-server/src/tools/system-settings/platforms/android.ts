@@ -12,15 +12,9 @@ import type {
   SystemSettingsServices,
 } from "../types";
 
-// appearance → `cmd uimode night <mode>` (the immediate, applies-now switch for
-// the system dark/light theme).
 const NIGHT_MODE: Record<string, string> = { light: "no", dark: "yes" };
 
-// text-size → a `system.font_scale` float. iOS names 12 Dynamic Type categories
-// where Android takes a continuous multiplier, so each category maps to the
-// scale factor of that category's body-text point size relative to `large`
-// (17pt) — iOS body sizes 14/15/16/17/19/21/23 then the AX range 28/33/40/47/53.
-// This keeps the visual step between categories close to what iOS renders.
+// Each iOS category's body-text point size relative to `large` (17pt).
 const FONT_SCALE: Record<(typeof TEXT_SIZE_VALUES)[number], string> = {
   "extra-small": "0.82",
   "small": "0.88",
@@ -37,29 +31,20 @@ const FONT_SCALE: Record<(typeof TEXT_SIZE_VALUES)[number], string> = {
 };
 
 interface AndroidChange {
-  // The `adb shell` command string. Values here are tool-controlled constants
-  // (mode strings, 0/1 flags, font-scale floats), never raw caller input, so no
-  // shell-quoting is needed. Multiple `settings put` calls are chained with `&&`
-  // so a failure short-circuits to a non-zero exit.
+  // Built from constants only, never caller input, so it needs no quoting.
   shellCommand: string;
-  // Human-readable description of the concrete platform-level change.
   applied: string;
-  // Lowest API level on which the command actually changes the device. Only for
-  // a command that stays silent below its floor — one that refuses out loud is
-  // caught by the exit-code/stderr check instead and needs no probe.
+  // For a write the device accepts but ignores below this API level.
   minSdk?: number;
-  // Only for a chained `shellCommand`: what the device is left holding when a
-  // write part-way down the chain fails. The caller cannot infer it from the
-  // error, and the state is neither the old one nor the one it asked for.
+  // For a chained command: what a failure part-way leaves on the device.
   partialOnFailure?: string;
 }
 
-/** Android 10 — the first release where `location_mode` is the master switch. */
+/** Android 10, where `location_mode` became the master switch. */
 const LOCATION_MODE_MIN_SDK = 29;
 
-// Translate an abstract (setting, value) into the concrete `adb` change. Central
-// validation already guaranteed `value` is legal for `setting`, so every branch
-// here has a well-defined mapping.
+const ADB_SETTING_TIMEOUT_MS = 15_000;
+
 function androidChange(setting: SystemSetting, value: string): AndroidChange {
   const on = value === "on";
   switch (setting) {
@@ -82,8 +67,6 @@ function androidChange(setting: SystemSetting, value: string): AndroidChange {
       };
     }
     case "reduce-motion": {
-      // Android has no single "reduce motion" flag; the analogue is turning the
-      // three animation scales off. `on` (reduce motion) → 0, `off` → 1.
       const scale = on ? "0" : "1";
       return {
         shellCommand:
@@ -119,10 +102,7 @@ function androidChange(setting: SystemSetting, value: string): AndroidChange {
         applied: `airplane_mode=${on ? "enabled" : "disabled"}`,
       };
     case "location": {
-      // location_mode 3 = high accuracy (on), 0 = off. The write is accepted at
-      // every API level but only drives the master switch from Q on: on API 24
-      // `location_mode` flips while `location_providers_allowed` stays `gps` and
-      // location keeps working, so the floor is checked before running it.
+      // 3 = high accuracy.
       const mode = on ? "3" : "0";
       return {
         shellCommand: `settings put secure location_mode ${mode}`,
@@ -140,12 +120,8 @@ function androidChange(setting: SystemSetting, value: string): AndroidChange {
   }
 }
 
-// The adb client prints its own notices on stderr on a call that then
-// succeeds: the daemon startup banner (`* daemon …`) after a server restart,
-// and a server-version mismatch ("adb server version (…) doesn't match this
-// client (…); killing…", which carries no `*`). parseAdbDevices skips the `*`
-// banner lines for the same reason; only what survives these known chatter
-// forms can be the device's own report.
+// adb prints these on stderr on a call that then succeeds: the daemon startup
+// banner and the server-version-mismatch notice.
 function stripAdbBanner(stderr: string): string {
   return stderr
     .split("\n")
@@ -158,14 +134,8 @@ function stripAdbBanner(stderr: string): string {
     .trim();
 }
 
-/**
- * adb's own subprocess fields, carried onto this tool's failure.
- *
- * `runAdb` throws a `FailureError` whose signal already holds the exit code and
- * signal it read off the raw `execFile` rejection; that wrapper carries no
- * `code` of its own, so re-deriving them from it would find none and the bucket
- * would lose the exit code its iOS twin keeps.
- */
+// `runAdb` already read these off the raw `execFile` rejection; its own
+// FailureError carries no `code` to re-derive them from.
 function adbSubprocessMetadata(cause: unknown): Partial<FailureSignal> {
   const { failure_command, failure_exit_code, failure_signal, failure_spawn_code } =
     getFailureSignal(cause) ?? {};
@@ -196,24 +166,14 @@ function settingFailure(
       failure_stage: failureStage,
       failure_area: "tool_server",
       error_kind: "subprocess",
-      // Only a thrown adb error carries the syscall/exit metadata; a refusal the
-      // device printed while adb itself exited 0 has none to contribute.
       ...(cause ? adbSubprocessMetadata(cause) : {}),
     },
     cause instanceof Error ? { cause } : undefined
   );
 }
 
-/**
- * Refuse a change that would sever the adb transport it travels over.
- *
- * On a wirelessly-debugged device, adb rides the device's own Wi-Fi link. Both
- * `svc wifi disable` and `cmd connectivity airplane-mode enable` take that link
- * down, so the write lands and then nothing can reach the device again — not the
- * response, and not the call that would undo it. Recovery needs a USB cable or
- * physical access, so refuse up front rather than strand the session; over USB,
- * or over the loopback an emulator is reached on, both are fine.
- */
+// Over wireless adb these take down the link the call travels over, and with it
+// any way to undo them.
 function assertKeepsTransport(udid: string, setting: SystemSetting, value: string): void {
   const dropsWifi =
     (setting === "wifi" && value === "off") || (setting === "airplane-mode" && value === "on");
@@ -230,14 +190,6 @@ function assertKeepsTransport(udid: string, setting: SystemSetting, value: strin
   );
 }
 
-/** Ceiling for the one `adb shell` that applies the setting. Summed with the
- * API-level probe that can precede it, this has to stay under the MCP client's
- * 30s per-attempt cap; above it the client aborts and replays the call while the
- * abandoned `adb` keeps running, and this tool's own diagnostic — the device's
- * verbatim refusal — never reaches the agent. */
-export const ADB_SETTING_TIMEOUT_MS = 15_000;
-
-/** The device's API level, or null when the property is missing/unparseable. */
 async function sdkLevel(udid: string): Promise<number | null> {
   const raw = await adbShell(udid, "getprop ro.build.version.sdk", {
     timeoutMs: ENRICH_TIMEOUT_MS,
@@ -259,13 +211,6 @@ export const androidImpl: PlatformImpl<
     const { shellCommand, applied, minSdk, partialOnFailure } = androidChange(setting, value);
 
     if (minSdk !== undefined) {
-      // The floor exists because the write is silently inert below it, so the
-      // level has to be known: an unverifiable one fails closed, since reporting
-      // `applied` for a change that may never have taken is the exact outcome the
-      // floor is here to prevent (an empty `getprop` is reachable on a device
-      // that is adb-visible but not finished booting). A transport failure keeps
-      // adb's classification; any other probe failure is wrapped with this call's
-      // own context, so it doesn't reach the agent as a bare `getprop` error.
       let level: number | null;
       try {
         level = await sdkLevel(udid);
@@ -280,10 +225,8 @@ export const androidImpl: PlatformImpl<
           err
         );
       }
+      // An unreadable level fails closed: the write would be silent if inert.
       if (level === null || level < minSdk) {
-        // Same class as the iOS "Android-only" rejection: this target cannot
-        // carry the change out and no retry will change that, so it is caller
-        // input (400) rather than a subprocess fault an agent would retry.
         throw new InvalidToolInputError(
           level === null
             ? `'${setting}' needs Android API ${minSdk}+, but ${udid} did not report a readable API ` +
@@ -301,13 +244,9 @@ export const androidImpl: PlatformImpl<
 
     let stderr: string;
     try {
-      // Neither channel alone is a success signal. `settings put` / `cmd` / `svc`
-      // exit non-zero (→ runAdb throws) when the shell command itself refuses,
-      // but a binder service that exists with no shell-command handler — what
-      // `cmd uimode` / `cmd connectivity` are below their API floor — takes
-      // Android's default `Binder.handleShellCommand`, which prints
-      // "No shell command implementation." on stderr and returns 0. Reading only
-      // the exit code answers `applied` for a change the device refused.
+      // `runAdb`, not `adbShell`: a binder service with no shell-command handler
+      // (`cmd uimode` on old APIs) prints "No shell command implementation." on
+      // stderr and exits 0.
       ({ stderr } = await runAdb(["-s", udid, "shell", shellCommand], {
         timeoutMs: ADB_SETTING_TIMEOUT_MS,
       }));
@@ -326,11 +265,6 @@ export const androidImpl: PlatformImpl<
 
     const refusal = stripAdbBanner(stderr);
     if (refusal) {
-      // A binder service with no shell-command handler ("No shell command
-      // implementation.") or a command that answers with its own usage text is
-      // the device's Android version not implementing this — the same "try a
-      // newer runtime" situation the iOS branch names. The raw text alone reads
-      // like a bug in the tool, so say what it means.
       const versionHint = /no shell command implementation|usage:\s*svc\b/i.test(refusal)
         ? ` This Android version has no handler for '${setting}'; a newer system image may add it.`
         : "";

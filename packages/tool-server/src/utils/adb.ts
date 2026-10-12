@@ -597,14 +597,7 @@ function isTerminalAdbError(message: string): boolean {
   return TERMINAL_ADB_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-// `isTerminalAdbError` covers the device states no retry can fix; these cover
-// the rest of the transport — the client<->daemon leg (`protocol fault ...
-// Connection reset by peer` from the shared adb server restarting mid-command,
-// `cannot connect to daemon` from it being down) and the two handshake states
-// adb reports in the seconds after a device appears, before it will carry a
-// command. They are matched separately because `isTerminalAdbError` also gates
-// `waitForBootCompleted`, where every one of these is a transient it
-// deliberately swallows and retries.
+// Kept out of `isTerminalAdbError` because `waitForBootCompleted` retries these.
 const ADB_DAEMON_TRANSPORT_PATTERNS: RegExp[] = [
   /connection reset by peer/i,
   /cannot connect to daemon/i,
@@ -614,13 +607,9 @@ const ADB_DAEMON_TRANSPORT_PATTERNS: RegExp[] = [
 ];
 
 /**
- * True when an adb failure is the transport's, not the device's answer: a dead
- * or wedged link the command never crossed, or a timeout that left no answer at
- * all — the command may or may not have run.
- *
- * Callers that reinterpret a non-zero exit as "the target refused" need this to
- * tell the two apart, or a device adb could not reach is reported as a refusal
- * the device never made.
+ * True when the command never got the device's answer: a dead link, an
+ * unready device, or a timeout. Lets a caller that reads a non-zero exit as
+ * "the device refused" keep adb's own failure instead.
  */
 export function isAdbTransportFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);

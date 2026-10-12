@@ -90,16 +90,10 @@ export function isAndroidEmulatorSerial(serial: string): boolean {
   return serial.startsWith("emulator-");
 }
 
-/** The mDNS services adb tracks for wireless debugging. adb names a device it
- * discovered that way by its service instance, so the serial carries no address
- * at all. Only `adb-tls-connect` is auto-connected by default, but
- * `$ADB_MDNS_AUTO_CONNECT` takes any of them and a serial from any is a device
- * reached over the network. */
+// adb names a device found over mDNS by its service instance, with no address.
 const ADB_WIRELESS_MDNS_SERVICES = ["_adb._tcp", "_adb-tls-connect._tcp", "_adb-tls-pairing._tcp"];
 
-/** A serial on one of these hosts is a forwarded port — docker-android, a
- * tunnelled CI emulator — not a radio link. The whole 127.0.0.0/8 block is
- * loopback too (`adb connect 127.0.0.2:5555`), so it is matched separately. */
+// A loopback `host:port` is a forwarded port (docker-android, a tunnel), not Wi-Fi.
 const LOOPBACK_ADB_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 function isLoopbackAdbHost(host: string): boolean {
@@ -108,18 +102,9 @@ function isLoopbackAdbHost(host: string): boolean {
 }
 
 /**
- * True when adb reaches this device over the device's own Wi-Fi, so switching
- * that Wi-Fi off severs the transport carrying the command.
- *
- * Two serial forms say so. `adb connect <host>:<port>` gives `host:port` — USB
- * hardware serials and `emulator-<port>` carry no port, so the same test
- * excludes them. A device adb found over mDNS is listed under its service
- * instance instead, `adb-<serial>-<suffix>._adb-tls-connect._tcp`, with no
- * address at all.
- *
- * A host-only VM network (Genymotion, Waydroid) is indistinguishable from a LAN
- * address, so those are treated as wireless too — the conservative direction,
- * since the caller is told to use a different connection rather than losing one.
+ * True when adb reaches the device over the network: a `host:port` serial from
+ * `adb connect` on a non-loopback host, or an mDNS serial. A host-only VM
+ * network counts too, since it cannot be told apart from a LAN address.
  */
 export function isWirelessAdbSerial(serial: string): boolean {
   if (ADB_WIRELESS_MDNS_SERVICES.some((service) => serial.includes(service))) return true;

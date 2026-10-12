@@ -1,10 +1,3 @@
-// The device-wide settings this tool can toggle. Each maps to a platform
-// command in `platforms/` — the abstract name here is the vocabulary the agent
-// uses and the platform files own the translation. Some settings are
-// cross-platform (display / accessibility), others are Android-only because the
-// iOS simulator exposes no toggle for them (the radios, the location master
-// switch, rotation lock);
-// `IOS_SUPPORTED_SETTINGS` records which the iOS simulator can carry out.
 export const SYSTEM_SETTINGS = [
   "appearance",
   "text-size",
@@ -20,18 +13,11 @@ export const SYSTEM_SETTINGS = [
 
 export type SystemSetting = (typeof SYSTEM_SETTINGS)[number];
 
-// `appearance` is the only non-boolean, non-scale setting: a light/dark choice.
 const APPEARANCE_VALUES = ["light", "dark"] as const;
 
-// The shared value vocabulary for every boolean toggle (accessibility flags,
-// radios, location, rotation). `on` turns the named setting on — e.g.
-// `reduce-motion on` reduces motion, `airplane-mode on` enables airplane mode.
 const ON_OFF_VALUES = ["on", "off"] as const;
 
-// The 12 Dynamic Type content-size categories `simctl ui content_size` accepts,
-// smallest to largest (the 5 `accessibility-*` sizes are the AX range). Kept in
-// this order so a human reading the list sees a monotonic scale. On Android each
-// maps to a `font_scale` float (see platforms/android.ts).
+// The Dynamic Type categories `simctl ui content_size` accepts, smallest first.
 export const TEXT_SIZE_VALUES = [
   "extra-small",
   "small",
@@ -47,9 +33,6 @@ export const TEXT_SIZE_VALUES = [
   "accessibility-extra-extra-extra-large",
 ] as const;
 
-// The legal abstract values for each setting, used to validate `value` before
-// dispatch (an out-of-range value fails with SYSTEM_SETTING_UNSUPPORTED and this
-// list, rather than reaching a platform command with a bad argument).
 export const SETTING_VALUES: Record<SystemSetting, readonly string[]> = {
   "appearance": APPEARANCE_VALUES,
   "text-size": TEXT_SIZE_VALUES,
@@ -63,23 +46,12 @@ export const SETTING_VALUES: Record<SystemSetting, readonly string[]> = {
   "auto-rotate": ON_OFF_VALUES,
 };
 
-// Every value any setting accepts, flattened. `value` is one schema field
-// shared by ten settings, so the schema can only advertise the union; the
-// per-setting narrowing is `SETTING_VALUES` in `assertValidValue`. Declaring the
-// union still buys the client the vocabulary — the same split `setting` already
-// uses, where the enum lists all ten and the iOS handler narrows to five.
 export const SETTING_VALUE_VOCABULARY = [
   ...APPEARANCE_VALUES,
   ...ON_OFF_VALUES,
   ...TEXT_SIZE_VALUES,
 ] as const;
 
-// The settings the iOS simulator can change: the three `simctl ui` options plus
-// the two accessibility toggles reachable through the `com.apple.Accessibility`
-// defaults domain. The rest are the radios, the location master switch and
-// rotation lock, none of which the iOS simulator exposes a toggle for — the iOS
-// handler rejects them with a clear "Android-only" message rather than reaching
-// for a command that can't exist.
 export const IOS_SUPPORTED_SETTINGS: readonly SystemSetting[] = [
   "appearance",
   "text-size",
@@ -97,13 +69,7 @@ export interface SystemSettingsParams {
 export interface SystemSettingsResult {
   setting: SystemSetting;
   value: string;
-  /**
-   * The concrete platform-level change that was applied, so the caller can see
-   * exactly what the abstract (setting, value) translated to: on iOS the
-   * `simctl ui` option or the accessibility default key (e.g. `content_size=large`,
-   * `ReduceMotionEnabled=YES`), on Android the `adb` change (e.g. `night_mode=yes`,
-   * `wifi=enabled`, `font_scale=1.0`).
-   */
+  /** The platform-level change made, e.g. `content_size=large`, `night_mode=yes`. */
   applied: string;
 }
 

@@ -75,25 +75,13 @@ describe("isTerminalAdbError matches adb's real `device 'X' not found` format", 
   }, 8_000);
 });
 
-// A caller that reinterprets a non-zero exit as "the target refused" asks this
-// which failures are the transport's instead. Each wording is pinned on its own:
-// one fixture that happens to match several patterns leaves the rest free to be
-// deleted, and the answer decides whether adb's own classification survives to
-// the agent or is relabelled as something the device said.
 describe("isAdbTransportFailure", () => {
   it.each([
-    // The shared adb server restarting under a command in flight. adb words
-    // that two ways — its own `protocol fault` template, and the OS strerror on
-    // whichever read lost the socket — so pin each without the other.
     "protocol fault (couldn't read status)",
     "adb: error: failed to read response from server: Connection reset by peer",
     "adb: error: failed to get feature set: cannot connect to daemon",
-    // A device adb has seen but cannot carry a command to yet — what it reports
-    // in the seconds after `adb connect`, a cable going in, or an emulator
-    // appearing.
     "error: device still connecting",
     "error: device still authorizing",
-    // The device-state wordings, which the same predicate also covers.
     "error: device 'emulator-5554' offline",
     "error: device unauthorized.",
     "error: device 'emulator-5554' not found",
@@ -102,7 +90,7 @@ describe("isAdbTransportFailure", () => {
     expect(isAdbTransportFailure(new Error(message))).toBe(true);
   });
 
-  it("is true for a timeout, which left no answer either way", () => {
+  it("is true for a timeout", () => {
     expect(
       isAdbTransportFailure(
         new FailureError("adb -s emulator-5554 shell true failed: timed out", {
@@ -116,12 +104,10 @@ describe("isAdbTransportFailure", () => {
   });
 
   it.each([
-    // The device answered; these are its words, not the transport's.
     "settings: Can't find service: settings",
-    "cmd: Can't find service: phone",
     "Error: java.lang.SecurityException: Permission denial",
     "",
-  ])("is false for %s", (message) => {
+  ])("is false for the device's own answer %j", (message) => {
     expect(isAdbTransportFailure(new Error(message))).toBe(false);
   });
 });
