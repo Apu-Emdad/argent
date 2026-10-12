@@ -98,14 +98,10 @@ export function shouldAutoDescribe(toolName: string): boolean {
   return AUTO_DESCRIBE_TOOLS.has(normalizeToolName(toolName));
 }
 
-/**
- * The block appended after an action, or null when there is nothing to show.
- * `hint` explains a failed read, which still renders a tree preamble; TV
- * describe already embeds it in `description`.
- */
 export function renderAutoDescribe(result: unknown): string | null {
   const data = result as { description?: unknown; hint?: unknown } | null | undefined;
   const desc = typeof data?.description === "string" ? data.description : "";
+  // TV describe already embeds `hint` in `description`.
   const hint = typeof data?.hint === "string" && !desc.includes(data.hint) ? data.hint : "";
   const body = [desc, hint].filter(Boolean).join("\n\n");
   return body ? `${AUTO_DESCRIBE_HEADER}\n${body}` : null;
