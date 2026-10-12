@@ -598,7 +598,7 @@ export function createHttpApp(registry: Registry, options?: HttpAppOptions): Htt
       return;
     }
     const id = randomUUID();
-    const tarPath = join(tmpdir(), `argent-upload-${id}`);
+    const tarPath = join(tmpdir(), `argent-upload-${id}.tar.gz`);
     const ws = createWriteStream(tarPath);
 
     let received = 0;

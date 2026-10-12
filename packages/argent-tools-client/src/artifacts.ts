@@ -405,7 +405,7 @@ async function downloadAndExtractArchive(
   data: Buffer,
   dir: string
 ): Promise<string | null> {
-  const tarball = join(dir, `${sanitizeSegment(handle.filename)}.archive`);
+  const tarball = join(dir, `${sanitizeSegment(handle.filename)}.tar.gz`);
   try {
     await writeFile(tarball, data);
     // Slip-hardened: a `../` member must not write outside the cache.

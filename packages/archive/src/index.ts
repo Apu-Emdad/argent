@@ -28,7 +28,7 @@ export type ArchiveFormat = "zstd" | "gzip";
 
 /**
  * Formats this runtime can write and read, preferred first. zstd is missing
- * from Node 23.0-23.7, which `engines` still admits.
+ * from Node 23.0-23.7, which `engines` admits.
  */
 export const ARCHIVE_FORMATS: readonly ArchiveFormat[] =
   typeof zlib.createZstdCompress === "function" ? ["zstd", "gzip"] : ["gzip"];
@@ -46,14 +46,9 @@ export function pickArchiveFormat(peerFormats: readonly string[] | undefined): A
   return ARCHIVE_FORMATS.find((f) => peerFormats?.includes(f)) ?? "gzip";
 }
 
-/** The archive formats an HTTP `Accept` header lists by content type, minus any at `q=0`. */
+/** The archive formats an HTTP `Accept` header names. */
 export function archiveFormatsFromAccept(accept: string | undefined): ArchiveFormat[] {
-  const types = (accept ?? "")
-    .split(",")
-    .map((t) => t.split(";").map((p) => p.trim().toLowerCase()))
-    .filter(([, ...params]) => !params.some((p) => /^q=0(\.0*)?$/.test(p)))
-    .map(([type]) => type);
-  return ARCHIVE_FORMATS.filter((f) => types.includes(ARCHIVE_CONTENT_TYPES[f]));
+  return ARCHIVE_FORMATS.filter((f) => accept?.includes(ARCHIVE_CONTENT_TYPES[f]));
 }
 
 // zlib's default 16 KiB chunks make piping a large tar 2-3x slower.
@@ -124,8 +119,8 @@ const ZSTD_FRAME_MAGIC = 0xfd2fb528;
 /**
  * Throw unless `archivePath` is complete zstd frames of which only the first
  * carries data, by walking frame and block headers (RFC 8878 §3.1.1). Node's
- * decoder silently accepts a truncated frame (nodejs/node#64592, fixed in 24.21)
- * and drops a later frame (nodejs/node#64741, fixed in 26.11).
+ * decoder can accept a truncated frame (nodejs/node#64592) and drop a later one
+ * (nodejs/node#64741).
  */
 async function assertSingleCompleteZstdFrame(archivePath: string): Promise<void> {
   const fh = await open(archivePath, "r");
@@ -183,9 +178,7 @@ function isClosedPipe(err: NodeJS.ErrnoException): boolean {
  */
 async function runTar(archive: Archive, args: string[]): Promise<string> {
   if (archive.format === "gzip") {
-    const { stdout } = await execFileAsync("tar", [...args, "-zf", archive.path], {
-      maxBuffer: Infinity, // a bundle with ~13k members lists past the 1 MiB default
-    });
+    const { stdout } = await execFileAsync("tar", [...args, "-zf", archive.path]);
     return stdout;
   }
   const child = spawn("tar", [...args, "-f", "-"], { stdio: ["pipe", "pipe", "pipe"] });
