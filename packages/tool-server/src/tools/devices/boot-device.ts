@@ -1326,11 +1326,7 @@ function bootVega(params: {
   return promise;
 }
 
-/**
- * `udid` boots an iOS simulator only; the other platforms have their own
- * parameter. The capability declaration covers those forms, so the capability
- * gate passes a Chromium/Vega/Android device id sent as a `udid`.
- */
+/** The capability gate admits these ids for the other parameters, so they can arrive as a `udid`. */
 const NON_IOS_UDID_HINT: Record<"android" | "chromium" | "vega", string> = {
   android: "Boot an Android emulator by passing `avdName` (an AVD name from `list-devices`).",
   chromium: "Boot an Electron app by passing `electronAppPath`.",
@@ -1338,18 +1334,20 @@ const NON_IOS_UDID_HINT: Record<"android" | "chromium" | "vega", string> = {
 };
 
 /**
- * `classifyDevice` reports every id it does not recognise as `android`, so a
- * simulator name or a truncated UDID lands there too. Only an `emulator-`
- * serial is known to be Android.
+ * `classifyDevice` calls every unrecognised id `android`; only an `emulator-`
+ * serial is known to be one. Off macOS, `undefined` leaves `bootIos` to say
+ * that no simulator can boot there.
  */
-const UNRECOGNISED_UDID_HINT =
-  "Copy the `udid` field of an iOS simulator from `list-devices` exactly. " +
-  "An Android emulator boots through `avdName`; a connected Android phone needs no boot.";
-
-function nonIosUdidHint(udid: string, platform: "android" | "chromium" | "vega"): string {
-  return platform === "android" && !isAndroidEmulatorSerial(udid)
-    ? UNRECOGNISED_UDID_HINT
-    : NON_IOS_UDID_HINT[platform];
+function nonIosUdidHint(
+  udid: string,
+  platform: "android" | "chromium" | "vega"
+): string | undefined {
+  if (platform !== "android" || isAndroidEmulatorSerial(udid)) return NON_IOS_UDID_HINT[platform];
+  if (process.platform !== "darwin") return undefined;
+  return (
+    "Copy it exactly. " +
+    "An Android emulator boots through `avdName`; a connected Android phone needs no boot."
+  );
 }
 
 const capability: ToolCapability = {
@@ -1430,10 +1428,11 @@ Android boots take 2–10 minutes depending on machine and cold/warm state; the 
         if (platform === "ios-remote") {
           return bootIosRemote(params.udid!, registry, params.force);
         }
-        if (platform !== "ios") {
+        const hint = platform === "ios" ? undefined : nonIosUdidHint(params.udid!, platform);
+        if (hint) {
           throw new InvalidToolInputError(
             `\`udid\` takes an iOS simulator UDID from \`list-devices\`; \`${params.udid}\` is not one. ` +
-              nonIosUdidHint(params.udid!, platform),
+              hint,
             {
               error_code: FAILURE_CODES.BOOT_DEVICE_TARGET_SELECTION_INVALID,
               failure_stage: "boot_device_target_selection",

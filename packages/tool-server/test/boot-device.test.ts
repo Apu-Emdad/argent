@@ -741,12 +741,16 @@ describe("boot-device — iOS udid on non-darwin", () => {
       tool.execute!({}, { udid: "deadbeef-dead-beef-dead-beefdeadbeef" })
     ).rejects.not.toThrow(/xcode-select/);
   });
+
+  it.each([
+    ["iPhone 16 Pro", /requires a macOS host/],
+    ["chromium-cdp-9222", /`electronAppPath`/],
+  ])("answers %s with %s", async (udid, message) => {
+    const tool = createBootDeviceTool({ resolveService: async () => ({}) } as unknown as Registry);
+    await expect(tool.execute!({}, { udid })).rejects.toThrow(message);
+  });
 });
 
-// `udid` selects the iOS simulator path, but the capability gate accepts a
-// Chromium/Vega/Android device id because those platforms are declared for the
-// tool's other parameters. Such an id must be refused before it reaches
-// `simctl boot`, which would report it as an invalid simulator.
 describe("boot-device — non-iOS device id passed as `udid`", () => {
   const originalPlatform = process.platform;
 
@@ -781,8 +785,6 @@ describe("boot-device — non-iOS device id passed as `udid`", () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  // An id `classifyDevice` does not recognise classifies as Android, so these
-  // are not known to be Android serials and must not be answered as if they were.
   it.each(["iPhone 16 Pro", "4A27DF03"])(
     "refuses %s without calling it an Android emulator",
     async (udid) => {
@@ -791,14 +793,13 @@ describe("boot-device — non-iOS device id passed as `udid`", () => {
       } as unknown as Registry);
 
       const error = await tool.execute!({}, { udid }).catch((e: Error) => e);
-      expect((error as Error).message).toMatch(/Copy the `udid` field of an iOS simulator/);
+      expect((error as Error).message).toMatch(/Copy it exactly/);
       expect((error as Error).message).not.toMatch(/Boot an Android emulator/);
       expect(mockExecFile).not.toHaveBeenCalled();
     }
   );
 
-  // `sim-remote` is absent from the primed dep cache, so reaching the remote
-  // path surfaces its dependency check.
+  // `sim-remote` is not in the primed dep cache, so this error proves the route.
   it("routes a `remote:` id to the remote simulator path", async () => {
     const tool = createBootDeviceTool({ resolveService: async () => ({}) } as unknown as Registry);
 
