@@ -437,7 +437,7 @@ describe("detectPackageManager", () => {
   });
 
   it("returns yarn for yarn agent", () => {
-    process.env.npm_config_user_agent = "yarn/4.0.0";
+    process.env.npm_config_user_agent = "yarn/1.22.22";
     expect(detectPackageManager()).toBe("yarn");
   });
 
