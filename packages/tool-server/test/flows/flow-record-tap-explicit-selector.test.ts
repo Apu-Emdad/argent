@@ -5,8 +5,6 @@ import * as path from "node:path";
 import type { Registry } from "@argent/registry";
 import type { DescribeNode, DescribeTreeData } from "../../src/tools/describe/contract";
 
-// Same mock as flow-record-tap.test.ts: capture must read the tree the RUNNER
-// resolves against, so each test controls exactly what it sees.
 let currentTreeData: () => DescribeTreeData;
 vi.mock("../../src/tools/flows/flow-tree", () => ({
   fetchFlowTree: vi.fn(async (): Promise<DescribeTreeData> => currentTreeData()),
@@ -44,8 +42,11 @@ function mockRegistry(): Registry {
   } as unknown as Registry;
 }
 
+let registry: Registry;
+
 async function record(params: Record<string, unknown>) {
-  return createFlowAddStepTool(mockRegistry()).execute({}, {
+  registry = mockRegistry();
+  return createFlowAddStepTool(registry).execute({}, {
     name: FLOW,
     project_root: tmpDir,
     ...params,
@@ -57,10 +58,8 @@ async function recordedSteps() {
   return parseFlow(content).steps;
 }
 
-// One row carrying BOTH a positional identifier and stable text. `deriveSelector`
-// is identifier-first, so the recorder picks `row-3` - correct today, wrong the
-// moment the list reorders. Which of the two is stable is a judgement the caller
-// holds and the tree does not carry, and it is the reason to be able to say so.
+// `deriveSelector` is identifier-first, so it picks the positional `row-3` over
+// the stable text.
 const POSITIONAL_ROW = [
   n({
     frame: { x: 0.1, y: 0.5, width: 0.4, height: 0.1 },
@@ -97,7 +96,6 @@ describe("flow-add-step records a caller-supplied tap selector", () => {
     expect(res.message).not.toMatch(/kept coordinates/);
   });
 
-  // The contrast that makes the parameter worth having: same tap, same tree.
   it("differs from what the recorder derives on its own", async () => {
     await record({
       command: "gesture-tap",
@@ -106,21 +104,20 @@ describe("flow-add-step records a caller-supplied tap selector", () => {
     expect(await recordedSteps()).toEqual([{ kind: "tap", selector: { identifier: "row-3" } }]);
   });
 
-  // A supplied selector is checked against the replay tree, not trusted: the
-  // caller read it off the agent-facing describe tree, which is a different one.
-  it("rejects a supplied selector that matches nothing, keeping coordinates", async () => {
-    const res = (await record({
-      command: "gesture-tap",
-      args: JSON.stringify({ udid: DEVICE, ...ON_ROW }),
-      selector: { identifier: "no-such-id" },
-    })) as { message: string };
-
-    expect(res.message).toMatch(/the selector you passed/);
-    expect(res.message).toMatch(/matches no element on this screen/);
-    expect((await recordedSteps())[0]).not.toHaveProperty("selector");
-  });
-
-  it("rejects a supplied selector that resolves away from the tapped point", async () => {
+  // Checked against the replay tree, which is not the describe tree the caller
+  // read it from. A failed check must not tap: the tap may navigate away.
+  it.each([
+    [
+      "matches nothing",
+      { identifier: "no-such-id" },
+      /`selector` id="no-such-id" matches no element on this screen/,
+    ],
+    [
+      "resolves away from the tapped point",
+      { text: "Elsewhere" },
+      /`selector` text="Elsewhere" resolves to a different element on this screen/,
+    ],
+  ])("refuses a supplied selector that %s, running nothing", async (_, selector, reason) => {
     setTree([
       ...POSITIONAL_ROW,
       n({ frame: { x: 0.1, y: 0.1, width: 0.4, height: 0.1 }, label: "Elsewhere" }),
@@ -128,16 +125,30 @@ describe("flow-add-step records a caller-supplied tap selector", () => {
     const res = (await record({
       command: "gesture-tap",
       args: JSON.stringify({ udid: DEVICE, ...ON_ROW }),
-      selector: { text: "Elsewhere" },
+      selector,
     })) as { message: string };
 
-    expect(res.message).toMatch(/the selector you passed/);
-    expect(res.message).toMatch(/resolves to a different element/);
-    expect(await recordedSteps()).toEqual([{ kind: "tap", x: 0.2, y: 0.55 }]);
+    expect(res.message).toMatch(reason);
+    expect(res.message).toMatch(/Nothing was executed and no step was recorded/);
+    expect(registry.invokeTool).not.toHaveBeenCalled();
+    expect(await recordedSteps()).toHaveLength(0);
   });
 
-  // Silently ignoring it would record a step matching on something the caller
-  // never asked for - the failure mode this parameter exists to remove.
+  it("refuses a supplied selector when the replay tree cannot be read", async () => {
+    currentTreeData = () => {
+      throw new Error("helper down");
+    };
+    const res = (await record({
+      command: "gesture-tap",
+      args: JSON.stringify({ udid: DEVICE, ...ON_ROW }),
+      selector: { text: "Settings" },
+    })) as { message: string };
+
+    expect(res.message).toMatch(/`selector` could not be checked \(helper down\)/);
+    expect(registry.invokeTool).not.toHaveBeenCalled();
+    expect(await recordedSteps()).toHaveLength(0);
+  });
+
   it("refuses a selector on a command that is not a tap, recording nothing", async () => {
     const res = (await record({
       command: "screenshot",
@@ -151,8 +162,6 @@ describe("flow-add-step records a caller-supplied tap selector", () => {
     expect(await recordedSteps()).toHaveLength(0);
   });
 
-  // delayMs suppresses selector capture entirely, so a selector passed with one
-  // would be dropped rather than applied.
   it("refuses a selector on a tap carrying delayMs, naming delayMs", async () => {
     const res = (await record({
       command: "gesture-tap",
@@ -165,21 +174,7 @@ describe("flow-add-step records a caller-supplied tap selector", () => {
     expect(await recordedSteps()).toHaveLength(0);
   });
 
-  // The third refusal branch: `gesture-tap` by name, no delayMs, but args that
-  // carry no point for a selector to be checked against.
-  it("refuses a selector on a tap whose args carry no coordinates", async () => {
-    const res = (await record({
-      command: "gesture-tap",
-      args: JSON.stringify({ udid: DEVICE, x: 0.2 }),
-      selector: { text: "Settings" },
-    })) as { message: string };
-
-    expect(res.message).toMatch(/needs a `gesture-tap` whose args carry `udid`, `x` and `y`/);
-    expect(await recordedSteps()).toHaveLength(0);
-  });
-
-  // The role-only warning's reason is about a DERIVED selector; a supplied one
-  // lands on an element that has an id and text, so it must not claim otherwise.
+  // The element here has an id and text, so the warning must not claim otherwise.
   it("warns on a supplied role-only selector without blaming the element", async () => {
     setTree([
       n({

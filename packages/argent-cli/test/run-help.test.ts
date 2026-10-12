@@ -149,9 +149,6 @@ describe("argent run --help — whole-payload --args advertisement", () => {
     expect(help).toMatch(/--project_root <value>\s+string \(required\)/);
     expect(help).toMatch(/--command <value>\s+string \(required\)/);
     // ...while the three genuinely optional fields must NOT carry the marker.
-    // `selector` is the schema's only object field, so it is also the one that
-    // has to render as the `--<field>-json <json>` form rather than as a plain
-    // `--<field> <value>` flag no parser branch would accept.
     expect(help).toMatch(/--args <value>\s+string(?! \(required\))/);
     expect(help).toMatch(/--selector-json <json>\s+object(?! \(required\))/);
     expect(help).toMatch(/--delayMs <value>\s+integer(?! \(required\))/);

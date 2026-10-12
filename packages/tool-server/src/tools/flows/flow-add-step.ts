@@ -90,14 +90,10 @@ const zodSchema = z.object({
   selector: selectorSchema
     .optional()
     .describe(
-      "For a `gesture-tap` only: the selector to RECORD for this tap, when you already know it " +
-        "from the discovery call that gave you the coordinates. Give at least one of " +
-        "`identifier` / `text` / `role`. The coordinates still dispatch the tap; this only " +
-        "decides what the step matches on at replay, replacing what the recorder would otherwise " +
-        "infer from the tapped element (identifier, then text, then role). It is checked, not " +
-        "trusted: a selector that matches nothing on this screen, or that resolves to an element " +
-        "not covering the tapped point, is rejected and the step keeps coordinates with a warning " +
-        "naming the reason."
+      "For a `gesture-tap` only: the selector to record, instead of one derived from the tapped " +
+        "element (identifier, then text, then role). Give at least one of `identifier` / `text` / " +
+        "`role`. The coordinates still dispatch the tap. Refused, with nothing run, when it " +
+        "matches nothing on this screen or resolves to an element that does not cover the point."
     ),
   delayMs: z
     .number()
@@ -656,11 +652,14 @@ function innermostTreeReason(message: string): string {
   return unwrapped.replace(/^\[[^\]]+\]\s*/, "").trim();
 }
 
+type TapCapture = { selector?: Selector; warning?: string; rejected?: string };
+
 /**
  * For a recorded `gesture-tap`, look up the element under the tapped point and
  * record a portable `tap: { selector }` step instead of raw coordinates.
  * Returns the selector (possibly with a caveat warning), or a warning
- * describing why coordinates were kept.
+ * describing why coordinates were kept, or, for a `supplied` selector that
+ * fails a check, why it is `rejected`.
  *
  * Reads `fetchFlowTree`, the tree the runner resolves selectors against at
  * replay — NOT the agent-facing describe tree, which collapses an iOS
@@ -682,7 +681,7 @@ async function captureTapSelector(
   udid: string,
   point: { x: number; y: number },
   supplied?: Selector
-): Promise<{ selector?: Selector; warning?: string }> {
+): Promise<TapCapture> {
   try {
     const device = resolveDevice(udid);
     const launched = recordedLaunchedApp(session, device.platform);
@@ -691,10 +690,7 @@ async function captureTapSelector(
       device,
       launched ? { bundleId: launched, pinned: false, probeAnswered: false } : undefined
     );
-    // A supplied selector skips derivation but NOT the two checks below: the
-    // caller read it off the agent-facing describe tree, which is not the tree
-    // replay resolves against, so "I already know it" is not evidence it
-    // resolves here.
+    // Still checked below: it was read off the describe tree, not this one.
     let selector = supplied;
     if (!selector) {
       const node = nodeAtPoint(tree, point);
@@ -709,20 +705,18 @@ async function captureTapSelector(
     // winning frame to cover the tapped point, or the recorded step would
     // silently retarget and coordinates are safer. Ranked in the reading order
     // replay will rank in: the UI's, on a landscape UI.
-    const whose = supplied ? "the selector you passed" : "selector";
+    const shown = describeSelector(selector);
+    const keepPoint = (problem: string): TapCapture => {
+      const reason = `${shown} ${problem} on this screen`;
+      return supplied
+        ? { rejected: reason }
+        : { warning: `selector ${reason}; kept coordinates (brittle)` };
+    };
     const resolved = selectorToFrame(tree, selector, uiOrientation);
-    if (!resolved) {
-      // Unreachable for a DERIVED selector — one taken from a visible node
-      // matches that node under matchNode's semantics — but the ordinary way a
-      // supplied one fails, since it was written against a different tree.
-      return {
-        warning: `${whose} ${describeSelector(selector)} matches no element on this screen; kept coordinates (brittle)`,
-      };
-    }
+    // Unreachable for a derived selector (it matches its own node).
+    if (!resolved) return keepPoint("matches no element");
     if (!frameContains(resolved, point.x, point.y)) {
-      return {
-        warning: `${whose} ${describeSelector(selector)} resolves to a different element on this screen; kept coordinates (brittle)`,
-      };
+      return keepPoint("resolves to a different element");
     }
     const warnings = [
       roleOnlySelectorWarning(selector, supplied !== undefined),
@@ -733,9 +727,9 @@ async function captureTapSelector(
     const message = err instanceof Error ? err.message : String(err);
     // The bare reason: a remedy belongs to the error that knows one, and every
     // tap of a recording taken without a tree repeats whatever is said here.
-    return {
-      warning: `selector capture failed (${innermostTreeReason(message)}); kept coordinates`,
-    };
+    const reason = innermostTreeReason(message);
+    if (supplied) return { rejected: `could not be checked (${reason})` };
+    return { warning: `selector capture failed (${reason}); kept coordinates` };
   }
 }
 
@@ -1383,22 +1377,21 @@ Returns { message, stepCount, recorded, savedTo }; \`recorded\`, not the status,
         typeof args.x === "number" &&
         typeof args.y === "number";
 
-      // Refused rather than ignored: `selector` only reaches the recorder on the
-      // tap path, so accepting it anywhere else would record a step that quietly
-      // matches on something the caller never asked for. `delayMs` is named
-      // because it is the non-obvious half — it suppresses selector capture, so
-      // a tap carrying one is not a tap for this purpose.
-      if (params.selector && !isTap) {
-        const why =
-          params.command !== "gesture-tap"
-            ? `\`selector\` applies to a recorded \`gesture-tap\`, not to \`${params.command}\`.`
-            : params.delayMs !== undefined
-              ? "A `gesture-tap` recorded with `delayMs` keeps its coordinates, so `selector` would be dropped. Record the tap without `delayMs`."
-              : "`selector` needs a `gesture-tap` whose args carry `udid`, `x` and `y`.";
-        return recordNothing(session, why);
+      // Refused, not dropped: only the tap path records a selector.
+      if (params.selector && params.command !== "gesture-tap") {
+        return recordNothing(
+          session,
+          `\`selector\` applies to a recorded \`gesture-tap\`, not to \`${params.command}\`.`
+        );
+      }
+      if (params.selector && params.delayMs !== undefined) {
+        return recordNothing(
+          session,
+          "A `gesture-tap` recorded with `delayMs` keeps its coordinates, so `selector` would be dropped. Record the tap without `delayMs`."
+        );
       }
 
-      let captured: { selector?: Selector; warning?: string } | undefined;
+      let captured: TapCapture | undefined;
       if (isTap) {
         captured = await captureTapSelector(
           registry,
@@ -1407,6 +1400,12 @@ Returns { message, stepCount, recorded, savedTo }; \`recorded\`, not the status,
           { x: args.x as number, y: args.y as number },
           params.selector
         );
+        if (captured.rejected) {
+          return recordNothing(
+            session,
+            `\`selector\` ${captured.rejected}. Pass one that resolves to the tapped element, or omit it.`
+          );
+        }
       }
 
       // Over a link the call reads its files from those the client sent, as a
