@@ -375,10 +375,11 @@ function resolveLinkedDestination(dest: string): string {
 // (`.claude/agents -> ../.agents/agents`) or a single file inside it (issue
 // #701).
 //
-// `fs.cp` cannot do this: depending on the Node version it refuses a symlinked
-// destination (ERR_FS_CP_DIR_TO_NON_DIR) or aborts the process — an uncatchable
-// C++ std::filesystem exception — when it cannot create a directory.
-// `fs.copyFileSync` reports each failure as a plain, catchable errno.
+// `fs.cp` cannot: depending on the Node version it refuses a symlinked
+// destination (ERR_FS_CP_DIR_TO_NON_DIR), replaces a symlinked file (leaving the
+// canonical copy stale), or aborts the process with an uncatchable C++
+// exception when it cannot create a directory. `fs.copyFileSync` reports each
+// failure as a catchable errno.
 export function copyDir(src: string, dest: string): string | null {
   if (!fs.existsSync(src)) return null;
 
