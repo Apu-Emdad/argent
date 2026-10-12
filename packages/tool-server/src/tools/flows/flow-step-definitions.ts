@@ -309,13 +309,14 @@ const FLOW_STEP_DEFINITIONS: {
   [K in FlowStep["kind"]]: FlowStepDefinition<Extract<FlowStep, { kind: K }>>;
 } = {
   "tool": {
-    summary: (step) => `${step.name} ${renderToolArgs(step.args)}${delayLabel(step)}`,
+    summary: (step) =>
+      `${String(step.name).replace(/\r?\n|\r/g, "\\n")} ${renderToolArgs(step.args)}${delayLabel(step)}`,
     // Carries its subject in a report field of its own (`tool`) that renderers
     // print in the target's place.
     target: () => undefined,
   },
   "echo": {
-    summary: (step) => step.message,
+    summary: (step) => step.message.replace(/\r?\n|\r/g, "\\n"),
     // As for `tool`, but the field is `message`.
     target: () => undefined,
   },
