@@ -106,6 +106,9 @@ export interface DescribeTreeData {
   // "degraded" means boot-state on the simulator path and a truncated snapshot on the device path.
   // Each path writes this hint once.
   hint?: string;
+  // The tree may not be the live screen (a suspended HarmonyOS panel serves its
+  // last frame), so it cannot confirm that a condition is unmet.
+  stale?: boolean;
   // Size the frames were normalized against, in the source's native units
   // (Android px, iOS pt), so only the aspect ratio compares across sources —
   // which is what the rotate directive's circle geometry reads it for. Set

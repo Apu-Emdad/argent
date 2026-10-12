@@ -77,7 +77,13 @@ export async function describeHarmony(
       : tree.children.length === 0
         ? EMPTY_HINT
         : undefined;
-    return { tree, source: "harmony-uitest", screen, ...(hint ? { hint } : {}) };
+    return {
+      tree,
+      source: "harmony-uitest",
+      screen,
+      ...(hint ? { hint } : {}),
+      ...(display.screenOn ? {} : { stale: true }),
+    };
   } finally {
     await rm(localPath, { force: true }).catch(() => {});
   }

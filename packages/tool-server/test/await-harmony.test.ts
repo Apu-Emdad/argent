@@ -257,6 +257,71 @@ describe("await-ui-element on HarmonyOS", () => {
     expect(result.note).toMatch(/empty or unreadable/i);
     expect(result.note).toMatch(/no windows/i);
   });
+
+  it("times out `unreadable`, not `unmet`, when every read came off a suspended panel", async () => {
+    vi.mocked(harmonyDisplay).mockResolvedValue({ ...DISPLAY, screenOn: false });
+    sequenceDumps([dumpWith("Loading")]);
+    const tool = createAwaitUiElementTool(harmonyRegistry());
+
+    const result = await tool.execute(
+      {},
+      {
+        udid: HARMONY_ID,
+        condition: "visible",
+        selector: { text: "Submit" },
+        timeoutMs: 300,
+        pollIntervalMs: 10,
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.cause).toBe("unreadable");
+    expect(result.note).toMatch(/display is off/i);
+  });
+
+  it("times out `unreadable` when the panel went off after the last live read", async () => {
+    vi.mocked(harmonyDisplay)
+      .mockResolvedValueOnce(DISPLAY)
+      .mockResolvedValue({ ...DISPLAY, screenOn: false });
+    sequenceDumps([dumpWith("Loading")]);
+    const tool = createAwaitUiElementTool(harmonyRegistry());
+
+    const result = await tool.execute(
+      {},
+      {
+        udid: HARMONY_ID,
+        condition: "visible",
+        selector: { text: "Submit" },
+        timeoutMs: 300,
+        pollIntervalMs: 10,
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.cause).toBe("unreadable");
+  });
+
+  it("times out `unmet` when the panel was on for the final read", async () => {
+    vi.mocked(harmonyDisplay)
+      .mockResolvedValueOnce({ ...DISPLAY, screenOn: false })
+      .mockResolvedValue(DISPLAY);
+    sequenceDumps([dumpWith("Loading")]);
+    const tool = createAwaitUiElementTool(harmonyRegistry());
+
+    const result = await tool.execute(
+      {},
+      {
+        udid: HARMONY_ID,
+        condition: "visible",
+        selector: { text: "Submit" },
+        timeoutMs: 300,
+        pollIntervalMs: 10,
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.cause).toBe("unmet");
+  });
 });
 
 describe("await-screen-idle on HarmonyOS", () => {

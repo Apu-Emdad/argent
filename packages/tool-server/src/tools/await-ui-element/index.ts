@@ -442,7 +442,7 @@ screen, or before tapping an element that appears asynchronously.`,
           const matches = findAll(data.tree, selector);
           if (matches.length > 0) everMatched = true;
           const blind = isBlindRead(data, everMatched);
-          if (!blind) lastTrustedReadAt = nowMs;
+          if (!blind && !data.stale) lastTrustedReadAt = nowMs;
           if (!blind && evaluateMatches(params, matches)) {
             const result: WaitResult = { success: true, elapsed: Date.now() - start };
             // Both, not the first that applies: a `hidden` that met its
@@ -479,6 +479,7 @@ screen, or before tapping an element that appears asynchronously.`,
           ? "unsettled"
           : poll.lastAttempt === "tree" &&
               poll.lastData !== null &&
+              !poll.lastData.stale &&
               !isBlindRead(poll.lastData, everMatched)
             ? "trusted"
             : "untrusted";
