@@ -14,7 +14,7 @@ export async function secrets(argv: string[]): Promise<void> {
   const [sub, ...rest] = argv;
   if (sub === undefined || sub === "list") return cmdList(rest);
   if (sub === "--help" || sub === "-h") return printUsage();
-  if (sub === "--json") return cmdList([sub, ...rest]);
+  if (sub === "--json") return cmdList(rest[0] === "list" ? [sub, ...rest.slice(1)] : argv);
   console.error(`Error: unknown subcommand "secrets ${sub}". Try \`argent secrets --help\`.`);
   process.exit(2);
 }

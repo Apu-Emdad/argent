@@ -131,6 +131,11 @@ describe("argent secrets", () => {
     expect(JSON.stringify(parsed)).not.toContain("hunter2");
   });
 
+  it("accepts `list` after a leading --json", async () => {
+    await secrets(["--json", "list"]);
+    expect(JSON.parse(output())).toHaveProperty("secrets", []);
+  });
+
   it("documents where to add a secret in --help", async () => {
     await secrets(["--help"]);
     const out = output();
