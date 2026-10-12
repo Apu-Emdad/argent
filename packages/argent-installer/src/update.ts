@@ -392,12 +392,16 @@ export async function update(args: string[]): Promise<void> {
             false,
             UPDATE_GLOBAL_PREFIX_UNWRITABLE
           );
+          // No global copy means no `argent` on PATH, so the remedy goes through npx.
           p.log.error(
-            unwritableGlobalTargetMessage(
-              globalTarget,
-              pm,
-              isInstalledForMode ? "update" : "install"
-            )
+            isInstalledForMode
+              ? unwritableGlobalTargetMessage(globalTarget, pm, "update")
+              : unwritableGlobalTargetMessage(
+                  globalTarget,
+                  pm,
+                  "install",
+                  `npx ${PACKAGE_NAME} init --local`
+                )
           );
           return { failed: UPDATE_GLOBAL_PREFIX_UNWRITABLE };
         }

@@ -55,6 +55,18 @@ describe("probeGlobalInstallTarget", () => {
     }
   });
 
+  it("kills a query that outlives its timeout instead of waiting on it", () => {
+    mockExecFileSync.mockReturnValue(`${tmpRoot}\n`);
+
+    probeGlobalInstallTarget("npm");
+
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      "npm",
+      ["root", "-g"],
+      expect.objectContaining({ timeout: 5_000, killSignal: "SIGKILL" })
+    );
+  });
+
   it("reports a writable directory as writable", () => {
     mockExecFileSync.mockReturnValue(`${tmpRoot}\n`);
 

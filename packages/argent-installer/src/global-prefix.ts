@@ -23,6 +23,7 @@ function queryGlobalInstallDir(pm: PackageManager): string | null {
     stdout = execFileSync(pm, [...GLOBAL_DIR_QUERY[pm]], {
       encoding: "utf8",
       timeout: QUERY_TIMEOUT_MS,
+      killSignal: "SIGKILL",
       stdio: ["ignore", "pipe", "ignore"],
     });
   } catch {

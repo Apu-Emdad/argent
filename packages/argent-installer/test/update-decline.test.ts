@@ -206,11 +206,11 @@ describe("update — interactive decline", () => {
 
 describe("update — read-only global directory", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
-    [true, "update"],
-    [false, "install"],
+    [true, "update", "argent init --local"],
+    [false, "install", "npx @swmansion/argent init --local"],
   ])(
     "fails before the confirm prompt and never runs the install (installed: %s)",
-    async (installed, verb) => {
+    async (installed, verb, localInit) => {
       topologyState.globalInstalled = installed;
       const globalRoot = path.join(tmpDir, "store", "lib", "node_modules");
       fs.mkdirSync(globalRoot, { recursive: true });
@@ -227,9 +227,9 @@ describe("update — read-only global directory", () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(promptsMock.confirm).not.toHaveBeenCalled();
       expect(npmInstallCalls()).toHaveLength(0);
-      expect(String(promptsMock.log.error.mock.calls[0]?.[0])).toContain(
-        `cannot ${verb} @swmansion/argent globally`
-      );
+      const message = String(promptsMock.log.error.mock.calls[0]?.[0]);
+      expect(message).toContain(`cannot ${verb} @swmansion/argent globally`);
+      expect(message.split("\n").map((line) => line.trim())).toContain(localInit);
     }
   );
 
