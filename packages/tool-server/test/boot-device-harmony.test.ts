@@ -81,11 +81,12 @@ const staleEmulatorTarget = { connectKey: EMULATOR_KEY, connection: "TCP", state
 const foreignTarget = { connectKey: "127.0.0.1:5559", connection: "TCP", state: "Connected" };
 /** `hw.lcd.single.width`/`height` of the phone image, echoed by the guest's `render resolution`. */
 const PANEL = { width: 1320, height: 2856 };
-/** Sorted, so `.at(-1)` is the newest attempt's log. */
+/** Newest last, ordered by the numeric hrtime suffix (its digit count varies). */
 function harmonyLogs(safeName: string): string[] {
+  const seq = (f: string) => BigInt(/-(\d+)\.log$/.exec(f)?.[1] ?? 0);
   return readdirSync(tmpdir())
     .filter((f) => f.startsWith(`argent-harmony-${safeName}`) && f.endsWith(".log"))
-    .sort();
+    .sort((a, b) => (seq(a) < seq(b) ? -1 : seq(a) > seq(b) ? 1 : 0));
 }
 
 function lastHarmonyLog(): string {

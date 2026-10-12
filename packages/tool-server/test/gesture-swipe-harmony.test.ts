@@ -7,6 +7,7 @@ import { getFailureSignal } from "@argent/registry";
 vi.mock("../src/utils/harmony-hdc", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/utils/harmony-hdc")>()),
   runHdcShell: vi.fn(),
+  hdcFileRecv: vi.fn(async () => {}),
 }));
 
 vi.mock("../src/utils/simulator-client", async (importOriginal) => ({

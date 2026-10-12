@@ -318,7 +318,7 @@ describe("screenshotDiffTool", () => {
   it("does not leave the capture behind when the copy into `outputDir` fails", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "argent-screenshot-diff-ro-"));
     const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "argent-fake-backend-"));
-    const baselinePath = path.join(os.tmpdir(), `argent-baseline-${Date.now()}.png`);
+    const baselinePath = path.join(dir, "baseline.png");
     const capturedPath = path.join(scratch, "backend-capture.png");
     await writePng(baselinePath, 2, 2, { r: 0, g: 0, b: 0 });
     const captureScreenshot = vi.fn(async () => {
