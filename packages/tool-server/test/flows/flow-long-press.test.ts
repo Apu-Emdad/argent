@@ -324,12 +324,7 @@ describe("long-press: execution", () => {
   }, 15000);
 
   it("rejects a coordinate long-press on HarmonyOS instead of dispatching gesture-custom", async () => {
-    // A coordinate long-press needs no tree, so nothing else stops it: it
-    // resolves its point and dispatches `gesture-custom`, which declares no
-    // harmony capability — and a flow step goes through `invokeTool`, which does
-    // not run the capability gate, so the run stops on the simulator-server
-    // blueprint's "does not support platform" line. That names an argent
-    // internal, not the thing the author has to change.
+    // `invokeTool` skips the capability gate, so the flow must refuse this itself.
     const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
     await writeFlow("press-harmony", {
       executionPrerequisite: "",

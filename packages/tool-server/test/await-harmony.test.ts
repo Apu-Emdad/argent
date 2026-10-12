@@ -10,9 +10,7 @@ import { createAwaitUiElementTool } from "../src/tools/await-ui-element";
 import { createAwaitScreenIdleTool } from "../src/tools/await-screen-idle";
 import { __primeDepCacheForTests, __resetDepCacheForTests } from "../src/utils/check-deps";
 
-// Stub the `uitest`-over-`hdc` transport rather than `describeHarmony` itself,
-// so the wait tools poll through the real dump parser and the real hint rules —
-// those are what decide whether an unreadable screen may confirm `hidden`.
+// The transport is stubbed, so the real dump parser and hint rules run.
 vi.mock("../src/utils/harmony-uitest", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/utils/harmony-uitest")>()),
   harmonyDisplay: vi.fn(),
@@ -23,8 +21,6 @@ const CONNECT_KEY = "025DEK236V035771";
 const HARMONY_ID = `harmony-${CONNECT_KEY}`;
 const DISPLAY = { width: 1216, height: 2688, screenOn: true };
 
-// Neither wait tool resolves a service on harmony — the tree comes straight off
-// `hdc` — so any lookup here is a wiring mistake, not a missing fixture.
 function harmonyRegistry() {
   return {
     resolveService: vi.fn(async (urn: string) => {
@@ -33,11 +29,7 @@ function harmonyRegistry() {
   } as any;
 }
 
-/**
- * A `uitest dumpLayout` result shaped like a Mate 60's: one bounded root, one
- * app window, and a `Text` node per label. No labels means a dump with no
- * windows at all — the "layout came back blank" case.
- */
+/** No labels means a dump with no windows. */
 function dumpWith(...labels: string[]): HarmonyLayoutNode {
   return {
     attributes: { bounds: "[0,0][1216,2688]" },
@@ -97,10 +89,7 @@ describe("await-ui-element on HarmonyOS", () => {
   });
 
   it("`visible` succeeds against a suspended panel but says the display is off", async () => {
-    // `uitest dumpLayout` keeps serving the last composited frame while the
-    // panel is suspended, so the element is "there" and the wait is right to
-    // resolve — but the following tap lands nowhere. Without the caveat a
-    // wait-then-tap loop runs to completion against a dead screen.
+    // `dumpLayout` serves the last frame while the panel is suspended.
     vi.mocked(harmonyDisplay).mockResolvedValue({ ...DISPLAY, screenOn: false });
     sequenceDumps([dumpWith("Submit")]);
     const tool = createAwaitUiElementTool(harmonyRegistry());
@@ -145,8 +134,6 @@ describe("await-ui-element on HarmonyOS", () => {
   });
 
   it("`hidden` succeeds once the element leaves a still-populated screen", async () => {
-    // The rest of the screen survives, which is what a genuine disappearance
-    // looks like; a dump with nothing left in it is the ambiguous case below.
     sequenceDumps([dumpWith("Spinner"), dumpWith("Content")]);
     const tool = createAwaitUiElementTool(harmonyRegistry());
 
@@ -166,9 +153,6 @@ describe("await-ui-element on HarmonyOS", () => {
   });
 
   it("`hidden` met on sight against a suspended panel still says the display is off", async () => {
-    // The two notes are not alternatives: a screen that went dark holds a frame
-    // the selector never matched, so this wait meets its condition at once AND
-    // is the one most likely to be followed by a tap into a dead panel.
     vi.mocked(harmonyDisplay).mockResolvedValue({ ...DISPLAY, screenOn: false });
     sequenceDumps([dumpWith("Content")]);
     const tool = createAwaitUiElementTool(harmonyRegistry());
@@ -189,11 +173,7 @@ describe("await-ui-element on HarmonyOS", () => {
     expect(result.note).toMatch(/display is off/i);
   });
 
-  // ── Unreadable screen must never confirm `hidden` ─────────────────────────
-  // Same guarantee as the iOS "AX backend is down" and Android "empty dump"
-  // cases, reached differently: harmony's fetcher throws instead of returning a
-  // flagged empty tree, so what protects it is `pollDescribeTree` never handing
-  // a failed fetch to the sample predicate.
+  // Unreadable screen must never confirm `hidden`.
 
   it.each([
     {
@@ -235,10 +215,6 @@ describe("await-ui-element on HarmonyOS", () => {
   });
 
   it("does NOT report `hidden` success when the dump lists no windows", async () => {
-    // A dump that fetched cleanly but holds nothing is still not evidence the
-    // element is gone. Unlike Android — where only a prior match makes an empty
-    // tree suspicious — describeHarmony flags every windowless dump, so the
-    // blind-read guard fires from the very first poll and the hint reaches the note.
     sequenceDumps([dumpWith()]);
     const tool = createAwaitUiElementTool(harmonyRegistry());
 
@@ -340,10 +316,6 @@ describe("await-screen-idle on HarmonyOS", () => {
   });
 
   it("settles instantly on a suspended panel but says the display is off", async () => {
-    // A frozen frame is maximally still, so this is the one screen that settles
-    // fastest and means it least. `await-ui-element` carries the same caveat off
-    // the same read — the two must not disagree about a screen they both just
-    // described, since the agent's next call after either is a tap.
     vi.mocked(harmonyDisplay).mockResolvedValue({ ...DISPLAY, screenOn: false });
     sequenceDumps([dumpWith("Settings")]);
     const tool = createAwaitScreenIdleTool(harmonyRegistry());
@@ -359,12 +331,6 @@ describe("await-screen-idle on HarmonyOS", () => {
   });
 
   it("says why the screen was never readable, not just that it never settled", async () => {
-    // A windowless dump can never settle — the loop wants content before it
-    // starts timing stability — so this ends as a timeout with the reason
-    // already in hand. Dropped, "did not settle" reads as a busy screen and the
-    // caller waits longer for a screen that is not being drawn; the sibling
-    // `await-ui-element` puts the same hint on its own timeout note, off the
-    // very same read.
     sequenceDumps([dumpWith()]);
     const tool = createAwaitScreenIdleTool(harmonyRegistry());
 
@@ -378,11 +344,7 @@ describe("await-screen-idle on HarmonyOS", () => {
   });
 
   it("gives the read only what is left of the wait, so an abandoned dump frees the queue", async () => {
-    // The wait abandons a read it cannot finish but cannot cancel one, and a
-    // `uitest` client holds this device's queue until it is killed. Left on its
-    // own 20s ceiling, a read abandoned at a 300ms deadline is time the caller's
-    // NEXT call spends queued — measured at 0.8s of it on a warm emulator, on
-    // the auto-screenshot that follows every interaction.
+    // An abandoned `uitest` read holds the device queue until killed.
     const budgets: (number | undefined)[] = [];
     vi.mocked(harmonyDumpLayout).mockImplementation(async (_key, _path, timeoutMs) => {
       budgets.push(timeoutMs);
@@ -404,10 +366,6 @@ describe("await-screen-idle on HarmonyOS", () => {
   });
 
   it("caps each leg at its own ceiling, so a long wait buys retries not one long round trip", async () => {
-    // The other direction of the same rule: a wait may hand a read far MORE than
-    // one `hdc` round trip is allowed to take (120s is the schema max). Passing
-    // that through would spend the whole wait inside a single wedged call, and
-    // the loop would poll exactly once.
     const dumpBudgets: (number | undefined)[] = [];
     vi.mocked(harmonyDumpLayout).mockImplementation(async (_key, _path, timeoutMs) => {
       dumpBudgets.push(timeoutMs);

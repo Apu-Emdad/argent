@@ -62,8 +62,7 @@ describe("attributeDeviceForTelemetry", () => {
   });
 
   it.each([
-    // A `hdc` connect key names a phone on USB and a booted emulator in the same
-    // breath, so neither spelling may be counted as hardware.
+    // A connect key may name a USB phone or a booted emulator.
     "harmony-025DEK236V035771",
     "harmony-127.0.0.1:5555",
   ])("%s carries the harmony platform but no kind", (id) => {

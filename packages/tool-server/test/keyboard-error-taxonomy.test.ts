@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Registry, FAILURE_CODES, getFailureSignal, type DeviceInfo } from "@argent/registry";
 
-// The harmony backend rejects an unknown key before injecting, so these tests
-// never reach the device — stub the transport anyway, so a regression that
-// dropped the guard fails on the assertion rather than shelling out to `hdc`.
 vi.mock("../src/utils/harmony-hdc", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/utils/harmony-hdc")>()),
   runHdcShell: vi.fn(),
@@ -73,8 +70,6 @@ const iosPhysicalDevice = {
 
 beforeEach(() => {
   runHdcShell.mockReset();
-  // An awake panel, so the tests that DO reach the display guard get past it
-  // and the ones pinned to pure validation stay pure.
   runHdcShell.mockImplementation(async (_key, command) =>
     command.startsWith("hidumper")
       ? {
@@ -199,10 +194,7 @@ describe("keyboard backends — input rejection is a 400 with a uniform telemetr
 
   it("harmony: prototype-chain key name → 400 + KEYBOARD_KEY_UNSUPPORTED", async () => {
     const harmonyDevice: DeviceInfo = { id: "harmony-KEY", platform: "harmony", kind: "device" };
-    // `String(keycode)` reaches `uiInput keyEvent ${key}` unquoted, so a
-    // prototype value would be interpolated into the remote shell line rather
-    // than pressing anything — and with `text` alongside it, the reject must
-    // still land before a single character is typed.
+    // The keycode reaches the remote shell line unquoted.
     for (const key of ["constructor", "__proto__", "toString"]) {
       runHdcShell.mockClear();
       await expectInvalidInput(
@@ -215,21 +207,15 @@ describe("keyboard backends — input rejection is a 400 with a uniform telemetr
 
   it("harmony: newline in text → 400 + KEYBOARD_CHARACTER_UNSUPPORTED", async () => {
     const harmonyDevice: DeviceInfo = { id: "harmony-KEY", platform: "harmony", kind: "device" };
-    // `uitest uiInput text` validates almost nothing and answers `No Error`
-    // whether or not anything landed, so a newline must be rejected up front —
-    // every sibling backend (android above, vega) already is.
+    // `uitest uiInput text` answers `No Error` whether or not anything landed.
     await expectInvalidInput(
       harmonyImpl.handler({}, { udid: harmonyDevice.id, text: "a\nb" }, harmonyDevice),
       FAILURE_CODES.KEYBOARD_CHARACTER_UNSUPPORTED
     );
     expect(runHdcShell).not.toHaveBeenCalled();
-    // The newline shares its failure code with every other un-typeable
-    // character, so the code alone cannot tell whether its own branch still
-    // exists — and that branch is there only for the recovery it names.
     await expect(
       harmonyImpl.handler({}, { udid: harmonyDevice.id, text: "a\nb" }, harmonyDevice)
     ).rejects.toThrow(/Submit with `key: "enter"` after typing instead/);
-    // Decided without asking the device: see the unsupported-key case below.
     expect(runHdcShell).not.toHaveBeenCalled();
   });
 
@@ -244,12 +230,7 @@ describe("keyboard backends — input rejection is a 400 with a uniform telemetr
 
   it("harmony: an unsupported key is diagnosed without reaching the device", async () => {
     const harmonyDevice: DeviceInfo = { id: "harmony-KEY", platform: "harmony", kind: "device" };
-    // `tab` is one of the keys this backend deliberately does not map, so the
-    // answer never depends on the device — the unreachable transport stubbed
-    // below stands in for one that is unhappy. A device round trip ahead of the
-    // key check turns this 400 into `hdc could not reach HarmonyOS device …:
-    // Device not found or connected`, sending the caller to check a cable over
-    // a key that will never be supported (hubgan review).
+    // The key check must precede any device round trip.
     runHdcShell.mockRejectedValue(new Error("[Fail][E001005] Device not found or connected"));
     await expectInvalidInput(
       harmonyImpl.handler({}, { udid: harmonyDevice.id, key: "tab" }, harmonyDevice),
@@ -260,10 +241,7 @@ describe("keyboard backends — input rejection is a 400 with a uniform telemetr
 
   it("harmony: every unsupported-input rejection carries the shared `unsupported` kind", async () => {
     const harmonyDevice: DeviceInfo = { id: "harmony-KEY", platform: "harmony", kind: "device" };
-    // The android twin tags all three of these `unsupported`
-    // (utils/android-input.ts), and telemetry groups by kind before code — so a
-    // harmony rejection without one lands in the untyped bucket and the same
-    // failure reads as two different things depending on the platform.
+    // The Android twin tags these `unsupported`.
     for (const params of [{ text: "a\nb" }, { text: "a\x07b" }, { key: "tab" }]) {
       runHdcShell.mockClear();
       const err = await harmonyImpl

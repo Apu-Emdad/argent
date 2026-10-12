@@ -122,9 +122,7 @@ describe("screenshot tool", () => {
     } as unknown as import("@argent/registry").Registry;
     const screenshotTool = createScreenshotTool(registry);
 
-    // `uitest screenCap` writes the display in its current orientation and has
-    // no override, so the only alternative to this error is a capture whose
-    // orientation silently contradicts the parameter that was accepted.
+    // `uitest screenCap` has no orientation argument.
     await expect(
       screenshotTool.execute(
         {},

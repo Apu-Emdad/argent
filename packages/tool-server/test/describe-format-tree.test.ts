@@ -293,11 +293,7 @@ describe("formatDescribeTree", () => {
   });
 
   it("names only the gesture tools the source's own platform supports", () => {
-    // Every tool named here is one the agent is invited to call next, and each
-    // platform's capability gate refuses the ones it has no backend for — so a
-    // fixed list spends a round trip on a 400 the header could have avoided.
-    // Chromium is the sharp case: it has neither swipe nor pinch, and the two
-    // tools it does have (scroll, drag) went unmentioned.
+    // Each platform's capability gate refuses tools it has no backend for.
     const empty: DescribeNode = {
       role: "AXGroup",
       frame: { x: 0, y: 0, width: 1, height: 1 },
@@ -407,18 +403,11 @@ describe("formatDescribeTree", () => {
     expect(out).toMatch(/\[clickable,long-clickable,checked,disabled\]/);
     expect(out).toMatch(/\[scrollHidden=7\]/);
 
-    // Same node from HarmonyOS keeps every flag but that one. `uitest` reports
-    // `longClickable=true` on real screens (11 of the 86 nodes on the 6.1.1
-    // launcher), and nothing on the platform can perform the press — no verb is
-    // wired and `gesture-custom` declares no harmony capability — so printing it
-    // sends the agent after a tool that does not exist. Same reasoning as the
-    // per-source gesture-tool line in the header.
+    // `uitest` reports `longClickable`, but HarmonyOS has no long-press tool.
     const harmony = formatDescribeTree(root, { source: "harmony-uitest" });
     expect(harmony).toMatch(/\[clickable,checked,disabled\]/);
     expect(harmony).not.toContain("long-clickable");
-    // Suppressed at the RENDER, not by dropping the node: 7 of those 11 nodes
-    // carry no other flag, and losing them from the tree costs the agent the
-    // element rather than one word about it.
+    // Suppressed at render: most of those nodes carry no other flag.
     expect(harmony).toMatch(/\[scrollHidden=7\]/);
   });
 

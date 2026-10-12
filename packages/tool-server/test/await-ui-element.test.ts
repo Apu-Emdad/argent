@@ -23,8 +23,6 @@ vi.mock("../src/utils/ios-devices", async () => {
   );
   return { ...actual, isTvOsSimulator: async () => false };
 });
-// Mutable so the one Android TV case can flip the form factor; every other test
-// runs on the phone shape the fixtures describe.
 const adbProbe = vi.hoisted(() => ({ isTv: false }));
 vi.mock("../src/utils/adb", async () => {
   const actual = await vi.importActual<typeof import("../src/utils/adb")>("../src/utils/adb");
@@ -588,9 +586,6 @@ describe("await-ui-element tool", () => {
   });
 
   it("a success on Android TV carries no note", async () => {
-    // The nearest twin of the degraded-simulator case: the TV hint is a form
-    // factor, true of every read from this device, so a wait that resolved has
-    // nothing to add with it.
     adbProbe.isTv = true;
     const xml =
       `<hierarchy rotation="0">` +
@@ -699,9 +694,6 @@ describe("await-ui-element tool", () => {
   });
 
   it("says the tree was partial when the walker hit its node budget", async () => {
-    // Truncation is a property of this read, like HarmonyOS' suspended panel:
-    // the page is only partly there, so the wait resolved on less than the
-    // screen and the caller is owed that.
     const tool = createAwaitUiElementTool(makeMockRegistry({}));
 
     const result = await tool.execute(
@@ -794,11 +786,7 @@ describe("await-ui-element tool", () => {
   it.each(["visible", "exists"] as const)(
     "a `%s` success on a degraded simulator carries no note",
     async (condition) => {
-      // `degraded` means the simulator was not booted through argent — a common
-      // state, and the tree it returns is live and populated. The boot hint ends
-      // "You MUST call boot-device with force=true now", so folding it into a
-      // success hands the agent an order to restart the device (losing the app
-      // state the wait was gating) after a wait that worked.
+      // `degraded` trees are live; the boot hint would order a restart after a wait that worked.
       const { api } = makeSequencedAXService(
         [axResponse([{ label: "General", frame: FRAME, traits: ["button"] }])],
         { degraded: true }
@@ -922,11 +910,8 @@ describe("await-ui-element tool", () => {
   }
 
   it("keeps a genuine miss unmet when only the final poll fails", async () => {
-    // One bad trailing read must not read as "nothing was ever compared", for a
-    // step that hard-fails at replay. The trusted read is one clamped sleep
-    // back, inside the tolerance. `pollIntervalMs` is above `timeoutMs` on
-    // purpose: the sleep clamps to the deadline, and the 2000ms ceiling absorbs
-    // scheduler slip. At 500 a ~400ms slip flipped the cause under load.
+    // `pollIntervalMs` above `timeoutMs` clamps the sleep to the deadline; a
+    // 500ms ceiling flipped the cause under load.
     const tool = createAwaitUiElementTool(makeMockRegistry({}));
 
     const result = await tool.execute(
@@ -940,10 +925,7 @@ describe("await-ui-element tool", () => {
       }
     );
 
-    // Only the cause is asserted. The deadline poll lands with 0ms of budget
-    // and the loop drops a failure it caused itself, so whether the note quotes
-    // that read is decided by a timer edge — which is exactly why the cause is
-    // carried by the loop instead of read back off `lastError`.
+    // The note's content depends on a timer edge; only the cause is stable.
     expect(result.success).toBe(false);
     expect(unmetUiWaitCause(result)).toBe("unmet");
   });

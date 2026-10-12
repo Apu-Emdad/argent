@@ -48,8 +48,6 @@ describe("harmonyLabel", () => {
   });
 
   it("treats a whitespace-only description as absent", () => {
-    // The calculator labels every keypad Button `" "`. Without the trim each one
-    // becomes a blank-labelled node that reads like a real, empty label.
     expect(harmonyLabel({ description: " ", text: "7" })).toBe("7");
   });
 
@@ -74,20 +72,11 @@ describe("parseHarmonyLayout", () => {
     ).tree;
     expect(tree.children).toHaveLength(1);
     expect(tree.children[0].role).toBe("Window");
-    // A tree spanning an app and the status bar (always a separate sceneboard
-    // window) is unreadable if both are anonymous stacks. The bundle rides as
-    // `identifier`, NOT `label`: the shared matcher reads `label` as visible
-    // text, and a full-screen node "named" `com.app` would poison every text
-    // wait (`exists: {text:"app"}` true on every screen, a `text` wait for the
-    // app's own name matching the window instead of its title).
+    // `identifier`, not `label`: a label would match text searches on every screen.
     expect(tree.children[0].identifier).toBe("com.app");
     expect(tree.children[0].label).toBeUndefined();
   });
 
-  // `role` is half of what an agent selects on (`await-ui-element {role}`, the
-  // flow matchers), and it is derived from a type name the app author chose —
-  // so a mapping quietly reverting to the `type || "Group"` default is invisible
-  // in a rendered tree yet breaks every selector aimed at it. One row per arm.
   it.each([
     ["Text", "StaticText"],
     ["Span", "StaticText"],
@@ -124,9 +113,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("reads a Toggle's role off what it can actually do", () => {
-    // The one arm that is not a lookup: the same ArkUI component is a switch or
-    // a plain button depending on `checkable`, and only the switch has a state
-    // an agent can assert.
     const build = (checkable: string) =>
       parseHarmonyLayout(
         root([
@@ -159,8 +145,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("keeps a layout type that is itself clickable", () => {
-    // ArkUI builds real buttons out of Stack/Row, so walking through every
-    // container by type would delete tap targets.
     const tree = parseHarmonyLayout(
       root([
         node({ type: "root", bundleName: "com.app", bounds: "[0,0][1216,2688]" }, [
@@ -174,9 +158,6 @@ describe("parseHarmonyLayout", () => {
     expect(target.clickable).toBe(true);
   });
 
-  // ArkUI puts `.id()` and the state flags on whatever component the author
-  // wrote, and that is routinely a plain `Column`/`Row`. Hoisting one away for
-  // wearing a layout type takes the only copy of that id with it.
   describe("layout containers that know something themselves", () => {
     const wrapping = (attrs: Record<string, string>): DescribeNode =>
       parseHarmonyLayout(
@@ -200,11 +181,7 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("takes `key` when there is no `id`, and prefers `id` when there is", () => {
-      // ArkUI has two automation strings, `.id()` and `.key()`, and a component
-      // routinely carries only the second. The fixture above sets both to the
-      // same value, so the `id` half alone satisfies it — dropping the `key`
-      // fallback loses every such component's identifier silently, and swapping
-      // the two makes `key` win a component that declares both.
+      // A component may carry only `.key()`, or both with `id` winning.
       const identifierOf = (attrs: Record<string, string>): string | undefined =>
         wrapping(attrs).children[0].children[0].identifier;
 
@@ -213,9 +190,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("costs one attribute, not the whole tree, when a dump value is not a string", () => {
-      // The dump is `JSON.parse`d and asserted to be all-strings — measured on
-      // 6.1.1, promised by nothing. Unguarded, one numeric `description` threw a
-      // bare TypeError out of the parser and took `describe` down with it.
       const odd: Record<string, string> = {
         type: "Text",
         description: 0 as unknown as string,
@@ -230,12 +204,7 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps a container carrying the label an agent selects on", () => {
-      // `.accessibilityText()` on a composite row is the idiomatic way to name
-      // one, and it lands on the `Column`/`Row` the author wrote. Hoisted away
-      // for wearing a layout type, the row's name is gone from the tree
-      // entirely — `await-ui-element {text}` and tap-by-label stop finding an
-      // element that is plainly on screen. One label per source attribute,
-      // since each reaches `label` by its own branch.
+      // One label per source attribute, each its own branch.
       const cases: Record<string, string>[] = [
         { type: "Column", description: "Wi-Fi, connected" },
         { type: "Row", hint: "Wi-Fi, connected" },
@@ -249,8 +218,7 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps a container that knows it is disabled, selected or focused", () => {
-      // One flag per case, so each is pinned on its own rather than by an `id`
-      // that would have kept the node regardless.
+      // One flag per case, without an `id` that would keep the node anyway.
       const own = (attrs: Record<string, string>) => wrapping(attrs).children[0].children[0];
       expect(own({ type: "Row", enabled: "false" }).disabled).toBe(true);
       expect(own({ type: "Column", selected: "true" }).selected).toBe(true);
@@ -258,9 +226,6 @@ describe("parseHarmonyLayout", () => {
     });
   });
 
-  // ArkUI sets `.id()` and the state flags on the OUTER component, so the
-  // wrapper of a same-rect pair is often the only node that knows it. Collapsing
-  // it away kept `clickable` and dropped the rest.
   describe("same-rect duplicate layers", () => {
     const wrap = (attrs: Record<string, string>, child: Record<string, string>) =>
       parseHarmonyLayout(
@@ -289,10 +254,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("reads a non-checkable Toggle as the button it behaves like", () => {
-      // ArkUI's `Toggle` covers switches AND push-style buttons; only the
-      // checkable ones are switches. Reporting both as `Switch` puts a plain
-      // button beyond `await-ui-element {role:"Button"}`, and tells the agent a
-      // control has an on/off state it does not have.
       const B = "[0,0][200,100]";
       const asSwitch = wrap(
         { type: "Toggle", checkable: "true", clickable: "true", id: "wifi", bounds: B },
@@ -308,10 +269,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps a wrapper that carries the only label in the pair", () => {
-      // ArkUI labels the outer component and leaves the child a bare graphic —
-      // `Button().accessibilityText("Submit")` over a full-bleed `Image`.
-      // Collapsing onto the child drops the label entirely, so `describe` shows
-      // an unnamed image and `await-ui-element {text:"Submit"}` can never match.
       const B = "[0,0][200,100]";
       const target = wrap(
         { type: "Button", clickable: "true", description: "Submit", bounds: B },
@@ -323,9 +280,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("does not collapse a multi-child wrapper onto its first child", () => {
-      // A full-bleed background as child[0] is idiomatic ArkUI. Collapsing on it
-      // returns the background alone and every sibling — here both price and
-      // caption — disappears from the tree the agent reads.
       const B = "[0,0][400,200]";
       const tree = parseHarmonyLayout(
         root([
@@ -345,9 +299,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("does not collapse onto a child that merely shares an origin", () => {
-      // Same x/y, a tenth of the area: an icon pinned to the top-left of its
-      // row. Collapsing moves the reported frame — and with it the tap centre
-      // the description tells the agent to compute — from (200,100) to (20,20).
       const target = wrap(
         { type: "Stack", clickable: "true", bounds: "[0,0][400,200]" },
         { type: "Image", bounds: "[0,0][40,40]" }
@@ -359,10 +310,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps a mapped wrapper role through the collapse", () => {
-      // ArkUI puts the meaningful widget on the OUTER node (`ListItem` -> Cell)
-      // and fills it with a bare layout child at identical bounds. Collapsing
-      // onto the child's role reports the same row as `Row` or `Cell` depending
-      // on where focus happens to sit.
       const B = "[0,0][1216,160]";
       const target = wrap(
         { type: "ListItem", bounds: B },
@@ -386,10 +333,7 @@ describe("parseHarmonyLayout", () => {
       expect(target.children[0].label).toBe("Submit");
     });
 
-    // Each case below carries ONLY the state under test - no `id` - so it pins
-    // that flag specifically. With an identifier present too, any one of these
-    // could be dropped from the guard and the case would still pass on the
-    // identifier alone.
+    // Each case carries only the state under test, no `id`, so it pins that flag.
     it("does not report a disabled control as a plain tappable one", () => {
       const B = "[0,0][200,100]";
       const target = wrap(
@@ -436,8 +380,7 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps a switch that is off, not only one that is on", () => {
-      // `checked` and `checkable` cover for each other on an on-switch, so the
-      // off case is what pins `checkable` by itself.
+      // The off case pins `checkable` alone.
       const B = "[0,0][200,100]";
       const target = wrap(
         { type: "Toggle", clickable: "true", checkable: "true", bounds: B },
@@ -448,9 +391,7 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps a selected wrapper, and a focused one", () => {
-      // Not a `Stack`: a layout container carrying neither a label nor one of
-      // the interactive flags is hoisted away as scaffolding before the collapse
-      // is ever reached, so it cannot exercise this guard.
+      // Not a `Stack`: a bare layout container is hoisted before the collapse.
       const B = "[0,0][200,100]";
       expect(
         wrap({ type: "ListItem", selected: "true", bounds: B }, { type: "Image", bounds: B })
@@ -494,8 +435,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("clamps a frame for content scrolled off the top", () => {
-    // A List reports negative bounds for rows above the viewport, and the
-    // describe frame contract is closed over [0,1].
     const tree = parseHarmonyLayout(
       root([
         node({ type: "root", bundleName: "com.app", bounds: "[0,0][1216,2688]" }, [
@@ -541,8 +480,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("treats a node as enabled when `enabled` is absent", () => {
-    // Every node carries `enabled`; a missing one means the dump shape changed,
-    // and defaulting the other way would grey out the whole screen.
     const tree = parseHarmonyLayout(
       root([
         node({ type: "root", bundleName: "com.app", bounds: "[0,0][1216,2688]" }, [
@@ -569,9 +506,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("says so when a system overlay hides its own contents", () => {
-    // The app-selector / share sheet renders in another process and the dump
-    // carries the node with no children. Emitting an empty container would tell
-    // an agent the screen is empty when a dialog is covering it.
     const tree = parseHarmonyLayout(
       root([
         node({ type: "root", bundleName: "com.ohos.sceneboard", bounds: "[0,0][1216,2688]" }, [
@@ -586,11 +520,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("keeps the overlay explanation out of the label slot", () => {
-    // The matcher reads `label` as visible text, and a full-screen node whose
-    // label is a sentence containing "system", "contents" or "screenshot" makes
-    // `exists: {text: ...}` true on every screen a share sheet or app selector
-    // covers - the same phantom-text problem that keeps the window bundle name
-    // in `identifier`.
     const tree = parseHarmonyLayout(
       root([
         node({ type: "root", bundleName: "com.ohos.sceneboard", bounds: "[0,0][1216,2688]" }, [
@@ -608,11 +537,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("parses a UIExtensionComponent's own subtree when the dump carries one", () => {
-    // On HarmonyOS 6.1.1 the same node arrives WITH the full subtree — the
-    // HUAWEI ID login sheet carries its TextInput and both Buttons (45 nodes
-    // measured), and those targets are live (their geometry taps). Replacing it
-    // with the placeholder discards the only controls that dismiss the sheet,
-    // and `uitest screenCap` does not capture the surface either.
     const tree = parseHarmonyLayout(
       root([
         node(
@@ -647,16 +571,11 @@ describe("parseHarmonyLayout", () => {
     expect(text).toContain("HUAWEI ID");
     expect(text).toContain("Back");
     expect(text).toContain("Log in/Register");
-    // The subtree's own back Button is a real, tappable target — not swallowed
-    // into a placeholder that says the screen is opaque.
     const back = tree.children[0].children[0].children.find((c) => c.label === "Back");
     expect(back).toMatchObject({ role: "Button", clickable: true });
   });
 
   it("does not let a window's bundle id read as visible text on the screen", () => {
-    // Regression for the matcher poisoning: with the bundle on `label`, every
-    // screen matched `exists: {text:"sceneboard"}` and a `text` wait for the
-    // app's own name tied with its real title in reading order and lost.
     const tree = parseHarmonyLayout(
       root([
         node(
@@ -686,8 +605,6 @@ describe("parseHarmonyLayout", () => {
   });
 
   it("takes the screen size from the dump's own root, not the caller's", () => {
-    // The two are read at different instants; on a foldable that gap is enough
-    // for an unfold to normalize every frame against the wrong axis.
     const { screen } = parseHarmonyLayout(node({ bounds: "[0,0][2200,2480]" }, []), SCREEN);
     expect(screen).toEqual({ width: 2200, height: 2480 });
   });
@@ -697,11 +614,6 @@ describe("parseHarmonyLayout", () => {
     expect(screen).toEqual(SCREEN);
   });
 
-  // A List reports real off-screen bounds for its scrolled rows, so the frame
-  // has to be clipped to the screen before it is normalized. Normalizing each
-  // component on its own and clamping into [0,1] gave a row at [0,-400][1216,-260]
-  // the frame y=0 height=0.052 — a full-width tap target at the top of the
-  // screen, with the same frame as the row genuinely straddling that edge.
   describe("off-screen rows", () => {
     const rows = (items: Array<[string, string]>) =>
       parseHarmonyLayout(
@@ -719,8 +631,6 @@ describe("parseHarmonyLayout", () => {
       ).tree.children[0].children[0].children;
 
     it("drops a row scrolled fully off the screen, on every edge", () => {
-      // Clipping alone left these as zero-area `[clickable]` lines whose
-      // documented tap centre is the status bar or the nav bar.
       const kept = rows([
         ["ABOVE", "[0,-400][1216,-260]"],
         ["BELOW", "[0,2888][1216,3028]"],
@@ -731,8 +641,7 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("keeps only the visible slice of a row straddling an edge", () => {
-      // 140px tall, 80px of it on screen. It must survive - it IS reachable -
-      // and must not share the fully-off-screen row's fate or its old frame.
+      // 140px tall, 80px on screen.
       const kept = rows([
         ["ABOVE", "[0,-400][1216,-260]"],
         ["STRADDLE", "[0,-60][1216,80]"],
@@ -750,9 +659,7 @@ describe("parseHarmonyLayout", () => {
         ["PART-RIGHT", "[1100,400][1456,540]"],
         ["VISIBLE", "[0,1000][1216,1140]"],
       ]);
-      // Every assertion below lives inside the loop, so an empty `kept` would
-      // otherwise pass vacuously — and this is the only case pinning
-      // `x + width <= 1` for a partially off-screen row.
+      // Guards against the loop below passing vacuously.
       expect(kept.length, "rows kept after pruning").toBeGreaterThan(0);
       for (const row of kept) {
         const { x, y, width, height } = row.frame;
@@ -762,8 +669,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("drops an off-screen node sitting directly under a window", () => {
-      // Windows are assembled separately from the recursive walk, so the same
-      // pruning has to be applied there or it holds only below depth 1.
       const tree = parseHarmonyLayout(
         root([
           node({ type: "root", bundleName: "com.app", bounds: "[0,0][1216,2688]" }, [
@@ -782,8 +687,6 @@ describe("parseHarmonyLayout", () => {
     });
 
     it("does not drop a zero-size container that still holds a visible child", () => {
-      // A degenerate wrapper survives `build` because it has children; pruning
-      // it on its own frame would take the reachable child with it.
       const tree = parseHarmonyLayout(
         root([
           node({ type: "root", bundleName: "com.app", bounds: "[0,0][1216,2688]" }, [
@@ -794,8 +697,6 @@ describe("parseHarmonyLayout", () => {
         ]),
         SCREEN
       ).tree;
-      // Assert the child survives ANYWHERE in the tree: pruning a zero-area
-      // ancestor takes its whole subtree with it, wherever it sits.
       const labels: string[] = [];
       const walk = (n: DescribeNode) => {
         if (n.label) labels.push(n.label);

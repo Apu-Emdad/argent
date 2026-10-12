@@ -42,12 +42,7 @@ describe("discovery timeout vs backstop invariant", () => {
   });
 
   it("both HarmonyOS branches' full worst case stays comfortably under the branch deadline", () => {
-    // Two branches, each a single bounded call: `Emulator -list -details` and
-    // `hdc list targets`. They are separate entries in the same `Promise.all`
-    // fan-out, so the platform's worst case is the slower of the two, not their
-    // sum. Each must carry its own timeout: both wrappers default to 30s, itself
-    // above the deadline, so relying on the default would let the backstop cut
-    // off a branch that was still working.
+    // Separate `Promise.all` branches, so the worst case is the slower one.
     const harmonyWorstCase = Math.max(HARMONY_LIST_TIMEOUT_MS, HDC_LIST_TIMEOUT_MS);
     expect(harmonyWorstCase).toBeLessThan(BRANCH_DEADLINE_MS);
     expect(BRANCH_DEADLINE_MS - harmonyWorstCase).toBeGreaterThanOrEqual(MIN_MARGIN_MS);

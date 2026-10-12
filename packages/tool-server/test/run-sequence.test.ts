@@ -68,15 +68,11 @@ describe("run-sequence", () => {
   it("accepts a HarmonyOS device, and stops at the first step that platform cannot run", async () => {
     const { registry, calls } = makeMockRegistry();
     const tool = createRunSequenceTool(registry);
-    // The outer gate runs in the HTTP layer, not in execute(), so assert it
-    // directly: without `harmony` on run-sequence's own capability every step
-    // below is unreachable no matter what the step tools support.
+    // The outer gate runs in the HTTP layer, not in execute().
     expect(() =>
       assertSupported("run-sequence", tool.capability, resolveDevice(HARMONY))
     ).not.toThrow();
 
-    // Real capabilities: gesture-tap supports HarmonyOS, gesture-rotate does not
-    // (`uinput -T -m` moves each contact along one straight line, never an arc).
     registry.getTool = vi.fn((id: string) =>
       id === "gesture-tap" ? gestureTapTool : gestureRotateTool
     );

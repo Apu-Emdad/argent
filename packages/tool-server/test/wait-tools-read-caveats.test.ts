@@ -2,14 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DescribeTreeData } from "../src/tools/describe/contract";
 import { __primeDepCacheForTests, __resetDepCacheForTests } from "../src/utils/check-deps";
 
-// Both wait tools answer off one `describe` read, so a read that came with a
-// diagnosis of its own has to reach the timeout note either way — it is what
-// decides the caller's next move. Stubbing the adapter puts both flags on one
-// fixture, which makes this a test of the shared clause builder rather than of
-// the iOS path that happens to feed it.
+// The adapter is stubbed so one fixture can carry both flags.
 const read = vi.hoisted(() => ({
   data: null as DescribeTreeData | null,
-  /** Set to make every read after the first fail, as a device that goes away does. */
   errorAfterFirst: null as string | null,
   calls: 0,
 }));
@@ -27,7 +22,6 @@ import { createAwaitScreenIdleTool } from "../src/tools/await-screen-idle";
 
 const IOS_UDID = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
 
-/** No service is resolved on this path — the adapter above is the whole read. */
 const registry = {
   resolveService: vi.fn(async (urn: string) => {
     throw new Error(`unexpected service: ${urn}`);
@@ -81,8 +75,6 @@ describe("a wait that times out on a read with a diagnosis of its own", () => {
   });
 
   it("reports the read that failed instead, when the device stopped answering", async () => {
-    // Opposite diagnoses: "the app needs a restart" sends the caller back to the
-    // same device, and it is the tree BEFORE the device went away that says so.
     read.errorAfterFirst = "device AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA not booted";
     const tool = createAwaitScreenIdleTool(registry);
 
@@ -98,7 +90,6 @@ describe("a wait that times out on a read with a diagnosis of its own", () => {
 });
 
 describe("a wait that settles", () => {
-  /** Non-empty, so the first sample can settle it; still by definition. */
   const rendered = { role: "AXButton", frame: { x: 0, y: 0, width: 1, height: 1 }, children: [] };
 
   it("carries a hint that questions the tree it settled on into the note", async () => {
@@ -123,9 +114,7 @@ describe("a wait that settles", () => {
   });
 
   it("leaves a standing fact about the target off the note, having settled on a real screen", async () => {
-    // A settle is a verdict on what the wait saw. iOS' hint ends in an order to
-    // reboot the simulator and lose the app state — reporting that beside a
-    // screen that did settle would have the caller undo a passing wait.
+    // iOS' hint orders a reboot, which would undo a wait that settled.
     read.data = {
       tree: {
         role: "AXApplication",
@@ -147,22 +136,13 @@ describe("a wait that settles", () => {
     expect(result.note).toBeUndefined();
   });
 
-  // The description is always loaded, so it is what an agent reads BEFORE it
-  // ever sees a note. Two unrelated things produce a note beside `success: true`
-  // and they call for opposite responses — one says re-read the screen, the
-  // other says the check did not really pass — so the description has to name
-  // both. Characterising the pair as only the partial-tree case invites an agent
-  // on iOS or Android, where that case cannot arise, to dismiss the note it does
-  // get as somebody else's platform.
+  // The two reasons call for opposite responses, so the description names both.
   it("tells the caller both reasons a passing wait still carries a note", async () => {
     const description = createAwaitUiElementTool(registry).description;
 
-    // The tree-source caveat, and the two sources that raise it.
     expect(description).toMatch(/not the whole live\s+screen/);
     expect(description).toMatch(/HarmonyOS/);
     expect(description).toMatch(/Chromium/);
-    // The `hidden`-never-matched pass, and what to do about it — without the
-    // remedy the caller is told a true thing it cannot act on.
     expect(description).toMatch(/never matched\s+anything/);
     expect(description).toMatch(/fix the\s+selector/);
   });

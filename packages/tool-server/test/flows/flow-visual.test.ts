@@ -395,8 +395,6 @@ describe("runSnapshot settle", () => {
   });
 
   it("settles a tree-sourced platform before capturing", async () => {
-    // The control for the case below: the plain settle is keyed on the
-    // platform having a tree source, not on something else.
     vi.mocked(settleTree).mockClear();
     vi.mocked(invokeOnDevice).mockClear();
     await fs.mkdir(path.dirname(baselinePath()), { recursive: true });
@@ -409,13 +407,10 @@ describe("runSnapshot settle", () => {
   });
 
   it("skips the settle on a platform with no flow tree source, and still captures", async () => {
-    // Harmony serves screenshots (uitest screenCap) but flows have no UI-tree
-    // source there, so every settle read fails by construction — each snapshot
-    // paid the full ~3s window learning nothing. Like the gesture path, skip it.
+    // Flows have no harmony tree source, so a settle read would always fail.
     vi.mocked(settleTree).mockClear();
     vi.mocked(invokeOnDevice).mockClear();
     await fs.mkdir(path.dirname(baselinePath()), { recursive: true });
-    // The key carries the platform, so the baseline file must too.
     await writeFakePng(path.join(tmpDir, "__baselines__", "checkout", "home__harmony-390x844.png"));
     const harmonyEnv = {
       ...env,

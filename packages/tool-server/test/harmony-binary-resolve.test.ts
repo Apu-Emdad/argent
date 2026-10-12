@@ -4,17 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FAILURE_CODES, getFailureSignal } from "@argent/registry";
 
-// Force the PATH probe to miss. `resolveHdc` falls back to `command -v hdc` for
-// standalone command-line-tools installs, and on a host that has one it would
-// return a path for every case below, hiding whether the DevEco roots were
-// searched at all.
+// Force the PATH fallback to miss so the DevEco roots are what is searched.
 vi.mock("../src/utils/command-on-path", () => ({
   commandOnPath: vi.fn(async () => null),
 }));
 
-// Records every candidate the resolvers stat, in order, so the tests can assert
-// which roots were searched — not just which one won. Needed because the macOS
-// default root is a fixed absolute path no test can populate.
+// Records every stat'd candidate: the macOS default root cannot be populated in a test.
 const { probed } = vi.hoisted(() => ({ probed: [] as string[] }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -38,11 +33,7 @@ function setPlatform(value: NodeJS.Platform) {
   Object.defineProperty(process, "platform", { value, configurable: true });
 }
 
-/**
- * Both resolvers memoize their answer in a module-level cache for 60s, so a
- * fresh import per test is the only way to make each one probe the filesystem
- * again.
- */
+/** Both resolvers memoize for 60s; a fresh import resets that. */
 async function loadResolvers() {
   vi.resetModules();
   const [hdc, cli] = await Promise.all([
@@ -64,8 +55,6 @@ describe("DevEco Studio binary resolution", () => {
   beforeEach(async () => {
     tmpRoot = await mkdtemp(join(tmpdir(), "argent-deveco-root-"));
     probed.length = 0;
-    // The macOS default root only participates on darwin, and every assertion
-    // below is about how `$DEVECO_STUDIO_HOME` interacts with it.
     setPlatform("darwin");
   });
 
@@ -78,8 +67,6 @@ describe("DevEco Studio binary resolution", () => {
   });
 
   describe("$DEVECO_STUDIO_HOME set to the macOS app bundle", () => {
-    // What Finder shows and what the install hints ask for: the `.app` itself.
-    // The binaries sit one level down, inside `Contents`.
     it("finds hdc", async () => {
       const bundle = join(tmpRoot, "DevEco-Studio.app");
       const hdc = join(bundle, "Contents", HDC_RELATIVE);
@@ -102,8 +89,6 @@ describe("DevEco Studio binary resolution", () => {
   });
 
   it("still resolves a root that already points inside the bundle", async () => {
-    // The other spelling of the same install. Both have to work, or fixing one
-    // breaks whoever configured the other.
     const contents = join(tmpRoot, "DevEco-Studio.app", "Contents");
     const hdc = join(contents, HDC_RELATIVE);
     await writeExecutable(hdc);
@@ -114,9 +99,6 @@ describe("DevEco Studio binary resolution", () => {
   });
 
   describe("on Windows, where the install ships .exe binaries", () => {
-    // `$DEVECO_STUDIO_HOME` is the ONLY way to point at a non-macOS install, so
-    // a candidate built without the extension misses every root and HarmonyOS
-    // is unreachable on the platform its own not-found hint sends users to.
     beforeEach(() => setPlatform("win32"));
 
     it("finds hdc.exe", async () => {
@@ -142,13 +124,7 @@ describe("DevEco Studio binary resolution", () => {
 
   describe("running the manager once it has been resolved", () => {
     it("classifies a run killed at its ceiling as a timeout, naming the signal", async () => {
-      // The one `Emulator` failure with no diagnostic to read: killed at the
-      // timeout, so `emulatorFailure`'s marker list has nothing to match and the
-      // caller cannot classify it downstream. Left a bare `Error` it buckets as
-      // REGISTRY_TOOL_EXECUTION_FAILED, which is where every unclassified throw
-      // in the server already sits — and drops the binary that hung with it.
-      // The kind is read off the child, as `adb`'s wrapper does it: a manager
-      // that ran out of time is not one that failed.
+      // A timed-out `Emulator` prints no diagnostic to classify.
       const bundle = join(tmpRoot, "DevEco-Studio.app");
       const emulator = join(bundle, "Contents", EMULATOR_RELATIVE);
       await mkdir(join(emulator, ".."), { recursive: true });
@@ -173,11 +149,7 @@ describe("DevEco Studio binary resolution", () => {
   });
 
   describe("$DEVECO_STUDIO_HOME pointing at a root with no DevEco install", () => {
-    // A set-but-wrong variable must not be able to hide a working default
-    // install: it is tried first, then the default, exactly as `androidRoots()`
-    // orders `$ANDROID_HOME` ahead of the OS defaults rather than instead of
-    // them. Asserted on the probe list because no test can populate
-    // /Applications.
+    // A set-but-wrong variable must not hide a working default install.
     it("goes on to probe the macOS default root for hdc", async () => {
       process.env.DEVECO_STUDIO_HOME = tmpRoot;
 

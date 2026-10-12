@@ -36,9 +36,6 @@ vi.mock("../src/utils/vega-input", async (importOriginal) => ({
   injectVegaNamedKey: vi.fn(async () => {}),
 }));
 
-// HarmonyOS reaches the device over `hdc`; fake the transport and serve an
-// awake panel, so what is pinned here is the exclusivity rule rather than the
-// display guard `keyboard-harmony.test.ts` covers.
 vi.mock("../src/utils/harmony-hdc", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/utils/harmony-hdc")>()),
   runHdcShell: vi.fn(async (_key: string, command: string) =>
@@ -110,8 +107,7 @@ const BACKENDS = [
     udid: "harmony-025DEK236V035771",
     injections: () =>
       vi.mocked(runHdcShell).mock.calls.filter(([, c]) => c.startsWith("uitest uiInput")).length,
-    // `uitest uiInput keyEvent` takes a raw keyID, so the name never leaves the
-    // host: 2055 is backspace (keyboard/platforms/harmony.ts HARMONY_KEYCODES).
+    // 2055 is backspace's keyID.
     pressedBackspace: () =>
       vi.mocked(runHdcShell).mock.calls.some(([, c]) => c === "uitest uiInput keyEvent 2055"),
   },

@@ -11,7 +11,6 @@ vi.mock("../src/utils/sub-invoke", async (importOriginal) => ({
 
 import { resolveFlowDevice } from "../src/tools/flows/flow-device";
 
-/** What `list-devices` emits for a phone on `hdc` — keyed by `udid`, as iOS is. */
 const HARMONY_ENTRY = {
   platform: "harmony",
   kind: "device",
@@ -19,7 +18,6 @@ const HARMONY_ENTRY = {
   state: "Connected",
 };
 
-/** A remote simulator that is shut down: also keyed by `udid`, and not booted. */
 const IOS_REMOTE_ENTRY = {
   platform: "ios-remote",
   udid: "remote-6DBF83B4-0000-0000-0000-000000000000",
@@ -28,10 +26,7 @@ const IOS_REMOTE_ENTRY = {
 
 describe("flow device resolution — ids of devices no flow auto-resolves", () => {
   it("names each device by the id it is listed under when nothing resolves", async () => {
-    // Harmony never auto-resolves and the remote simulator is shut down, so
-    // this host resolves nothing and the error falls back to enumerating what
-    // there is. That enumeration exists to name what the caller can pass; rendering a device
-    // as `?` leaves them nothing to retry with.
+    // Nothing resolves, so the error enumerates what the caller can pass.
     invokeSubTool.mockResolvedValue({ devices: [HARMONY_ENTRY, IOS_REMOTE_ENTRY] });
 
     await expect(resolveFlowDevice({} as Registry, undefined, {})).rejects.toThrow(
@@ -41,13 +36,8 @@ describe("flow device resolution — ids of devices no flow auto-resolves", () =
   });
 
   it("never adopts one as the booted device it resolved by itself", async () => {
-    // Naming the id is not auto-resolution: `isBooted` has no arm for harmony,
-    // so such an entry is never the single booted device a flow silently
-    // targets. Passing one EXPLICITLY is a different question and deliberately
-    // still allowed — measured on 6.1.1, a harmony run degrades per step (a
-    // coordinate `tap` passes, `snapshot` captures and keys a baseline, a
-    // selector step errors) rather than dead-ending, so a blanket refusal here
-    // would take away runs that work.
+    // Harmony is never auto-resolved, but an explicit id is allowed: on 6.1.1 a
+    // run degrades per step rather than dead-ending.
     invokeSubTool.mockResolvedValue({ devices: [HARMONY_ENTRY] });
 
     await expect(resolveFlowDevice({} as Registry, undefined, {})).rejects.toThrow(

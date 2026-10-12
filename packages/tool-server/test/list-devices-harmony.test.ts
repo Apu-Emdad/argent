@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Every sibling platform branch is stubbed empty at the module boundary so the
-// merged list contains only what the HarmonyOS mocks define — the same
-// isolation list-devices.test.ts gets from its child_process mock, but keyed
-// to the two HarmonyOS discovery sources under test here.
+// Sibling platforms are stubbed empty so only the HarmonyOS mocks contribute.
 vi.mock("../src/utils/adb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/utils/adb")>();
   return {
@@ -66,9 +63,6 @@ describe("list-devices HarmonyOS branch", () => {
     const harmony = await listHarmony();
 
     expect(harmony).toHaveLength(2);
-    // The id is `harmony-<connectKey>` — a `harmony-emulator-<connectKey>` id
-    // here is the id-swap mutation, and makes boot-device read a phone as an
-    // emulator instance.
     const phone = harmony.find((d) => d.name === "025DEK236V035771");
     expect(phone).toEqual({
       platform: "harmony",
@@ -78,12 +72,8 @@ describe("list-devices HarmonyOS branch", () => {
       state: "Connected",
       connection: "USB",
     });
-    // State is preserved verbatim — an Offline target must not be laundered
-    // into something readiness sorting would call drivable.
     const offline = harmony.find((d) => d.name === "FMR0223C13000654");
     expect(offline).toMatchObject({ kind: "device", state: "Offline", connection: "TCP" });
-    // Readiness: the Connected target sorts ahead of the Offline one despite
-    // being listed second by hdc.
     expect(harmony[0]!.name).toBe("025DEK236V035771");
   });
 
@@ -109,8 +99,6 @@ describe("list-devices HarmonyOS branch", () => {
 
     expect(harmony).toHaveLength(2);
     const running = harmony.find((d) => d.name === "running_emu");
-    // `harmony-emulator-<name>` — never `harmony-<name>`, which boot-device
-    // would read as a connect key and refuse to start.
     expect(running).toEqual({
       platform: "harmony",
       udid: "harmony-emulator-running_emu",
@@ -127,17 +115,11 @@ describe("list-devices HarmonyOS branch", () => {
       state: "stopped",
       deviceType: "Foldable",
     });
-    // readinessRank's harmony arm: a running instance (booted, drivable once
-    // registered) sorts ahead of a stopped one even though the manager listed
-    // the stopped one first.
     expect(harmony.map((d) => d.name)).toEqual(["running_emu", "stopped_emu"]);
   });
 
   it("lists a running emulator under BOTH kinds — connected target and instance", async () => {
-    // The same booted emulator is visible to both discovery sources: hdc knows
-    // it by its connect key, the Emulator manager by its instance name. Both
-    // entries must appear, exactly as a running AVD appears in `adb devices`
-    // and the AVD list.
+    // A booted emulator is listed by both hdc and the manager, like an AVD.
     hdcTargets.mockResolvedValue([
       { connectKey: "127.0.0.1:10000", connection: "TCP", state: "Connected" },
     ]);
@@ -163,8 +145,6 @@ describe("list-devices HarmonyOS branch", () => {
     expect(harmony).toHaveLength(3);
     expect(harmony.filter((d) => d.kind === "device")).toHaveLength(1);
     expect(harmony.filter((d) => d.kind === "emulator")).toHaveLength(2);
-    // The drivable entries — the Connected target and the running instance —
-    // both sort ahead of the stopped instance.
     expect(harmony.map((d) => [d.kind, d.name, d.state])).toEqual([
       ["device", "127.0.0.1:10000", "Connected"],
       ["emulator", "booted_emu", "running"],
@@ -173,11 +153,7 @@ describe("list-devices HarmonyOS branch", () => {
   });
 
   it("returns the rest of the fleet when a HarmonyOS probe never answers", async () => {
-    // Both harmony probes are branches of the same `Promise.all` as every other
-    // platform's, so one that hangs — a wedged `hdc` daemon, a stuck manager —
-    // takes the whole `alwaysLoad` tool with it unless the branch deadline
-    // stands behind its per-call timeout. The listing must come back without
-    // the harmony entries rather than not come back.
+    // A hung probe must not take the whole listing with it.
     vi.useFakeTimers();
     hdcTargets.mockImplementation(() => new Promise(() => {}));
     instances.mockResolvedValue([
