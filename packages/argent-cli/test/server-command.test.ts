@@ -3,9 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-// `argent server status|stop|logs` through the real entry point, with the
-// tool-server state and the kill stubbed so "did it act" is observable.
-
 const client = vi.hoisted(() => ({
   readToolsServerState: vi.fn(),
   readAllToolsServerStates: vi.fn(async () => []),
@@ -19,8 +16,14 @@ vi.mock("@argent/tools-client", async (importOriginal) => ({
   ...client,
 }));
 
-// The log path comes from homedir() at module load, so HOME is redirected
-// before the import.
+const childProcess = vi.hoisted(() => ({ spawn: vi.fn(() => ({ on: vi.fn() })) }));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  ...childProcess,
+}));
+
+// LOG_FILE reads homedir() at import, so HOME is set first.
 let server: typeof import("../src/server.js").server;
 let home: string;
 const savedEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
@@ -120,5 +123,18 @@ describe("argent server status / stop / logs", () => {
     await server(["logs"]);
 
     expect(output()).toBe(`No log file at ${path.join(home, ".argent", "tool-server.log")}`);
+  });
+
+  it.each(["-f", "--follow"])("follows the log with %s", async (flag) => {
+    const logFile = path.join(home, ".argent", "tool-server.log");
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.writeFileSync(logFile, "line\n");
+    try {
+      await server(["logs", flag]);
+    } finally {
+      fs.rmSync(logFile);
+    }
+
+    expect(childProcess.spawn).toHaveBeenCalledWith("tail", ["-f", logFile], { stdio: "inherit" });
   });
 });

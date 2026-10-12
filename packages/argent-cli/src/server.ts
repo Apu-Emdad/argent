@@ -494,10 +494,7 @@ const STATUS_OPTIONS = { json: { kind: "boolean" } } as const satisfies OptionSp
 const STOP_OPTIONS = {} as const satisfies OptionSpecs;
 const LOGS_OPTIONS = { follow: { kind: "boolean", alias: "f" } } as const satisfies OptionSpecs;
 
-/**
- * The options of `status`, `stop` or `logs`, or null when `--help` printed the
- * help instead. Bad input exits 2 before the subcommand acts.
- */
+/** The parsed options, or null when `--help` printed the help. */
 function parseSubcommandArgs(
   sub: keyof typeof SUBCOMMAND_HELP,
   argv: string[],

@@ -87,8 +87,7 @@ Listing tools contacts the argent tool-server, starting one if none is running.
   const [sub, name, extra] = parsed.positionals;
   const json = parsed.options.json === true;
 
-  // `argent tools describe <name> --help` asks for that tool's flags, which
-  // describeTool prints.
+  // `tools describe <name> --help` prints that tool's flags via describeTool.
   if (parsed.options.help === true && !(sub === "describe" && name !== undefined)) {
     printUsage();
     return;
