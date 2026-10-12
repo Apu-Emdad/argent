@@ -780,6 +780,14 @@ describe("DESCRIBE_DOM_SCRIPT visibility rules", () => {
     expect(valuesOf(tree)).toContain("IFRAMETEXT");
   });
 
+  it("reads a <br> between own text nodes as a space", () => {
+    const div = el({ rect: BOX, attrs: { id: "nl" } }) as MockElement & Record<string, unknown>;
+    const br = Object.assign(el({ tag: "br", rect: ZERO }), { nodeType: 1 });
+    div.childNodes = [{ nodeType: 3, nodeValue: "alpha" }, br, { nodeType: 3, nodeValue: "beta" }];
+    const { tree } = run([div]);
+    expect(findById(tree, "nl")!.value).toBe("alpha beta");
+  });
+
   // ---- a password input's typed value must never become its label ----
   it("never reads a password input's typed value as its accessible name", () => {
     // A placeholder-less password input (floating/uncontrolled-label pattern)
