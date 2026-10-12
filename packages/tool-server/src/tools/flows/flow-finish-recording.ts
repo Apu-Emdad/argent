@@ -56,10 +56,9 @@ function attachStepWarnings(
  * What `message` says about the warnings the summary carries, by KIND — and
  * about the ones it does NOT carry.
  *
- * The two kinds are different news, and only one is about conversion. A wait
- * that came back `success: false` was never probed: it failed live, and at
- * replay it stops the run. Counting it as a conversion warning states the
- * opposite of the actionable fact.
+ * Only `conversion` is about converting a wait; `wait` and `text` are live
+ * failures (see `RecordedStepWarning.kind`). Counting them as conversion
+ * warnings states the opposite of the actionable fact.
  *
  * `discarded` is what the anchor checks threw away. Dropping is the right
  * answer, but reporting it as a pass is not: a recording where every wait
