@@ -198,6 +198,7 @@ describe("screenshotDiffToMcpContent", () => {
         mimeType: "image/png",
       },
       { type: "text", text: summary },
+      { type: "text", text: `diffPath: ${path.join(dir, "full.diff.png")}` },
     ]);
   });
 
