@@ -246,13 +246,14 @@ export const screenRecordingSessionBlueprint: ServiceBlueprint<
         // instead of spawning an orphan the teardown below can no longer reap.
         state.disposed = true;
         // Decided BEFORE the teardown below clears the flags it reads: a
-        // capture still encoding, a start or stop mid-flight and one waiting to
-        // be handed over all owe the caller a video.
+        // capture still encoding, a start or server stop mid-flight and one
+        // waiting to be handed over all owe the caller a video. A host stop
+        // still returns its video.
         const hadUnretrievedCapture =
           state.recordingActive ||
           state.startPending ||
           state.pendingRetrieval ||
-          state.stopPending;
+          (state.stopPending && state.serverCapture);
         const abandonedOutput = state.outputFile;
         const serverCapture = state.serverCapture;
         if (state.recordingTimeout) {

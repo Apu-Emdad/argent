@@ -422,6 +422,28 @@ describe("screen-recording session blueprint", () => {
       );
     });
 
+    it("leaves no breadcrumb when it lands during a stop that still returns the video", async () => {
+      const instance = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
+        device: iosDevice,
+      } as never);
+      fakeStream();
+      const child = fakeChild();
+      await startAndSettle(instance.api);
+      await fs.writeFile(instance.api.outputFile!, Buffer.alloc(1024, 1));
+
+      const stopping = stopCapture(instance.api);
+      const disposing = instance.dispose();
+      child.exit(0);
+      await disposing;
+      const result = await stopping;
+      await fs.rm(result.outputFile, { force: true });
+
+      const err = await stopCapture(await makeSession(iosDevice)).catch((e: unknown) => e);
+
+      expect(result.sizeBytes).toBe(1024);
+      expect((err as Error).message).toContain("No active screen recording");
+    });
+
     it("is consumed once, so it cannot blame a later unrelated absence", async () => {
       const { fresh } = await reapDuringCapture();
       await stopCapture(fresh).catch(() => {});
