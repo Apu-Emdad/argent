@@ -239,7 +239,7 @@ The `project_root` input of `flow-add-step` has the kind `probe` and carries `"c
 
 The recording file is `<project_root>/.argent/flows/<name>.yaml`, with the `project_root` and the `name` of the call. The [client policy](#client-policy) applies, with the recording file in place of the flow file.
 
-The run of a recorded `flow-execute` step updates baselines only when the step sets `updateBaselines: true`. The result of `flow-add-step` then has a `baselineWrites` list, as the result of a run. A step that reads no file sends an empty `members` list. The call is still a stream, as [The call](#the-call) describes. A call without a valid `name`, without an absolute `project_root`, or with `args` that are not the JSON text of an object also sends an empty list.
+The run of a recorded `flow-execute` step updates baselines only when the step sets `updateBaselines: true`. The result of `flow-add-step` then has a `baselineWrites` list, as the result of a run. A step that reads no file sends an empty `members` list. The call is still a stream, as [The call](#the-call) describes. A call without a valid `name` or with `args` that are not the JSON text of an object also sends an empty list.
 
 ## The `x-argent-linked` header
 

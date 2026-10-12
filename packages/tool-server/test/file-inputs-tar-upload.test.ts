@@ -237,7 +237,7 @@ describe("resolveFileInputs — tar-upload kind", () => {
     await cleanup();
   });
 
-  it("says a path the client sent no stat for was not found, without update advice", async () => {
+  it("says a path the client sent no stat for was not found, with advice for pre-0.16 clients", async () => {
     const ghost = path.join(tmpDir, "NotHere.app");
 
     const err = await resolveFileInputs(
@@ -248,7 +248,8 @@ describe("resolveFileInputs — tar-upload kind", () => {
 
     expect((err as Error).message).toBe(
       `Path "${ghost}" was not found. The client sent no file for it, and the ` +
-        `tool-server host has none at that path.`
+        `tool-server host has none at that path. If the file is on the client, update ` +
+        `argent there: versions before 0.16 do not send it.`
     );
   });
 
