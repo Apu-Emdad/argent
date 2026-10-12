@@ -205,9 +205,13 @@ describe("update — interactive decline", () => {
 });
 
 describe("update — read-only global directory", () => {
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "fails before the confirm prompt and never runs the install",
-    async () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
+    [true, "update"],
+    [false, "install"],
+  ])(
+    "fails before the confirm prompt and never runs the install (installed: %s)",
+    async (installed, verb) => {
+      topologyState.globalInstalled = installed;
       const globalRoot = path.join(tmpDir, "store", "lib", "node_modules");
       fs.mkdirSync(globalRoot, { recursive: true });
       fs.chmodSync(globalRoot, 0o555);
@@ -215,7 +219,7 @@ describe("update — read-only global directory", () => {
         args[0] === "root" ? `${globalRoot}\n` : undefined) as never);
 
       try {
-        await expect(update([])).rejects.toThrow(ExitSentinel);
+        await expect(update(["--global"])).rejects.toThrow(ExitSentinel);
       } finally {
         fs.chmodSync(globalRoot, 0o755);
       }
@@ -224,7 +228,7 @@ describe("update — read-only global directory", () => {
       expect(promptsMock.confirm).not.toHaveBeenCalled();
       expect(npmInstallCalls()).toHaveLength(0);
       expect(String(promptsMock.log.error.mock.calls[0]?.[0])).toContain(
-        "cannot update @swmansion/argent globally"
+        `cannot ${verb} @swmansion/argent globally`
       );
     }
   );

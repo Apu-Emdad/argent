@@ -392,7 +392,13 @@ export async function update(args: string[]): Promise<void> {
             false,
             UPDATE_GLOBAL_PREFIX_UNWRITABLE
           );
-          p.log.error(unwritableGlobalTargetMessage(globalTarget, pm, "update"));
+          p.log.error(
+            unwritableGlobalTargetMessage(
+              globalTarget,
+              pm,
+              isInstalledForMode ? "update" : "install"
+            )
+          );
           return { failed: UPDATE_GLOBAL_PREFIX_UNWRITABLE };
         }
       }
