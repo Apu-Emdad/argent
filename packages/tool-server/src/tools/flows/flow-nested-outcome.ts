@@ -32,9 +32,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** An empty reason is as uninformative as a missing one, and renders as a bare colon. */
 function reasonText(value: unknown): string {
-  return typeof value === "string" && value ? value : "no reason given";
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || "no reason given";
 }
 
 function firstFailingStep(steps: unknown): string | undefined {

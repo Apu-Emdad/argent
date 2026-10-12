@@ -236,8 +236,6 @@ describe("the check is deliberately scoped to the two orchestrator tools", () =>
 });
 
 describe("a failure carrying no message still says something after the colon", () => {
-  // Both readers quote a message the sub-run built with `err.message`, which is
-  // the empty string for `new Error("")` and for a bare `throw ""`.
   it("keeps a composed flow's fragment readable", () => {
     const out = nestedOrchestratorOutcome("flow-execute", {
       flow: "login",
@@ -258,7 +256,7 @@ describe("a failure carrying no message still says something after the colon", (
     const out = nestedOrchestratorOutcome("run-sequence", {
       completed: 0,
       total: 1,
-      steps: [{ tool: "keyboard", error: "" }],
+      steps: [{ tool: "keyboard", error: " \n " }],
     });
 
     expect(out?.status).toBe("fail");
