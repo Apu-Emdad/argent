@@ -55,7 +55,7 @@ const capability: ToolCapability = {
 export function createRestartAppTool(registry: Registry): ToolDefinition<Params, RestartAppResult> {
   return {
     id: "restart-app",
-    // Up to ~65s on Android, past the 30s MCP fetch timeout, which replays an aborted call.
+    // ~65s worst case on Android, past the 30s MCP fetch timeout.
     longRunning: true,
     interaction: {
       startedMsg: ({ params }) => `Restarting ${params.bundleId}`,

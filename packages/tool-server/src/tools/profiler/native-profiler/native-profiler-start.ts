@@ -61,9 +61,6 @@ export const nativeProfilerStartTool: ToolDefinition<
   { status: "recording"; pid: number; traceFile: string }
 > = {
   id: "native-profiler-start",
-  // A cold-start attach retry can pass the 30s MCP fetch timeout, whose replay would
-  // attach a second xctrace.
-  longRunning: true,
   interaction: {
     startedMsg: () => "Starting native profiler",
     completedMsg: () => "Started native profiler",
