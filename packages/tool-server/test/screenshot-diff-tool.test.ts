@@ -202,6 +202,45 @@ describe("screenshotDiffTool", () => {
     expect(result.diffPath).toBeTruthy();
   });
 
+  it("describes the live capture's scale fallback and labels diffPath by the compared size", async () => {
+    const { captureBaseline, captureCurrent } = screenshotDiffTool.zodSchema!.shape;
+    expect(captureBaseline.description).not.toContain("full resolution");
+    expect(captureCurrent.description).not.toContain("full resolution");
+    expect(screenshotDiffTool.description).toContain(
+      "or the default screenshot scale if that capture fails"
+    );
+    expect(screenshotDiffTool.description).toContain("diffPath is the diff image at compared size");
+
+    // Full-size baseline vs. a live capture taken at the fallback scale.
+    const dir = await makeTempDir("argent-screenshot-diff-fallback-summary-");
+    const baselinePath = path.join(dir, "baseline.png");
+    const capturedPath = path.join(dir, "captured.png");
+    await writePng(baselinePath, 8, 8, { r: 0, g: 0, b: 0 });
+    await writePng(capturedPath, 4, 4, { r: 0, g: 0, b: 0 });
+    const captureScreenshot = vi.fn(
+      async (_api: unknown, _rotation: unknown, _signal: unknown, scale?: number) => {
+        if (scale === 1.0) throw new Error("Screenshot failed: wrong data size.");
+        return { url: "http://localhost/current.png", path: capturedPath };
+      }
+    );
+
+    const { summary } = await executeScreenshotDiffTool(
+      { simulatorServer: { apiUrl: "http://localhost:4949" } },
+      { baselinePath, captureCurrent: true, udid: "ABC", outputDir: dir },
+      { artifacts: new ArtifactStore() },
+      captureScreenshot as never
+    );
+
+    const lines = summary.split("\n");
+    expect(lines).toContain(
+      "- diff_images: see diffPath (compared size) and contextDiffPath in this result"
+    );
+    expect(lines).toContain(
+      "  - capture both images at the same screenshot scale to compare without resampling"
+    );
+    expect(summary).not.toContain("scale: 1.0");
+  });
+
   it("propagates the error when both the full-res capture and the fallback fail", async () => {
     const dir = await makeTempDir("argent-screenshot-diff-bothfail-");
     const baselinePath = path.join(dir, "baseline.png");
