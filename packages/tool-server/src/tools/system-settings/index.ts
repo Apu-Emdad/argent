@@ -28,7 +28,6 @@ const zodSchema = z.object({
 type Params = z.infer<typeof zodSchema>;
 
 const capability: ToolCapability = {
-  // No `appleRemote`: sim-remote does not forward `simctl ui`.
   apple: { simulator: true },
   android: { emulator: true, device: true, unknown: true },
 };
@@ -70,7 +69,7 @@ export const systemSettingsTool: ToolDefinition<Params, SystemSettingsResult> = 
   description: `Set a device-wide system setting without navigating the Settings UI. Use when a test needs the device in a specific state - dark mode, a larger text size, airplane mode, location off - before exercising an app.
 iOS simulator and Android: \`appearance\`, \`text-size\`, \`increase-contrast\`, \`reduce-motion\`, \`invert-colors\`. Android only: \`wifi\`, \`cellular\`, \`airplane-mode\`, \`location\` (Android 10+), \`auto-rotate\`.
 Not per-app: for one app's permission use \`settings-permissions\`; to turn the screen use \`rotate\` (\`auto-rotate\` is the rotation lock).
-Confirm the change from this result, not a screenshot: captures can miss\`invert-colors\`, and a flow pins the status bar. Some apps re-read appearance and text size only on launch, so relaunch if the change does not show. Re-run \`describe\` after \`text-size\`.
+Confirm the change from this result, not a screenshot: captures can miss \`invert-colors\`, and a flow pins the status bar. Some apps re-read appearance and text size only on launch, so relaunch if the change does not show. Re-run \`describe\` after \`text-size\`.
 Returns { setting, value, applied }, where \`applied\` is the platform-level change (e.g. \`night_mode=yes\`). Fails if the value is invalid for the setting, the target cannot apply it (Android-only setting on iOS, an Apple TV simulator, too old an Android version, \`wifi\` off or \`airplane-mode\` on over wireless adb), the simulator is not booted, or the platform command refuses. A timeout can leave the change applied; every write is absolute, so retrying is safe.`,
   searchHint:
     "dark light mode appearance theme color scheme text size font dynamic type increase contrast reduce motion animations invert colors accessibility wifi cellular mobile data airplane mode flight mode location gps auto rotate orientation radios system settings toggle",
