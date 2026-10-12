@@ -6,6 +6,7 @@ import type { Registry } from "@argent/registry";
 import { createRunFlowTool, type FlowRunResult } from "../../src/tools/flows/flow-run";
 import { createFlowAddStepTool } from "../../src/tools/flows/flow-add-step";
 import { flowStartRecordingTool } from "../../src/tools/flows/flow-start-recording";
+import { flowFinishRecordingTool } from "../../src/tools/flows/flow-finish-recording";
 import { __resetRecordingsForTesting } from "../../src/tools/flows/flow-utils";
 
 const PROJECT_ROOT = nodePath.join(os.tmpdir(), `flow-kb-gate-tests-${process.pid}`);
@@ -144,10 +145,23 @@ describe("recording a keyboard step", () => {
     return message;
   }
 
-  it("warns that a verified:false step fails at replay", async () => {
+  const finish = (name: string) =>
+    flowFinishRecordingTool.execute({}, { name, project_root: PROJECT_ROOT });
+
+  it("warns that a verified:false step fails at replay, and repeats it at finish", async () => {
     const message = await record("rec-unlanded", { typed: "display", keys: 7, verified: false });
     expect(message).toContain("the text did not land in the field");
     expect(message).toContain("FAILS and stops the run");
+
+    const finished = await finish("rec-unlanded");
+    expect(finished.message).toBe(
+      'Finished recording "rec-unlanded" flow (1 steps) — 1 step recorded text that did not ' +
+        "land; read `summary` before converting or replaying"
+    );
+    expect(finished.summary).toEqual([
+      '1. tool: keyboard {"text":"display"}',
+      `   warning: ${message.slice(message.indexOf("recorded, but"))}`,
+    ]);
   });
 
   it.each([
@@ -155,5 +169,8 @@ describe("recording a keyboard step", () => {
     ["unchecked", { typed: "display", keys: 7 }],
   ])("does not warn on a %s step", async (name, result) => {
     expect(await record(`rec-${name}`, result)).toBe(`Step added to "rec-${name}" flow`);
+    expect((await finish(`rec-${name}`)).message).toBe(
+      `Finished recording "rec-${name}" flow (1 steps)`
+    );
   });
 });
