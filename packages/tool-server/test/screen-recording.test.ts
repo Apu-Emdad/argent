@@ -1076,10 +1076,6 @@ describe("touch visualizer", () => {
   });
 
   it("does not report success for a host capture dispose stopped during pointer arming", async () => {
-    // Twin of the server-path guard: the pointer-enable await is the one
-    // suspension point after the session is stamped on BOTH paths, and a
-    // dispose landing inside it has already killed the encoder this start is
-    // about to report as live.
     const instance = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
       device: iosDevice,
     } as never);
@@ -1112,8 +1108,6 @@ describe("touch visualizer", () => {
     await instance.dispose();
     admit!();
 
-    // Reporting `recording` here would hand back a capture dispose already
-    // SIGKILLed, plus a cap timer no later stop or dispose can clear.
     await expect(promise).rejects.toMatchObject({
       message: expect.stringContaining("shutting down"),
     });
@@ -1122,17 +1116,12 @@ describe("touch visualizer", () => {
   });
 
   it("does not stamp a host capture whose readiness resolved after dispose killed the encoder", async () => {
-    // The readiness await can settle on its fail-fast timer alone: if dispose
-    // SIGKILLs the just-spawned child inside the grace and the death is
-    // observed only after the timer fired, nothing else stops this start from
-    // declaring a capture teardown has already ended.
     const instance = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
       device: iosDevice,
     } as never);
     const api = instance.api;
     fakeStream();
-    // FakeChild.kill does not emit 'exit', modelling the death notification
-    // losing the race against the readiness timer.
+    // FakeChild.kill emits no 'exit', so readiness settles on its timer.
     const child = fakeChild();
 
     const promise = startCapture(api, {
@@ -1153,8 +1142,6 @@ describe("touch visualizer", () => {
     await expect(promise).rejects.toMatchObject({
       message: expect.stringContaining("shutting down"),
     });
-    // A stamped session here would also register the module-global reminder,
-    // which nothing could ever clear again.
     expect(getActiveScreenRecordings()).toHaveLength(0);
   });
 
@@ -1236,8 +1223,7 @@ describe("touch visualizer wire protocol", () => {
 
   it("setPointerVisible POSTs {show} and reads status ok", async () => {
     const fetchMock = vi.fn(
-      async (_url: string, _init?: RequestInit) =>
-        new Response(JSON.stringify({ status: "ok", id: "18f0c2b1e4a" }))
+      async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ status: "ok" }))
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1251,8 +1237,7 @@ describe("touch visualizer wire protocol", () => {
 
   it("setPointerTrail POSTs {trail}", async () => {
     const fetchMock = vi.fn(
-      async (_url: string, _init?: RequestInit) =>
-        new Response(JSON.stringify({ status: "ok", id: "18f0c2b1e4a" }))
+      async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ status: "ok" }))
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1610,10 +1595,7 @@ describe("readJpegDimensions", () => {
 });
 
 describe("server-side recording", () => {
-  /**
-   * A `ServerRecordingControl` over a real file on disk, so stop exercises the
-   * copy out of simulator-server's session directory rather than mocking it away.
-   */
+  /** Backed by a real file, so stop exercises the copy out of the server. */
   async function fakeServer(
     overrides: {
       supported?: boolean;
@@ -1643,11 +1625,6 @@ describe("server-side recording", () => {
     };
   }
 
-  /**
-   * The FailureError `stopServerRecording`/`recordingPost` produce for a stop
-   * whose request TIMED OUT — simulator-server accepted the connection and never
-   * answered. This is the one rejection that keeps the recording recoverable.
-   */
   function stopTimedOut(): FailureError {
     return new FailureError("screen-recording-stop timed out", {
       error_code: FAILURE_CODES.SIMULATOR_NETWORK_TIMEOUT,
@@ -1658,7 +1635,6 @@ describe("server-side recording", () => {
     });
   }
 
-  /** The FailureError produced when the simulator-server is gone at stop time. */
   function stopConnectionRefused(): FailureError {
     return new FailureError("cannot connect to simulator-server (connection refused)", {
       error_code: FAILURE_CODES.SIMULATOR_NETWORK_CONNECTION_REFUSED,
@@ -1695,7 +1671,6 @@ describe("server-side recording", () => {
       trimStatic: true,
       timeLimitSeconds: 42,
     });
-    // The whole point: no host encoder, and no frame stream to feed it.
     expect(mockSpawn).not.toHaveBeenCalled();
     expect(mockOpenStream).not.toHaveBeenCalled();
     expect(mockResolveFfmpeg).not.toHaveBeenCalled();
@@ -1738,8 +1713,6 @@ describe("server-side recording", () => {
     expect(stopped.wallClockMs).toBe(9_000);
     expect(stopped.trimmedMs).toBe(7_500);
     expect(stopped.sizeBytes).toBeGreaterThan(0);
-    // Copied to argent's own temp, and the server's copy released — the session
-    // dir it lived in goes away with that simulator-server.
     await expect(fs.readFile(outputFile, "utf8")).resolves.toBe("fake mp4 payload");
     await expect(fs.stat(server.serverFile)).rejects.toThrow();
     await fs.rm(outputFile, { force: true });
@@ -1762,11 +1735,6 @@ describe("server-side recording", () => {
 
   it("omits the trim fields when trimming ran but collapsed nothing", async () => {
     const api = await makeSession(iosDevice);
-    // trimming was ON but nothing was static long enough to cut: the server
-    // reports `trimmed_ms: 0`, distinct from the `null` it sends when trimming
-    // is off. Both mean no dead air was removed, so the trim-only fields — which
-    // the contract says are "present only when trimming actually removed frames"
-    // — must be absent. `0 ?? null` is 0, so a naive non-null check leaks them.
     const server = await fakeServer({ durationMs: 3_029, wallClockMs: 3_029, trimmedMs: 0 });
     await startOnServer(api, server, {});
 
@@ -1781,10 +1749,6 @@ describe("server-side recording", () => {
 
   it("omits the trim fields when the server reports a trim but no wall clock", async () => {
     const api = await makeSession(iosDevice);
-    // A reply that claims removed dead air (`trimmed_ms > 0`) but omits the wall
-    // clock it was measured against: surfacing the pair would state a removed
-    // span the numbers contradict, so both fields stay absent — never a wall
-    // clock faked from the video length.
     const server = await fakeServer({ durationMs: 3_000, wallClockMs: null, trimmedMs: 2_000 });
     await startOnServer(api, server, {});
 
@@ -1816,22 +1780,16 @@ describe("server-side recording", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
 
-    // The video is retrieved by stop, whenever that arrives — the cap only
-    // flips the bookkeeping, so the server keeps holding the finished file.
     expect(server.stop).not.toHaveBeenCalled();
     expect(api.recordingActive).toBe(false);
     expect(api.pendingRetrieval).toBe(true);
-    // The per-call reminder flips to "ended, still to retrieve" rather than
-    // disappearing, so the caller is still told to come back for the video.
     expect(getActiveScreenRecordings()).toMatchObject([
       { status: "finalized", finalizedReason: "it hit its 5s time limit" },
     ]);
 
-    // A start now must be refused rather than discarding that video…
     await expect(startOnServer(api, server, {})).rejects.toMatchObject({
       message: expect.stringContaining("has not been retrieved yet"),
     });
-    // …while stop still hands it over, saying it already ended.
     const stopped = await stopCapture(api);
     expect(server.stop).toHaveBeenCalledTimes(1);
     expect(stopped.warning).toContain("5s time limit");
@@ -1875,8 +1833,6 @@ describe("server-side recording", () => {
 
     await instance.dispose();
 
-    // Without this the recording outlives the tool-server, accumulating frames
-    // inside simulator-server with nothing left to stop it.
     expect(server.stop).toHaveBeenCalledTimes(1);
     expect(instance.api.serverStop).toBeNull();
     await fs.rm(server.serverDir, { recursive: true, force: true });
@@ -1893,12 +1849,7 @@ describe("server-side recording", () => {
     const err = await stopCapture(await makeSession(iosDevice)).catch((e: unknown) => e);
 
     const message = (err as Error).message;
-    // The teardown is still reported — a recording did run.
     expect(message).toContain("torn down");
-    // But the fallback path's salvage story is the opposite of this one: no
-    // ffmpeg ever wrote `outputFile`, because simulator-server muxes into its
-    // own session directory and only stop copies the video out. Offering it as
-    // "usually playable" sends the caller after a file that never existed.
     expect(message).not.toContain("ffmpeg");
     expect(message).toContain("nothing was written to");
     expect(message).toContain(outputFile);
@@ -1907,13 +1858,6 @@ describe("server-side recording", () => {
   });
 
   it("records the server salvage breadcrumb when disposed mid-stop", async () => {
-    // `stopServerCapture` clears `recordingActive` and hands `serverStop` over
-    // before its `await stop()`, so a teardown landing during that await sees
-    // neither and — without the fix — records no breadcrumb at all (`stopPending`
-    // was missing from the set), or the ffmpeg salvage story (read off the now
-    // -null `serverStop`) pointing the caller at a host file the server path
-    // never wrote. The video lived only inside the simulator-server this
-    // teardown killed.
     const instance = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
       device: iosDevice,
     } as never);
@@ -1927,10 +1871,7 @@ describe("server-side recording", () => {
 
     const err = await stopCapture(await makeSession(iosDevice)).catch((e: unknown) => e);
     const message = (err as Error).message;
-    // A breadcrumb WAS recorded — not the "you never started one" answer for a
-    // recording that ran.
     expect(message).toContain("torn down");
-    // And it is the server story, not the ffmpeg one naming a never-written file.
     expect(message).not.toContain("ffmpeg");
     expect(message).toContain("nothing was written to");
     expect(message).toContain(outputFile);
@@ -1938,9 +1879,6 @@ describe("server-side recording", () => {
   });
 
   it("drops an earlier teardown breadcrumb when the new recording runs on the server", async () => {
-    // The fallback path clears it at the same point. Left behind, it outlives a
-    // recording that stops perfectly well — nothing consumes it — and then
-    // blames a much later, genuine "no active recording" on that old teardown.
     const reaped = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
       device: iosDevice,
     } as never);
@@ -1966,8 +1904,6 @@ describe("server-side recording", () => {
       device: iosDevice,
     } as never);
     const server = await fakeServer();
-    // Park the start request, then dispose while it is in flight: dispose's own
-    // teardown cannot see a recording that does not exist yet.
     let admit: () => void;
     const parked = new Promise<void>((resolve) => (admit = resolve));
     server.start.mockImplementationOnce(async () => {
@@ -1993,17 +1929,12 @@ describe("server-side recording", () => {
       device: iosDevice,
     } as never);
     const server = await fakeServer();
-    // Park the start, dispose while it is in flight, then let it resume into the
-    // salvage stop that reaps the recording dispose could not see.
     let admit: () => void;
     const parked = new Promise<void>((resolve) => (admit = resolve));
     server.start.mockImplementationOnce(async () => {
       await parked;
       return server.stop;
     });
-    // That salvage stop hits a wedged simulator-server that never answers. As on
-    // dispose's own salvage, the wait must fall to the 1.5s grace, not the
-    // finalizer's 60s stop budget — the start is already doomed.
     server.stop.mockImplementation(() => new Promise<never>(() => {}));
 
     const promise = startOnServer(instance.api, server, {});
@@ -2030,11 +1961,6 @@ describe("server-side recording", () => {
     } as never);
     const server = await fakeServer();
     const pointer = fakePointer();
-    // Arming the overlay happens after the session is stamped, so it is the one
-    // window where dispose finds a live recording, ends it, and leaves the start
-    // still running behind it. Wait until the start is actually suspended there
-    // — disposing earlier lands on the start request's own await instead, which
-    // a different guard covers.
     let reached: () => void;
     const atPointer = new Promise<void>((resolve) => (reached = resolve));
     let admit: () => void;
@@ -2051,14 +1977,10 @@ describe("server-side recording", () => {
     await instance.dispose();
     admit!();
 
-    // Reporting `recording` here would hand back a session simulator-server is
-    // no longer recording for…
     await expect(promise).rejects.toMatchObject({
       message: expect.stringContaining("shutting down"),
     });
     expect(server.stop).toHaveBeenCalledTimes(1);
-    // …and arming the cap timer after dispose cleared it leaves a handle no
-    // later stop or dispose can reach.
     expect(instance.api.recordingTimeout).toBeNull();
     expect(instance.api.recordingActive).toBe(false);
     await fs.rm(server.serverDir, { recursive: true, force: true });
@@ -2085,9 +2007,6 @@ describe("server-side recording", () => {
     admit!();
     const stopped = await stopping;
 
-    // A shutdown landing mid-stop must not issue its own stop: that one
-    // finalizes a recording this call already owns, and takes down the
-    // simulator-server whose session dir the copy below still reads from.
     expect(server.stop).toHaveBeenCalledTimes(1);
     await expect(fs.readFile(stopped.outputFile, "utf8")).resolves.toBe("fake mp4 payload");
     await fs.rm(stopped.outputFile, { force: true });
@@ -2098,21 +2017,13 @@ describe("server-side recording", () => {
     const api = await makeSession(iosDevice);
     const server = await fakeServer();
     const { outputFile } = await startOnServer(api, server, {});
-    // Stands in for the class the destination can fail with — a full disk, an
-    // unwritable saveDir: the copy fails while the finished video sits intact
-    // in simulator-server's session directory.
     await fs.mkdir(outputFile, { recursive: true });
 
     const err = await stopCapture(api).catch((e: unknown) => e);
 
     expect((err as Error).message).toContain(`the video is still at ${server.serverFile}`);
-    // Classified like the sibling empty-output failure in the same finalize
-    // path — a raw filesystem error is telemetry-dead and names two temp paths
-    // the caller cannot act on.
     expect(getFailureSignal(err)?.error_code).toBe(FAILURE_CODES.SCREEN_RECORDING_OUTPUT_MISSING);
 
-    // The path is the whole point of the message: it is fetchable until this
-    // simulator-server exits and takes the session directory with it.
     await expect(fs.stat(server.serverFile)).resolves.toBeTruthy();
     await fs.rm(outputFile, { recursive: true, force: true });
     await fs.rm(server.serverDir, { recursive: true, force: true });
@@ -2151,30 +2062,20 @@ describe("server-side recording", () => {
     const api = await makeSession(iosDevice);
     const server = await fakeServer();
     await startOnServer(api, server, {});
-    // The class of failure `RECORDING_STOP_TIMEOUT_MS` exists for: the server
-    // accepts the connection and never answers. The request rejects on the
-    // timeout, but the recording inside simulator-server is untouched — so a
-    // retry can still finalize it.
     server.stop.mockImplementationOnce(async () => {
       throw stopTimedOut();
     });
 
     await expect(stopCapture(api)).rejects.toThrow("timed out");
 
-    // The failed request must not throw away the only handle that can still
-    // end the recording: dispose decides from `serverStop`, and a retried stop
-    // is admitted off `pendingRetrieval`.
     expect(api.serverStop).toBe(server.stop);
     expect(api.pendingRetrieval).toBe(true);
     expect(api.outputFile).not.toBeNull();
     expect(api.stopPending).toBe(false);
-    // The per-call reminder keeps pointing at the retrieval instead of going
-    // silent while simulator-server may still be recording.
     expect(getActiveScreenRecordings()).toMatchObject([
       { deviceId: IOS_UDID, status: "finalized" },
     ]);
 
-    // Both recovery paths work: a retried stop hands the video over…
     const stopped = await stopCapture(api);
     expect(server.stop).toHaveBeenCalledTimes(2);
     await fs.rm(stopped.outputFile, { force: true });
@@ -2194,20 +2095,12 @@ describe("server-side recording", () => {
 
     await instance.dispose();
 
-    // The preserved handle is what lets the teardown end a recording the
-    // timed-out stop left running inside simulator-server.
     expect(server.stop).toHaveBeenCalledTimes(2);
     expect(instance.api.serverStop).toBeNull();
     await fs.rm(server.serverDir, { recursive: true, force: true });
   });
 
   it("resets the session to startable when the stop fails against a gone server", async () => {
-    // A stop that fails any way OTHER than a timeout resolves the recording's
-    // fate: connection refused/reset means the server (and the recording) is
-    // gone; an error/malformed reply means it answered definitively. Parking on
-    // `pendingRetrieval` there wedges the device — every retried stop repeats the
-    // same failure and every start is refused with "already active" — for the
-    // tool-server's whole life. Only a timeout keeps the recovery handles.
     const api = await makeSession(iosDevice);
     const server = await fakeServer();
     await startOnServer(api, server, {});
@@ -2217,16 +2110,12 @@ describe("server-side recording", () => {
 
     await expect(stopCapture(api)).rejects.toThrow("connection refused");
 
-    // No retry could recover it, so the session must be fully startable again,
-    // not parked waiting for a stop that can never succeed.
     expect(api.serverStop).toBeNull();
     expect(api.pendingRetrieval).toBe(false);
     expect(api.recordingActive).toBe(false);
     expect(api.stopPending).toBe(false);
     expect(api.outputFile).toBeNull();
-    // The reminder is cleared rather than left claiming a retrievable video.
     expect(getActiveScreenRecordings()).toEqual([]);
-    // A fresh start is admitted — the wedge is gone.
     const restarted = await startOnServer(api, await fakeServer(), {});
     expect(restarted.status).toBe("recording");
     await stopCapture(api).then((s) => fs.rm(s.outputFile, { force: true }));
@@ -2239,9 +2128,6 @@ describe("server-side recording", () => {
     } as never);
     const server = await fakeServer();
     await startOnServer(instance.api, server, {});
-    // A simulator-server that accepts the connection and never answers: its
-    // mux is wedged. Dispose abandons the video, so it must not wait out the
-    // stop tool's whole finalize contract to obtain one it discards.
     server.stop.mockImplementation(() => new Promise<never>(() => {}));
 
     let disposed = false;
@@ -2249,9 +2135,6 @@ describe("server-side recording", () => {
       disposed = true;
     });
     teardown.catch(() => {});
-    // Pinned to the 1.5s grace, not just "under the 60s stop budget": still
-    // waiting at 1.4s, resolved by 1.6s. A looser assertion (advance 5s) passes
-    // even if the grace is set to 4.9s.
     await vi.advanceTimersByTimeAsync(1_400);
     expect(disposed).toBe(false);
     await vi.advanceTimersByTimeAsync(200);
@@ -2264,8 +2147,6 @@ describe("server-side recording", () => {
     } as never);
     const server = await fakeServer();
     await startOnServer(instance.api, server, {});
-    // The salvage stop rejecting (network drop mid-mux) must resolve the race
-    // just like a hang does — the video is discarded either way.
     server.stop.mockImplementation(async () => {
       throw stopConnectionRefused();
     });
@@ -2304,9 +2185,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("reports an absent route rather than failing the start", async () => {
-    // A build without the recording feature answers 404 with an EMPTY body —
-    // read as JSON that is a parse error, which must not be mistaken for a
-    // server in a bad state: it is the signal to record host-side instead.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 404 }))
@@ -2318,10 +2196,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("falls back only on a 404 the router itself produced, not one from a handler", async () => {
-    // An empty body is what makes a 404 mean "no such route". One carrying a
-    // body came from a handler, so the route exists and refused the command —
-    // recording host-side there would start a second capture over one that is
-    // already running.
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -2336,9 +2210,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("does not fall back when the server fails the command outright", async () => {
-    // Only a 404 says the route is absent. An empty-bodied 500 looks exactly
-    // like the missing-route reply apart from its status, so keying on "not
-    // ok" would send a server that is merely broken down the host pipeline.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 500 }))
@@ -2352,9 +2223,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("says the reply was unreadable rather than blaming the server for rejecting", async () => {
-    // A truncated or non-JSON body is a server in a bad state, which is
-    // actionable (restart it); reporting it as a rejection sends the caller
-    // hunting for a refusal reason that was never sent.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("<html>502 Bad Gateway</html>", { status: 200 }))
@@ -2371,10 +2239,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("warns a timed-out start may be recording server-side and to retry after the cap", async () => {
-    // The likeliest way to lose a start's reply — the request budget firing —
-    // goes through the network path, not the ambiguous-reply branch. It must
-    // still tell the caller a recording may now be running (so the device is
-    // unrecordable until the server's own cap) rather than a bare "unresponsive".
     const abort = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
     vi.stubGlobal(
       "fetch",
@@ -2395,8 +2259,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("omits the may-be-recording hint when the start connection is refused", async () => {
-    // A refused connection means the request never landed, so no recording
-    // began — the retry-after-cap hint would be misleading there.
     const refused = Object.assign(new Error("fetch failed"), {
       cause: new Error("connect ECONNREFUSED 127.0.0.1:65500"),
     });
@@ -2418,9 +2280,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("bounds both recording commands so a silent sim-server cannot wedge the tool", async () => {
-    // Without a signal these fall to undici's 300s header timeout, holding
-    // startPending/stopPending — and so every other recording call on the
-    // device — for five minutes per command.
     const signals: Array<AbortSignal | null | undefined> = [];
     vi.stubGlobal(
       "fetch",
@@ -2441,8 +2300,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("fails the start when the server rejects the command", async () => {
-    // Rejections come back as HTTP 200 with an `error` field, so the status
-    // alone would read as success.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "a recording is already running" })))
@@ -2454,9 +2311,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("fails rather than falling back when the reply is neither success nor rejection", async () => {
-    // Falling back here would record the screen a second time over a recording
-    // that may well have started, leaving the server's copy with nothing to
-    // stop it.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ unexpected: true })))
@@ -2468,10 +2322,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("reports an empty 2xx body as unreadable, not as a rejection", async () => {
-    // The recording routes answer HTTP 200 with a JSON body for both success
-    // and an in-band error, so an empty 200 is a malformed reply — actionable as
-    // a restart, not "the server rejected the command" (which drops that hint
-    // and blames a refusal that never happened).
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("", { status: 200 }))
@@ -2489,8 +2339,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("still rejects an empty non-2xx body as an HTTP failure", async () => {
-    // The empty-body handling must not swallow a real failure status: an empty
-    // 500 is still a rejection, distinct from the empty-404 missing route.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("", { status: 500 }))
@@ -2502,9 +2350,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("fails a stop against a route that vanished, classified as unsupported", async () => {
-    // serverStop is only stamped by a start the route answered, so a 404 at stop
-    // means the route went away mid-recording — a capability problem, not a
-    // missing video file. Never falls back (there is no video either way).
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 404 }))
@@ -2527,10 +2372,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("fails a stop reply that carries a path but no duration", async () => {
-    // Both halves of the guard matter, and the message must name the half that
-    // failed: a reply with a path but no numeric duration is unusable (dropping
-    // the duration check would return a result whose durationMs is undefined),
-    // and the error must not claim the video path is missing when it is present.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ path: "/tmp/x.mp4" }), { status: 200 }))
@@ -2540,10 +2381,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("makeServerRecordingControl.start returns null so a 404 build falls back host-side", async () => {
-    // The bridge every shipped build takes today: startServerRecording answers
-    // null on the empty-404, and the control forwards that null so startCapture
-    // records host-side. Nothing else pins this null-forwarding — the fallback
-    // path's own test drives a fake whose start already returns null.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 404 }))
@@ -2585,10 +2422,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("maps an absent wall_clock_ms to null rather than the video length", async () => {
-    // The reply reports a trim but omits its wall clock. Falling back to
-    // `duration_ms` would fabricate a wall clock equal to the video length and
-    // pair it with a non-zero trim — two numbers that cannot both hold. Keep the
-    // absence as null so the consumer omits the trim fields.
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -2605,10 +2438,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("stops the recording by the id the start returned", async () => {
-    // simulator-server keys `stop` to that id and refuses anything else, so a
-    // stop that omits it never finalizes: the video stays inside the server,
-    // and the recording it left running blocks every later start on the device
-    // until that simulator-server exits.
     const bodies: unknown[] = [];
     vi.stubGlobal(
       "fetch",
@@ -2631,8 +2460,6 @@ describe("server recording wire protocol", () => {
   });
 
   it("fails a start that reports success but names no recording", async () => {
-    // Without an id nothing can ever stop the recording, so treating the reply
-    // as success would strand it inside simulator-server.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ status: "ok" })))

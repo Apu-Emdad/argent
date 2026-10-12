@@ -340,8 +340,6 @@ describe("a recording of a foldable follows the live panel", () => {
   });
 
   it("records host-side even where simulator-server could record for itself", async () => {
-    // The server's recorder keeps to one panel, so it cannot follow a fold.
-    // The endpoint here answers; the one-panel twin proves the stub is taken.
     const fetchMock = vi.fn(async (url: string) =>
       url.endsWith("/api/recording/start")
         ? new Response(JSON.stringify({ status: "ok", id: "rec-1" }))

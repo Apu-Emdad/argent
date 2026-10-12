@@ -242,9 +242,8 @@ export const FAILURE_CODES = {
   NATIVE_PROFILER_PERFETTO_READY_TIMEOUT: "NATIVE_PROFILER_PERFETTO_READY_TIMEOUT",
   NATIVE_PROFILER_PERFETTO_READY_EXITED: "NATIVE_PROFILER_PERFETTO_READY_EXITED",
 
-  // iOS and Android share the same capture code (simulator-server records and
-  // muxes the video itself where its build can, otherwise its frames are encoded
-  // by a host ffmpeg), so these name the failing stage, not the device family.
+  // iOS and Android share the capture code, so these name the failing stage,
+  // not the device family.
   SCREEN_RECORDING_FACTORY_OPTIONS_MISSING: "SCREEN_RECORDING_FACTORY_OPTIONS_MISSING",
   SCREEN_RECORDING_WRONG_PLATFORM: "SCREEN_RECORDING_WRONG_PLATFORM",
   SCREEN_RECORDING_ALREADY_ACTIVE: "SCREEN_RECORDING_ALREADY_ACTIVE",

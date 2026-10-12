@@ -3,17 +3,7 @@ import os from "os";
 import path from "path";
 import { getFailureSignal, FAILURE_CODES, type DeviceInfo } from "@argent/registry";
 
-/**
- * A copy out of simulator-server that dies part-way is the one destination
- * failure the main suite cannot stage: its test puts a directory at the
- * destination, so `copyFile` fails with EISDIR having written nothing. A full
- * disk or a file-size limit does the opposite — it accepts the create and then
- * refuses the rest of the bytes, leaving a truncated mp4 at exactly the path
- * `screen-recording-start` handed the caller.
- *
- * Mocked at the module boundary; the real `writeFile` still runs, so the partial
- * file left behind is a real one.
- */
+/** Models a full disk: the copy writes a few bytes, then fails. */
 const partialCopyTargets: string[] = [];
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
@@ -33,7 +23,6 @@ vi.mock("fs", async (importOriginal) => {
   };
 });
 
-// `vi.mock` is hoisted above these, so they resolve against the mocked module.
 import { promises as fs } from "fs";
 import { startCapture, stopCapture } from "../src/tools/screen-recording/capture";
 import {
@@ -84,17 +73,10 @@ describe("a copy out of simulator-server that fails part-way", () => {
 
     const err = await stopCapture(api).catch((e: unknown) => e);
 
-    // The failure still points at the intact video inside simulator-server.
     expect((err as Error).message).toContain(`the video is still at ${serverFile}`);
     expect(getFailureSignal(err)?.error_code).toBe(FAILURE_CODES.SCREEN_RECORDING_OUTPUT_MISSING);
     await expect(fs.stat(serverFile)).resolves.toBeTruthy();
 
-    // `outputFile` is what start told the caller their recording would be. A
-    // truncated file sitting there is worse than none: nothing later in this
-    // process reads it, so the corruption is only ever found by whoever opens
-    // the path they were given. The path is unique per start, so anything at it
-    // is unambiguously this copy's debris — which is why the host fallback
-    // removes its own on a failed start too.
     await expect(fs.stat(started.outputFile)).rejects.toMatchObject({ code: "ENOENT" });
 
     partialCopyTargets.length = 0;

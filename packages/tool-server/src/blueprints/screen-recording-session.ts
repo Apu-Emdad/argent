@@ -14,11 +14,11 @@ import { clearActiveScreenRecording } from "../utils/screen-recording-reminder";
 import { recordReapedSession } from "../utils/reaped-sessions";
 import type { ServerRecordingResult } from "../utils/simulator-client";
 
-// Session for the `screen-recording-*` tools. One shape for every platform and
-// for both capture paths: simulator-server records and muxes the video itself
-// where its build supports it, otherwise its MJPEG stream is paced into a host
-// ffmpeg child. Either way the video is host-side, so there is nothing
-// device-side to clean up. Mirrors the native-profiler session shape.
+// Session for the `screen-recording-*` tools, one shape for both platforms:
+// simulator-server records the video itself where its build can, otherwise its
+// MJPEG stream is paced into an ffmpeg child that writes the mp4 host-side.
+// Either way there is nothing device-side to clean up. Mirrors the
+// native-profiler session.
 export const SCREEN_RECORDING_SESSION_NAMESPACE = "ScreenRecordingSession";
 
 type ScreenRecordingSessionFactoryOptions = Record<string, unknown> & { device: DeviceInfo };
@@ -36,55 +36,43 @@ export interface ScreenRecordingSessionApi {
   /** True from a successful start until stop / cap / unexpected exit. */
   recordingActive: boolean;
   /**
-   * True while a start is between its admission check and its session stamp
-   * (spawn + readiness are async). Both flags below serialize the tool pair:
-   * a second start or a stop admitted inside that window would race the
-   * shared session state.
+   * True from a start's admission check until its session stamp (spawn and
+   * readiness are async). With `stopPending`, keeps a second start or a stop
+   * admitted inside that window from racing the shared session state.
    */
   startPending: boolean;
   /** True while a stop is running; a concurrent start/stop must not interleave. */
   stopPending: boolean;
   /**
    * Set the moment dispose() begins — process shutdown, or a
-   * `stop-all-simulator-servers` that reaps this device (a scoped call
-   * including it, or an unscoped machine-wide sweep). A start suspended at a
-   * pre-spawn await (resolving ffmpeg, connecting to the frame stream) checks
-   * this immediately before spawning and aborts — otherwise it would spawn an
-   * encoder AFTER dispose already ran, orphaning a process that `pendingChild`
-   * reaping can no longer see. Never reset (dispose is terminal).
+   * `stop-all-simulator-servers` reaping this device (scoped or machine-wide).
+   * A start suspended at a pre-spawn await checks this immediately before
+   * spawning and aborts; otherwise it would spawn an encoder AFTER dispose ran,
+   * orphaning a process `pendingChild` reaping can no longer see. Never reset.
    */
   disposed: boolean;
   /**
-   * True once the capture ended (cap, crash) but the video has not been handed
-   * over by `screen-recording-stop` yet — the state the reminder note keeps
-   * pointing at.
+   * Capture ended (cap, crash) but `screen-recording-stop` has not handed the
+   * video over yet — the state the reminder note keeps pointing at.
    */
   pendingRetrieval: boolean;
   /** The ffmpeg child encoding the paced frames into the output file. */
   captureProcess: ChildProcess | null;
   /**
-   * Child spawned by an in-flight start that has not stamped the session yet
-   * (readiness pending). Tracked separately so dispose() can reap a capture
-   * that is mid-startup at shutdown — `captureProcess` is success-only.
+   * Child of an in-flight start that has not stamped the session yet, tracked
+   * separately so dispose() can reap a capture that is mid-startup —
+   * `captureProcess` is success-only.
    */
   pendingChild: ChildProcess | null;
   /** Host path the finished video lands at. */
   outputFile: string | null;
   /**
-   * Finalizes a recording simulator-server is running and hands back the muxed
-   * video. Set while a server-side capture is live and its stop still owns it;
-   * with it set there is no capture child, no frame stream and no pump, and stop
-   * goes to the server. `stopServerCapture` nulls it the moment it takes the
-   * recording over, so it is NOT a reliable "which side" marker across that
-   * await — `serverCapture` is (see below).
+   * Finalizes the recording simulator-server is running. Null while a stop
+   * owns it, so it does not say which side holds the video; `serverCapture`
+   * does.
    */
   serverStop: (() => Promise<ServerRecordingResult>) | null;
-  /**
-   * True from a server-side start until the session is reset to startable.
-   * Unlike `serverStop` it survives the stop's ownership hand-over, so a dispose
-   * landing mid-stop still knows the video was inside simulator-server (and the
-   * host `outputFile` was never written) when it builds the teardown breadcrumb.
-   */
+  /** True from a server-side start until the session is reset to startable. */
   serverCapture: boolean;
   /** Temp copy of the watermark logo ffmpeg reads; removed when the capture ends. */
   logoFile: string | null;
@@ -113,10 +101,9 @@ export interface ScreenRecordingSessionApi {
    */
   panelReadFailures: number;
   /**
-   * The frame stream's drop error, captured when the pump is torn down (cap,
-   * crash, stop) before `frameStream` is nulled — so a stop arriving after a
-   * cap/crash can still surface the "video may freeze" hint, which it could not
-   * once `frameStream` (and its `error`) was gone.
+   * The frame stream's drop error, stashed when the pump is torn down (cap,
+   * crash, stop) before `frameStream` is nulled, so a stop arriving after a
+   * cap/crash can still surface the "video may freeze" hint.
    */
   lastFrameStreamError: Error | null;
   /** Interval pacing frames onto the fixed output frame rate. */
@@ -127,7 +114,7 @@ export interface ScreenRecordingSessionApi {
   framesWritten: number;
   /** Whether trimming ever collapsed a static stretch (crossed the grace and dropped frames). */
   trimmedAnyFrames: boolean;
-  /** Restore the touch visualizer to off; set while it is on for this recording. */
+  /** Restores the touch visualizer to off; set for a recording that asked for it. */
   pointerDisable: (() => Promise<void>) | null;
   /** The touch visualizer was requested but simulator-server would not enable it. */
   pointerFailed: boolean;
@@ -143,24 +130,15 @@ export interface ScreenRecordingSessionApi {
   lastExitInfo: { code: number | null; signal: string | null } | null;
 }
 
-// Dispose fires on process shutdown, and on `stop-all-simulator-servers` (which
-// reaps every device-owned service, `ScreenRecordingSession` among them) — the
-// call every agent makes at session end. Either way an in-flight recording is
-// being abandoned, so the video is a best-effort salvage rather than something a
-// caller is waiting on: closing ffmpeg's stdin is what finalizes the container,
-// so give that one short grace before SIGKILL. A caller that wants the file
-// calls `screen-recording-stop`, which has its own (longer) finalize contract.
+// Dispose abandons an in-flight recording — process shutdown, or a
+// `stop-all-simulator-servers` reaping this device-owned service — so the video
+// is a best-effort salvage rather than something a caller is waiting on:
+// closing ffmpeg's stdin is what finalizes the container, so give that one
+// short grace before SIGKILL. `screen-recording-stop` has its own, longer
+// finalize contract.
 const DISPOSE_FINALIZE_GRACE_MS = 1_500;
 const DISPOSE_REAP_MS = 1_000;
-/**
- * Bounds how long a salvage stop for an abandoned server-side recording is
- * WAITED on, not how long that stop runs — the request keeps its own
- * `RECORDING_STOP_TIMEOUT_MS` abort and may outlive the race; the waiter simply
- * stops waiting. Used by dispose and by a start that finds itself disposed
- * mid-request: either way the video is being abandoned, so a wedged or
- * slow-to-mux simulator-server must not stall a teardown sweep (or process
- * shutdown) to the stop tool's own (much longer) finalize contract.
- */
+/** How long an abandoned server recording's stop is waited on. */
 export const DISPOSE_SERVER_STOP_MS = 1_500;
 
 function clearLiveState(state: ScreenRecordingSessionApi): void {
@@ -265,35 +243,25 @@ export const screenRecordingSessionBlueprint: ServiceBlueprint<
     return {
       api: state,
       dispose: async () => {
-        // Synchronously, before any await: a start suspended at a pre-spawn
-        // await will observe this and abort instead of spawning an orphan the
-        // teardown below can no longer reap.
+        // Before any await, so a start suspended at a pre-spawn await aborts
+        // instead of spawning an orphan the teardown below can no longer reap.
         state.disposed = true;
-        // Whether this dispose is destroying an unretrieved capture, decided
-        // BEFORE the teardown below clears the flags it is read from. Each state
-        // owes the caller a video: one is still encoding, one finished and waits
-        // to be handed over, and `stopPending` is a stop still in flight —
-        // covered too, because on the server path stop clears `recordingActive`
-        // and hands `serverStop` over before its await, so mid-stop this flag is
-        // the only one left true and the video lives only inside the
-        // simulator-server this teardown is killing.
+        // Decided BEFORE the teardown below clears the flags it reads: a
+        // capture still encoding, a start or stop mid-flight and one waiting to
+        // be handed over all owe the caller a video.
         const hadUnretrievedCapture =
           state.recordingActive ||
           state.startPending ||
           state.pendingRetrieval ||
           state.stopPending;
         const abandonedOutput = state.outputFile;
-        // Which side held the video. Read from `serverCapture`, not `serverStop`
-        // — stop nulls the latter as it takes the recording over, so a dispose
-        // landing mid-stop would otherwise read a server capture as a host one
-        // and offer its never-written `outputFile` as "usually playable".
         const serverCapture = state.serverCapture;
         if (state.recordingTimeout) {
           clearTimeout(state.recordingTimeout);
           state.recordingTimeout = null;
         }
-        // Stop producing frames first: the pump would otherwise keep writing
-        // into a pipe we are about to close.
+        // Stop producing frames first; the pump would keep writing into a
+        // pipe we are about to close.
         if (state.pumpTimer) {
           clearInterval(state.pumpTimer);
           state.pumpTimer = null;
@@ -304,20 +272,16 @@ export const screenRecordingSessionBlueprint: ServiceBlueprint<
         }
         state.frameStream?.close();
 
-        // Restore the touch visualizer if this recording turned it on — the
-        // overlay is sim-server global state that must not outlive the capture.
+        // The overlay is sim-server global state that must not outlive the
+        // capture.
         if (state.pointerDisable) {
           const disable = state.pointerDisable;
           state.pointerDisable = null;
           await disable().catch(() => {});
         }
 
-        // A recording running inside simulator-server outlives this process, and
-        // it accumulates frames until something stops it — so end it here even
-        // though the video is being abandoned. The wait is bounded: this stop's
-        // result feeds nothing, so it races a short grace rather than holding
-        // the teardown to the finalize contract `screen-recording-stop` owes a
-        // caller that actually wants the file.
+        // A server recording outlives this process; end it, but do not hold
+        // the teardown to a slow mux.
         if (state.serverStop) {
           const stop = state.serverStop;
           state.serverStop = null;
@@ -327,9 +291,8 @@ export const screenRecordingSessionBlueprint: ServiceBlueprint<
           ]);
         }
 
-        // A start still mid-readiness at shutdown has a live child that
-        // `captureProcess` (success-only) can't see — reap it here or it
-        // records forever.
+        // A start still mid-readiness has a live child `captureProcess`
+        // (success-only) can't see — reap it here or it records forever.
         if (state.pendingChild) {
           try {
             state.pendingChild.kill("SIGKILL");
@@ -354,30 +317,24 @@ export const screenRecordingSessionBlueprint: ServiceBlueprint<
             }
           }
         } finally {
-          // The logo temp is normally removed by stop; shutdown abandons that
-          // path, so clean it up here rather than leaking one file per
-          // abandoned recording.
+          // The logo temp is normally removed by stop, a path this teardown
+          // abandons — otherwise one file leaks per abandoned recording.
           if (state.logoFile) {
             await fs.rm(state.logoFile, { force: true }).catch(() => {});
             state.logoFile = null;
           }
           clearLiveState(state);
-          // The reminder must not outlive the process that owns the capture.
+          // The reminder must not outlive the capture it points at.
           clearActiveScreenRecording(state.deviceId);
           // Leave a breadcrumb so the owner's `screen-recording-stop` reports
-          // the teardown instead of "you never started a recording": nothing
-          // else would ever say the capture existed, and the next resolve
-          // builds a session that has never heard of it.
+          // the teardown instead of "you never started a recording": the next
+          // resolve builds a session that has never heard of this capture, and
+          // nothing else would say the salvaged file exists.
           if (hadUnretrievedCapture) {
-            // Where that leaves the video depends on the path. ffmpeg has been
-            // writing the host file all along and the stdin close above
-            // finalizes it; a server-side recording is muxed inside
-            // simulator-server and only `screen-recording-stop` ever copies it
-            // out, so the path start handed the caller was never written — and
-            // the stop above ended the recording that was the only way to
-            // reach it.
             let salvage: string | undefined;
             if (abandonedOutput) {
+              // Only stop copies a server recording out, so its host path was
+              // never written.
               salvage = serverCapture
                 ? `The video was inside simulator-server and went with the recording this ` +
                   `teardown ended, so nothing was written to ${abandonedOutput} — re-record ` +
