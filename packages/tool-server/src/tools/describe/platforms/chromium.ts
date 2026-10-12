@@ -236,6 +236,14 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     return Boolean(v) && v !== "none";
   }
 
+  // content-visibility: auto or hidden applies paint containment that computed contain omits.
+  function paintContained(style) {
+    return (
+      /paint|strict|content/.test(style.contain || "") ||
+      /auto|hidden/.test(style.contentVisibility || "")
+    );
+  }
+
   // Properties that make an element the containing block of fixed descendants.
   function containsFixed(style) {
     return (
@@ -246,7 +254,8 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
       isSet(style.perspective) ||
       isSet(style.filter) ||
       isSet(style.backdropFilter) ||
-      /layout|paint|strict|content/.test(style.contain || "") ||
+      /layout/.test(style.contain || "") ||
+      paintContained(style) ||
       /transform|perspective|filter/.test(style.willChange || "")
     );
   }
@@ -300,7 +309,7 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     if (style.display === "contents") return clips;
     let inner = clip;
     if (overflowApplies(el, style)) {
-      const paint = /paint|strict|content/.test(style.contain || "");
+      const paint = paintContained(style);
       const cx = paint || style.overflowX !== "visible";
       const cy = paint || style.overflowY !== "visible";
       if (cx || cy) {

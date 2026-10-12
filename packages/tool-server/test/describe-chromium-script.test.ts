@@ -1000,6 +1000,19 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     expect(pxFrame(tree, "inner-out").h).toBe(0);
   });
 
+  it("clips shadow-root content by its host's clip", () => {
+    const { tree } = run([
+      scroller([], {
+        shadow: [
+          row("shadow-in", { x: 1, y: 1, w: 285, h: 40 }),
+          row("shadow-out", { x: 1, y: 121, w: 285, h: 40 }),
+        ],
+      }),
+    ]);
+    expect(pxFrame(tree, "shadow-in")).toEqual({ x: 1, y: 1, w: 285, h: 40 });
+    expect(pxFrame(tree, "shadow-out").h).toBe(0);
+  });
+
   it("clips an absolute box only when the clipper is its containing block or inside it", () => {
     const below = { x: 10, y: 150, w: 80, h: 20 };
     const card = (clipperStyle: Record<string, string>, between: MockElement[] = []) =>
@@ -1042,6 +1055,7 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       { filter: "blur(1px)" },
       { backdropFilter: "blur(1px)" },
       { contain: "layout" },
+      { contentVisibility: "auto" },
       { willChange: "transform" },
     ];
     for (const style of containingBlocks) {
@@ -1130,13 +1144,19 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     expect(pxFrame(tree, "right").w).toBe(0);
   });
 
-  it("clips under contain: paint with overflow visible", () => {
-    const { tree } = run([
-      scroller([row("out", { x: 1, y: 150, w: 100, h: 20 })], {
-        style: { overflow: "visible", contain: "paint" },
-      }),
-    ]);
-    expect(pxFrame(tree, "out").h).toBe(0);
+  it("clips under paint containment with overflow visible", () => {
+    for (const style of [
+      { contain: "paint" },
+      { contentVisibility: "auto" },
+      { contentVisibility: "hidden" },
+    ]) {
+      const { tree } = run([
+        scroller([row("out", { x: 1, y: 150, w: 100, h: 20 })], {
+          style: { overflow: "visible", ...style },
+        }),
+      ]);
+      expect(pxFrame(tree, "out").h, JSON.stringify(style)).toBe(0);
+    }
   });
 
   it("ignores overflow where Chromium does not apply it", () => {
