@@ -376,7 +376,6 @@ Examples:
 
   // Prefer the bytes the materializer already resolved; fall back to fetching the
   // legacy `{ url }` for older tool-servers that don't emit artifact handles.
-  // `--out` wins over the tool's own `out` property (set via `--args`).
   const imageOut = outPath ?? (typeof payload.out === "string" ? payload.out.trim() : null);
   if (imageOut && meta.outputHint === "image") {
     try {
