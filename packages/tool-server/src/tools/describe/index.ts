@@ -144,8 +144,7 @@ function makeDescribeExecute(
 export function createDescribeTool(registry: Registry): ToolDefinition<Params, DescribeResult> {
   return {
     id: "describe",
-    // Can outlive the MCP client's 30s fetch cap (~50s on Android); without this the
-    // client aborts and REPLAYS the call against the same device.
+    // Up to ~50s on Android, past the 30s MCP fetch timeout, which replays an aborted call.
     longRunning: true,
     interaction: {
       startedMsg: () => "Reading screen",

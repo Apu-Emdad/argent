@@ -1335,8 +1335,7 @@ export function createBootDeviceTool(
 ): ToolDefinition<BootDeviceParams, BootDeviceResult> {
   return {
     id: "boot-device",
-    // Can outlive the MCP client's 30s fetch cap (8 min default); without this the
-    // client aborts and REPLAYS the call against the same device.
+    // Up to bootTimeoutMs, past the 30s MCP fetch timeout, which replays an aborted call.
     longRunning: true,
     interaction: {
       startedMsg: ({ params }) => `Starting ${bootTarget(params)}`,

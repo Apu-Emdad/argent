@@ -23,13 +23,8 @@ export function deriveInvalidParams(error: ZodError, declared: Set<string>): str
 }
 
 /**
- * Which constraints the rejected parameters broke, deduped and capped like
- * {@link deriveInvalidParams}. Zod's issue codes are a closed vocabulary from
- * the schema library, so this carries no user-typed text.
- *
- * Unknown codes are dropped rather than passed through: the telemetry
- * allowlist would void the whole array for one stray value, taking the
- * recognised codes with it.
+ * The deduped zod issue codes. Codes outside ZOD_ISSUE_CODES are dropped: the
+ * telemetry allowlist would void the whole array for one unknown value.
  */
 export function deriveInvalidParamIssues(error: ZodError): ZodIssueCode[] {
   const known = new Set<string>(ZOD_ISSUE_CODES);
@@ -38,7 +33,6 @@ export function deriveInvalidParamIssues(error: ZodError): ZodIssueCode[] {
     if (!known.has(issue.code)) continue;
     const code = issue.code as ZodIssueCode;
     if (!out.includes(code)) out.push(code);
-    if (out.length >= 16) break;
   }
   return out;
 }

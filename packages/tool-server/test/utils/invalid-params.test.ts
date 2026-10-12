@@ -99,9 +99,7 @@ describe("deriveInvalidParams", () => {
 });
 
 describe("deriveInvalidParamIssues", () => {
-  // The bound `await-ui-element.timeoutMs` declares. The two ways an agent
-  // breaks it need opposite fixes, and the param name alone cannot tell them
-  // apart — which is the whole reason this list is emitted.
+  // await-ui-element's timeoutMs schema.
   const timeoutMs = z.object({ timeoutMs: z.number().int().positive().max(120_000) });
 
   it("separates a value over the bound from a value of the wrong type", () => {
@@ -129,8 +127,6 @@ describe("deriveInvalidParamIssues", () => {
   });
 
   it("drops a code outside zod's vocabulary rather than voiding the whole array", () => {
-    // The telemetry allowlist is all-or-nothing: one unknown value would take
-    // the recognised codes down with it.
     const err = issuesFor(z.object({ a: z.number() }), { a: "x" });
     const forged = {
       issues: [{ code: "brand_new_zod_code", path: ["a"] }, ...err.issues],

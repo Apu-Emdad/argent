@@ -38,8 +38,7 @@ const capability: ToolCapability = {
 
 export const reinstallAppTool: ToolDefinition<Params, ReinstallAppResult> = {
   id: "reinstall-app",
-  // Can outlive the MCP client's 30s fetch cap (210s on Android); without this
-  // the client aborts and REPLAYS the install against the same device.
+  // Up to 210s on Android, past the 30s MCP fetch timeout, which replays an aborted call.
   longRunning: true,
   interaction: {
     startedMsg: ({ params }) => `Reinstalling ${params.bundleId}`,

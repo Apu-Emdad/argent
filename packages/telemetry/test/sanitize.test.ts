@@ -668,8 +668,6 @@ describe("sanitize", () => {
     const base = { tool: "await-ui-element", duration_ms: 1 };
 
     it("accepts every code zod can raise, so no real rejection is voided", () => {
-      // arrayOf is all-or-nothing: one code missing from the allowlist would
-      // silently drop the whole property for that call.
       const out = sanitize("tool:fail", { ...base, invalid_param_issues: [...ZOD_ISSUE_CODES] });
       expect(out.invalid_param_issues).toEqual([...ZOD_ISSUE_CODES]);
     });

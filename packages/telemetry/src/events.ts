@@ -184,18 +184,13 @@ export interface ToolFailProps extends FailureTelemetryProps, AiTelemetryProps {
    */
   invalid_params?: string[];
   /**
-   * Which zod constraints those parameters broke, deduped. The name alone
-   * cannot separate a value over the bound (`too_big`, answered by widening
-   * it) from a value of the wrong type (`invalid_type`, answered by the
-   * parameter description) — opposite fixes.
+   * The rejection's zod issue codes, deduped across the call. Tells e.g.
+   * `too_big` from `invalid_type`, which `invalid_params` cannot.
    */
   invalid_param_issues?: ZodIssueCode[];
 }
 
-/**
- * Zod's own issue codes, as of zod 4. A closed vocabulary from the schema
- * library, so nothing user-typed can reach telemetry through it.
- */
+/** Zod 4's issue codes: a closed vocabulary, so nothing user-typed reaches telemetry. */
 export const ZOD_ISSUE_CODES = [
   "invalid_type",
   "too_big",

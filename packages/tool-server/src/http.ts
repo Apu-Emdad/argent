@@ -190,8 +190,8 @@ type InvocationMeta = {
 } & AiTelemetryProps;
 // Coarse context only: the raw device id (UDID / serial) infers a platform and is
 // never stored or forwarded; invalid_params carries schema-declared parameter
-// NAMES only (see deriveInvalidParams), never values or user-typed keys, and
-// invalid_param_issues carries zod's own issue codes.
+// NAMES only (see deriveInvalidParams), never values or user-typed keys;
+// invalid_param_issues carries zod issue codes only.
 type HttpFailureMeta = {
   device_provider?: string;
   platform?: TelemetryPlatform;
