@@ -1042,7 +1042,7 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     expect(pxFrame(wrapped, "abs").h).toBe(0);
   });
 
-  it("lets a fixed box escape every clip unless a transformed ancestor contains it", () => {
+  it("lets a fixed box escape every clip unless a clipping ancestor contains it", () => {
     const fixed = () => row("fixed", { x: 10, y: 500, w: 80, h: 20 }, { position: "fixed" });
     const escaped = run([scroller([fixed()], { style: { overflow: "hidden" } })]).tree;
     expect(pxFrame(escaped, "fixed")).toEqual({ x: 10, y: 500, w: 80, h: 20 });
@@ -1060,6 +1060,7 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       { willChange: "transform" },
       { willChange: "translate" },
       { willChange: "contain" },
+      { willChange: "filter" },
     ];
     for (const style of containingBlocks) {
       const contained = run([scroller([fixed()], { style: { overflow: "hidden", ...style } })]);
