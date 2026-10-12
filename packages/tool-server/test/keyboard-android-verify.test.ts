@@ -211,6 +211,9 @@ describe("android keyboard read-back", () => {
     });
     expect(cmds()).toEqual(["input text 'display'"]);
     for (const [opts] of getHierarchy.mock.calls) expect(opts).toMatchObject({ clearCache: true });
+    const [beforeRead, afterRead] = getHierarchy.mock.invocationCallOrder;
+    const [inject] = adbShell.mock.invocationCallOrder;
+    expect([beforeRead! < inject!, inject! < afterRead!]).toEqual([true, true]);
   });
 
   it("reports verified:false with counts, never the field's text, when characters drop", async () => {

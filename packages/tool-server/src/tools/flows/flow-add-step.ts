@@ -36,6 +36,7 @@ import {
   unmetUiWaitCause,
   type UnmetUiWaitCause,
 } from "../await-ui-element";
+import { isUnlandedKeyboardTextResult } from "../keyboard";
 import { probeWhenCondition, type DirectiveOutcome } from "./flow-actions";
 import {
   UPLOAD_STAGE_BY_KIND,
@@ -398,6 +399,10 @@ const CANCELLED_WAIT_WARNING =
   "— `await-ui-element` reports a cancelled wait as success:false, and the step was written to " +
   "the flow anyway. Whether it holds is UNKNOWN, not known-bad: re-record the step to find out. " +
   "The cross-tree re-probe was skipped for the same reason";
+
+const UNLANDED_TEXT_WARNING =
+  "recorded, but the text did not land in the field (`toolResult.note` says how). At replay " +
+  "this step FAILS and stops the run, so re-record it once the text lands";
 
 function unmetWaitWarningFor(cause: UnmetUiWaitCause): string {
   if (cause === "unreadable") return UNREADABLE_WAIT_WARNING;
@@ -1544,7 +1549,12 @@ Returns { message, stepCount, recorded, savedTo }; \`recorded\`, not the status,
       } else if (runTarget?.flow) {
         step = { kind: "run", flow: runTarget.flow };
       } else {
-        warning = waitWarning?.warning ?? runTarget?.warning;
+        warning =
+          waitWarning?.warning ??
+          runTarget?.warning ??
+          (isUnlandedKeyboardTextResult(params.command, toolResult)
+            ? UNLANDED_TEXT_WARNING
+            : undefined);
         // The step ran live with the full args (incl. the device id), but the
         // recorded form drops it so the flow stays portable — the runner injects
         // whatever device it resolves at replay.

@@ -98,7 +98,7 @@ The result carries `verified`:
 - Focus moves to a different field.
 - The contents of the field fit both a full and a partial landing. A field that formats a phone number is an example.
 
-A `false` value stops a `run-sequence` at that step. It also fails a flow `type` step, a flow `tool: keyboard` step and a flow `tool: run-sequence` step that holds one. Argent does not press Enter after a failed `type` step.
+A `false` value stops a `run-sequence` at that step. It also fails a flow `type` step, a flow `tool: keyboard` step and a flow `tool: run-sequence` step that holds one. Argent does not press Enter after a failed `type` step. `flow-add-step` records such a `keyboard` step with a warning.
 
 ## JavaScript runtime debugging
 

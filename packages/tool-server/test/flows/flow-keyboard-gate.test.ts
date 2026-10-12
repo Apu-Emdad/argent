@@ -4,6 +4,9 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import type { Registry } from "@argent/registry";
 import { createRunFlowTool, type FlowRunResult } from "../../src/tools/flows/flow-run";
+import { createFlowAddStepTool } from "../../src/tools/flows/flow-add-step";
+import { flowStartRecordingTool } from "../../src/tools/flows/flow-start-recording";
+import { __resetRecordingsForTesting } from "../../src/tools/flows/flow-utils";
 
 const PROJECT_ROOT = nodePath.join(os.tmpdir(), `flow-kb-gate-tests-${process.pid}`);
 
@@ -23,6 +26,7 @@ async function writeFlow(name: string, yaml: string): Promise<string> {
 }
 
 afterEach(async () => {
+  __resetRecordingsForTesting();
   await fs.rm(PROJECT_ROOT, { recursive: true, force: true });
 });
 
@@ -118,5 +122,38 @@ describe("a raw tool: keyboard step the read-back failed", () => {
     expect(invoked(registry)).toEqual(["keyboard", "gesture-tap"]);
     expect(run.steps.map((s) => s.status)).toEqual(["pass", "pass"]);
     expect(run.ok).toBe(true);
+  });
+});
+
+describe("recording a keyboard step", () => {
+  async function record(name: string, result: unknown): Promise<string> {
+    await flowStartRecordingTool.execute(
+      {},
+      { name, project_root: PROJECT_ROOT, executionPrerequisite: "" }
+    );
+    const registry = makeRegistry(async () => result);
+    const { message } = await createFlowAddStepTool(registry).execute(
+      {},
+      {
+        name,
+        project_root: PROJECT_ROOT,
+        command: "keyboard",
+        args: JSON.stringify({ udid: "emulator-5554", text: "display" }),
+      }
+    );
+    return message;
+  }
+
+  it("warns that a verified:false step fails at replay", async () => {
+    const message = await record("rec-unlanded", { typed: "display", keys: 7, verified: false });
+    expect(message).toContain("the text did not land in the field");
+    expect(message).toContain("FAILS and stops the run");
+  });
+
+  it.each([
+    ["verified", { typed: "display", keys: 7, verified: true }],
+    ["unchecked", { typed: "display", keys: 7 }],
+  ])("does not warn on a %s step", async (name, result) => {
+    expect(await record(`rec-${name}`, result)).toBe(`Step added to "rec-${name}" flow`);
   });
 });
