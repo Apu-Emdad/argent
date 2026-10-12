@@ -44,6 +44,12 @@ const zodSchema = z.object({
     .describe(
       "Android-only: fully-qualified Activity name (e.g. `.MainActivity` or `com.example/com.example.MainActivity`). If omitted on Android, the app's default launcher activity is used. Ignored on iOS / Chromium / HarmonyOS (a HarmonyOS ability is resolved from the bundle's own `abilityInfos`)."
     ),
+  launchArgs: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Apple simulators and physical iPhones: arguments passed to the app process at launch, e.g. `["-FeatureFlag", "YES"]` to override UserDefaults. A running app is relaunched to apply them. Ignored on other targets.'
+    ),
 });
 
 type Params = z.infer<typeof zodSchema>;
