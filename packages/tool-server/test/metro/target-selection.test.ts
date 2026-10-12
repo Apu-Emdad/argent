@@ -239,16 +239,17 @@ describe("selectTarget by list-devices id (device name hint)", () => {
     } catch (e) {
       error = e;
     }
-    expect(getFailureSignal(error)?.error_code).toBe(
-      FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH
-    );
+    expect(getFailureSignal(error)?.error_code).toBe(FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH);
     expect(String((error as Error).message)).toContain("bench-ARG-A");
   });
 
   it("keeps the single-device fallback when the name is only a guess (Android)", () => {
     const result = selectTarget([a], 8082, {
       deviceId: "emulator-5554",
-      deviceNames: { names: ["sdk_gphone64_arm64 - 15 - API 35", "sdk_gphone64_arm64"], exact: false },
+      deviceNames: {
+        names: ["sdk_gphone64_arm64 - 15 - API 35", "sdk_gphone64_arm64"],
+        exact: false,
+      },
     });
     expect(result.target.id).toBe("a");
   });

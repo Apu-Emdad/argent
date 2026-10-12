@@ -44,7 +44,12 @@ export function selectTarget(
     const filtered = candidates.filter((t) => t.reactNative?.logicalDeviceId === deviceId);
     const byName = filtered.length
       ? []
-      : matchByDeviceName(pool, deviceId, port, options.deviceNames as MetroDeviceNames | undefined);
+      : matchByDeviceName(
+          pool,
+          deviceId,
+          port,
+          options.deviceNames as MetroDeviceNames | undefined
+        );
     if (filtered.length) {
       candidates = filtered;
     } else if (byName.length) {

@@ -76,8 +76,3 @@ async function androidNames(serial: string): Promise<MetroDeviceNames> {
   if (!m) return { names: [], exact: false };
   return { names: [`${m} - ${release.trim()} - API ${sdk.trim()}`, m], exact: false };
 }
-
-/** Test-only. */
-export function __resetMetroDeviceNameCache(): void {
-  cache.clear();
-}
