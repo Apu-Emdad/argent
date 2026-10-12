@@ -359,6 +359,56 @@ describe("uninstall — skills cleanup helpers", () => {
     expect(fs.existsSync(storeDir)).toBe(true);
   });
 
+  it("removes skill links left dangling by the .agents/skills cleanup that runs first", () => {
+    // Claude Code's .claude/skills/<name> links into .agents/skills/<name>.
+    // Uninstall cleans .agents/skills before the editor targets, so by the
+    // time it reaches .claude/skills every Argent link is dangling.
+    const targetDir = path.join(tmpDir, ".claude", "skills");
+    const storeDir = path.join(tmpDir, ".agents", "skills");
+    const skillNames = ["argent-create-flow", "argent-react-native-optimization"];
+
+    fs.mkdirSync(targetDir, { recursive: true });
+    for (const skillName of skillNames) {
+      writeFile(path.join(storeDir, skillName, "SKILL.md"), "skill");
+      fs.symlinkSync(
+        path.relative(targetDir, path.join(storeDir, skillName)),
+        path.join(targetDir, skillName)
+      );
+    }
+    writeFile(path.join(targetDir, "vendor-skill", "SKILL.md"), "vendor");
+
+    const store = removeBundledSkillInstalls(skillNames, storeDir);
+    expect(store.removedPaths.sort()).toEqual(skillNames);
+    expect(store.removedRoot).toBe(true);
+    for (const skillName of skillNames) {
+      // Links are now dangling: the path is gone for existsSync, present for lstat.
+      expect(fs.existsSync(path.join(targetDir, skillName))).toBe(false);
+      expect(fs.lstatSync(path.join(targetDir, skillName)).isSymbolicLink()).toBe(true);
+    }
+
+    const editor = removeBundledSkillInstalls(skillNames, targetDir);
+
+    expect(editor.removedPaths.sort()).toEqual(skillNames);
+    for (const skillName of skillNames) {
+      expect(() => fs.lstatSync(path.join(targetDir, skillName))).toThrow();
+    }
+    expect(fs.existsSync(path.join(targetDir, "vendor-skill"))).toBe(true);
+  });
+
+  it("empties an editor skills dir that held only dangling Argent links", () => {
+    const targetDir = path.join(tmpDir, ".claude", "skills");
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.symlinkSync(
+      path.join("..", "..", ".agents", "skills", "argent-create-flow"),
+      path.join(targetDir, "argent-create-flow")
+    );
+
+    const result = removeBundledSkillInstalls(["argent-create-flow"], targetDir);
+
+    expect(result).toEqual({ removedPaths: ["argent-create-flow"], removedRoot: true });
+    expect(fs.existsSync(targetDir)).toBe(false);
+  });
+
   it("removes only Argent entries from skills-lock.json", () => {
     const lockPath = path.join(tmpDir, "skills-lock.json");
     writeFile(
