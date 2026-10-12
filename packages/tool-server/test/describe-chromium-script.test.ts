@@ -29,6 +29,7 @@ class MockHTMLElement extends MockElement {}
 class MockHTMLInputElement extends MockHTMLElement {}
 class MockHTMLTextAreaElement extends MockHTMLElement {}
 class MockHTMLImageElement extends MockHTMLElement {}
+class MockSVGSVGElement extends MockElement {}
 
 // The script reads childNodes / tagName / children through the native prototype getter
 // (Object.getOwnPropertyDescriptor(proto, prop).get.call(el)) so a DOM-clobbering <form>
@@ -96,7 +97,10 @@ type Opts = {
   client?: { left: number; top: number; width: number; height: number };
   offset?: { width: number; height: number }; // untransformed border-box size
   scrollSize?: { width: number; height: number }; // scrollWidth / scrollHeight
-  svg?: boolean; // an Element that is not an HTMLElement
+  svg?: boolean; // an Element in the SVG namespace
+  // A nested <svg>: its viewport in the parent's user space, mapped by the parent's
+  // screen CTM [a, b, c, d, e, f].
+  nestedSvg?: { viewport: Rect; ctm: number[] };
   topLayer?: string; // the pseudo-class (":modal", ...) that puts it in the top layer
   content?: Rect | null; // painted extent of own inline content (Range)
   style?: Record<string, string>;
@@ -110,8 +114,18 @@ type Opts = {
 };
 
 function el(opts: Opts = {}): MockElement {
-  const node = (opts.svg ? new MockElement() : new MockHTMLElement()) as MockElement &
-    Record<string, unknown>;
+  const node = (
+    opts.nestedSvg ? new MockSVGSVGElement() : opts.svg ? new MockElement() : new MockHTMLElement()
+  ) as MockElement & Record<string, unknown>;
+  if (opts.svg || opts.nestedSvg) node.namespaceURI = "http://www.w3.org/2000/svg";
+  if (opts.nestedSvg) {
+    const { viewport: v, ctm } = opts.nestedSvg;
+    const len = (value: number) => ({ animVal: { value } });
+    Object.assign(node, { x: len(v.x), y: len(v.y), width: len(v.w), height: len(v.h) });
+    const [a, b, c, d, e, f] = ctm;
+    node.ownerSVGElement = {};
+    node.parentNode = { getScreenCTM: () => ({ a, b, c, d, e, f }) };
+  }
   const rect = opts.rect ?? { x: 0, y: 0, w: 100, h: 20 };
   node.tagName = (opts.tag ?? "div").toUpperCase();
   // Backing fields read by the Element.prototype getAttribute/hasAttribute/
@@ -229,6 +243,7 @@ function run(
     HTMLTextAreaElement: g.HTMLTextAreaElement,
     HTMLImageElement: g.HTMLImageElement,
     HTMLElement: g.HTMLElement,
+    SVGSVGElement: g.SVGSVGElement,
   };
   g.window = {
     innerWidth: W,
@@ -306,6 +321,7 @@ function run(
   g.HTMLTextAreaElement = MockHTMLTextAreaElement;
   g.HTMLImageElement = MockHTMLImageElement;
   g.HTMLElement = MockHTMLElement;
+  g.SVGSVGElement = MockSVGSVGElement;
   try {
     const payload = (0, eval)(DESCRIBE_DOM_SCRIPT) as string;
     return JSON.parse(payload);
@@ -1124,6 +1140,32 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     }
   });
 
+  it("lets an open select's picker content escape its clips, but not its leading <button>", () => {
+    const BELOW = (y: number) => ({ x: 1, y, w: 80, h: 20 });
+    const select = (open: boolean, children: MockElement[]) =>
+      el({
+        tag: "select",
+        topLayer: open ? ":open" : undefined,
+        rect: { x: 1, y: 60, w: 80, h: 25 },
+        style: { display: "inline-block" },
+        children,
+      });
+    const btn = (id: string, y: number) => el({ tag: "button", attrs: { id }, rect: BELOW(y) });
+    const opt = (id: string, y: number) => el({ tag: "option", attrs: { id }, rect: BELOW(y) });
+    const { tree } = run([
+      scroller([
+        select(true, [btn("lead", 150), opt("opt", 170), btn("late", 190)]),
+        select(true, [opt("first", 210)]),
+        select(false, [opt("closed", 230)]),
+      ]),
+    ]);
+    expect(pxFrame(tree, "lead").h).toBe(0);
+    expect(pxFrame(tree, "opt")).toEqual(BELOW(170));
+    expect(pxFrame(tree, "late")).toEqual(BELOW(190));
+    expect(pxFrame(tree, "first")).toEqual(BELOW(210));
+    expect(pxFrame(tree, "closed").h).toBe(0);
+  });
+
   it("extends an overflow: clip or contain: paint edge by overflow-clip-margin", () => {
     const BELOW = { x: 1, y: 100, w: 100, h: 40 };
     const margin = (style: Record<string, string>, opts: Opts = {}, near = BELOW) =>
@@ -1244,14 +1286,14 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     ]);
   });
 
-  it("clips to an SVG viewport's own rect, which has no CSS box to measure", () => {
+  it("clips to an inline <svg>'s rect", () => {
     const { tree } = run([
       el({
         svg: true,
+        tag: "svg",
         attrs: { id: "viewport" },
         rect: { x: 0, y: 0, w: 300, h: 100 },
-        client: { left: 0, top: 0, width: 0, height: 0 },
-        style: { overflow: "hidden" },
+        style: { display: "inline", overflow: "hidden" },
         children: [
           row("in", { x: 10, y: 10, w: 100, h: 20 }),
           row("out", { x: 10, y: 150, w: 100, h: 20 }),
@@ -1260,6 +1302,32 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     ]);
     expect(pxFrame(tree, "in")).toEqual({ x: 10, y: 10, w: 100, h: 20 });
     expect(pxFrame(tree, "out").h).toBe(0);
+  });
+
+  it("clips to a nested <svg>'s viewport, not its rect (the content's bbox)", () => {
+    const { tree } = run([
+      el({
+        svg: true,
+        tag: "svg",
+        rect: { x: 0, y: 0, w: 300, h: 200 },
+        style: { display: "inline", overflow: "hidden" },
+        children: [
+          el({
+            tag: "svg",
+            // x/y 10 in a parent user space translated by (5, 5): viewport 15..55.
+            nestedSvg: { viewport: { x: 10, y: 10, w: 40, h: 40 }, ctm: [1, 0, 0, 1, 5, 5] },
+            rect: { x: 15, y: 15, w: 80, h: 20 },
+            style: { display: "inline", overflow: "hidden" },
+            children: [
+              row("svin", { x: 15, y: 15, w: 20, h: 20 }),
+              row("svout", { x: 75, y: 15, w: 20, h: 20 }),
+            ],
+          }),
+        ],
+      }),
+    ]);
+    expect(pxFrame(tree, "svin")).toEqual({ x: 15, y: 15, w: 20, h: 20 });
+    expect(pxFrame(tree, "svout").w).toBe(0);
   });
 
   it("clips everything under an HTML clipper whose padding box is empty", () => {

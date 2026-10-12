@@ -215,15 +215,26 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
   // entry is the clip a child with that position gets.
   const NO_CLIP = { flow: null, abs: null, fixed: null };
 
+  // False for a pseudo-class this Chromium lacks.
+  function matches(el, sel) {
+    try {
+      return matchesSel.call(el, sel);
+    } catch (e) {
+      return false;
+    }
+  }
+
   // A top-layer box (modal dialog, open popover, fullscreen element) escapes every clip.
   function inTopLayer(el, style) {
     if (style.position !== "fixed" && style.position !== "absolute") return false;
-    for (const sel of [":modal", ":popover-open", ":fullscreen"]) {
-      try {
-        if (matchesSel.call(el, sel)) return true;
-      } catch (e) {}
-    }
-    return false;
+    return [":modal", ":popover-open", ":fullscreen"].some((sel) => matches(el, sel));
+  }
+
+  // An open customizable select draws every child but a leading <button> in its
+  // top-layer ::picker(select).
+  function inPicker(el, child, i) {
+    if (getTagName.call(el) !== "SELECT" || !matches(el, ":open")) return false;
+    return i > 0 || getTagName.call(child) !== "BUTTON";
   }
 
   function ownClip(clips, style) {
@@ -269,10 +280,37 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     );
   }
 
+  // A nested <svg>'s rect bounds its content, not its viewport.
+  function nestedSvgViewport(el) {
+    if (!(el instanceof SVGSVGElement) || !el.ownerSVGElement) return null;
+    const m = el.parentNode.getScreenCTM?.();
+    if (!m) return null;
+    const x = el.x.animVal.value;
+    const y = el.y.animVal.value;
+    const w = el.width.animVal.value;
+    const h = el.height.animVal.value;
+    const xs = [];
+    const ys = [];
+    for (const [px, py] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+      xs.push(m.a * px + m.c * py + m.e);
+      ys.push(m.b * px + m.d * py + m.f);
+    }
+    return {
+      left: Math.min(...xs),
+      top: Math.min(...ys),
+      right: Math.max(...xs),
+      bottom: Math.max(...ys),
+      sx: 1,
+      sy: 1,
+    };
+  }
+
   // Padding box in viewport px, scrollbars excluded, and the scale (sx, sy) from layout
-  // px to the rendered (transformed) box. An SVG viewport has no CSS box to measure
-  // (client* read 0) and no offset* at all: its rect is the clip.
+  // px to the rendered (transformed) box. A non-HTML clipper (<svg>, <foreignObject>)
+  // has no offset* to scale by, so its rect is the clip.
   function paddingBox(el) {
+    const vp = nestedSvgViewport(el);
+    if (vp) return vp;
     const r = getBCR.call(el);
     if (!(el instanceof HTMLElement)) {
       return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, sx: 1, sy: 1 };
@@ -307,10 +345,11 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
 
   // The root's overflow clips the viewport, not its box, and so does the body's unless
   // the root's is set; both are left to the viewport clamp. Chromium ignores overflow
-  // on inline boxes and on table rows, row groups and columns.
+  // on inline HTML boxes and on table rows, row groups and columns.
   function overflowApplies(el, style) {
     const tag = getTagName.call(el);
     if (tag === "HTML" || tag === "BODY") return false;
+    if (el.namespaceURI === "http://www.w3.org/2000/svg") return true;
     return style.display !== "inline" && !/^table-(row|column|header|footer)/.test(style.display);
   }
 
@@ -456,8 +495,9 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     const clip = ownClip(clips, style);
     const inner = childClips(el, style, clips, clip);
     const childResults = [];
-    for (const child of getChildrenEls.call(el)) {
-      const c = walk(child, depth + 1, inner);
+    const kids = getChildrenEls.call(el);
+    for (let i = 0; i < kids.length; i++) {
+      const c = walk(kids[i], depth + 1, inPicker(el, kids[i], i) ? NO_CLIP : inner);
       if (c) childResults.push(c);
     }
 
