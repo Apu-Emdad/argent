@@ -4,6 +4,7 @@ import {
   classifyDevice,
   isAndroidEmulatorSerial,
   isIosPhysicalDevice,
+  isIosSimulator,
   isWirelessAdbSerial,
   resolveDevice,
 } from "../src/utils/device-info";
@@ -88,6 +89,17 @@ describe("isIosPhysicalDevice", () => {
     const android = resolveDevice("HT82A0203045");
     expect(android.kind).toBe("device");
     expect(isIosPhysicalDevice(android)).toBe(false);
+  });
+});
+
+describe("isIosSimulator", () => {
+  it.each([
+    ["a local iOS simulator", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", true],
+    ["a remote iOS simulator", "remote:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", true],
+    ["a physical iPhone", "00008110-000978540290401E", false],
+    ["an Android emulator", "emulator-5554", false],
+  ])("is %s: %s", (_case, id, expected) => {
+    expect(isIosSimulator(resolveDevice(id))).toBe(expected);
   });
 });
 
