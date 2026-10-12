@@ -15,10 +15,7 @@ export const INSTALL_GLOBAL_PACKAGE_FAILED: InstallerFailureSignal = {
   error_kind: "subprocess",
 };
 
-// The package manager's global directory is not writable by this user (a
-// Nix-managed toolchain, a root-owned /usr/local). No install was attempted, so
-// it is a validation failure rather than the subprocess one npm's own EACCES
-// would raise.
+// Refused by the preflight; no install was attempted.
 export const INSTALL_GLOBAL_PREFIX_UNWRITABLE: InstallerFailureSignal = {
   error_code: FAILURE_CODES.INSTALL_GLOBAL_PREFIX_UNWRITABLE,
   failure_stage: "installer_global_prefix_preflight",
