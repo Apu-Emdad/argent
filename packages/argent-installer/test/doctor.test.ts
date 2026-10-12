@@ -6,6 +6,7 @@ import {
   classifyMcpEntry,
   platformChecks,
   renderDoctorReport,
+  stripPackageBinDirs,
   type DoctorReport,
   type EntryContext,
 } from "../src/doctor.js";
@@ -169,5 +170,18 @@ describe("renderDoctorReport", () => {
     expect(out).toContain("argent init");
     expect(out).not.toContain("never shown");
     expect(out).toContain("1 error, 0 warnings");
+  });
+});
+
+describe("stripPackageBinDirs", () => {
+  it("drops the node_modules/.bin dirs npx and npm scripts prepend", () => {
+    const d = path.delimiter;
+    const input = [
+      "/app/node_modules/.bin",
+      "/node_modules/.bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+    ].join(d);
+    expect(stripPackageBinDirs(input)).toBe(["/opt/homebrew/bin", "/usr/bin"].join(d));
   });
 });

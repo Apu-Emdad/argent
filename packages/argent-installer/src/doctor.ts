@@ -631,12 +631,27 @@ async function otherSection(
 
 // MARK: Report
 
+/**
+ * PATH as an editor sees it. `npx argent doctor` and npm scripts prepend the
+ * project's `node_modules/.bin`, which would make the project-local copy pass
+ * for a global install (and a bare `argent mcp` entry look startable). Editors
+ * spawn MCP servers without those dirs, so the probes must not see them either.
+ */
+export function stripPackageBinDirs(pathValue: string): string {
+  return pathValue
+    .split(path.delimiter)
+    .filter((dir) => !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(dir))
+    .join(path.delimiter);
+}
+
 async function collectDoctorReport(options: {
   paths?: ToolsServerPaths;
   offline: boolean;
   cwd?: string;
 }): Promise<DoctorReport> {
   const projectRoot = resolveProjectRoot(options.cwd ?? process.cwd());
+  // The global-install probe shells out to `which` with process.env.
+  if (process.env.PATH) process.env.PATH = stripPackageBinDirs(process.env.PATH);
   const running = options.paths?.version ?? getInstalledVersion() ?? "unknown";
 
   // Sections that touch the network or spawn a process run concurrently.
