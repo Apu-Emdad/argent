@@ -311,10 +311,10 @@ async function recoverBlockedGlobalInstall(opts: {
   // A local install needs a package.json to add the devDependency to.
   const canInstallLocally = remedies.localViable;
 
-  // Nobody to ask (init refuses a run with no terminal, so this is --yes), or
-  // nothing to offer them: spell the ways out as commands instead of opening a
-  // prompt whose only option is to give up. init skips its own mode step on
-  // the second condition, so an acknowledged choice never stops here.
+  // Nobody to ask, or nothing to offer them — spell the ways out as commands
+  // instead of opening a prompt whose only option is to give up. init skips its
+  // own mode step on the same two conditions, so an acknowledged choice never
+  // reaches here.
   if (nonInteractive || !canRecoverBlockedGlobal(pm, canInstallLocally, target.dir))
     return failWithAdvice(target);
 

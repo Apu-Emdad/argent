@@ -96,8 +96,7 @@ vi.mock("../src/topology.js", async (importOriginal) => {
   };
 });
 
-// Node leaves isTTY undefined on a stdin that is not a terminal; the declared
-// type admits only boolean, hence the cast.
+// Off a terminal Node leaves isTTY undefined, which its boolean type forbids.
 function setIsTty(value: boolean | undefined): void {
   (process.stdin as { isTTY?: boolean }).isTTY = value;
 }
@@ -373,14 +372,12 @@ describe("update — interactive decline", () => {
     }
   );
 
-  // A confirm with no terminal behind it never settles: the run would end at a
-  // rendered prompt, exit 0, and have updated nothing.
   it("refuses an update it cannot ask about, leaving the install alone", async () => {
     setIsTty(undefined);
 
     await expect(update([])).rejects.toThrow(ExitSentinel);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(exitSpy).toHaveBeenCalledWith(2);
     expect(promptsMock.confirm).not.toHaveBeenCalled();
     expect(npmInstallCalls()).toHaveLength(0);
     const errors = promptsMock.log.error.mock.calls.map(([m]) => m as string);
@@ -391,9 +388,8 @@ describe("update — interactive decline", () => {
     );
   });
 
-  // The coexisting-install choice is the other question update asks before any
-  // target runs; it refuses with both events the invalid-version refusal at
-  // the same position emits.
+  // Asked before any target runs, so it emits both events, like the
+  // invalid-version refusal there.
   it("refuses the coexisting-install choice when there is no terminal", async () => {
     setIsTty(undefined);
     fs.mkdirSync(path.join(projDir, "node_modules", "@swmansion", "argent"), { recursive: true });
@@ -409,7 +405,7 @@ describe("update — interactive decline", () => {
 
     await expect(update([])).rejects.toThrow(ExitSentinel);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(exitSpy).toHaveBeenCalledWith(2);
     expect(promptsMock.confirm).not.toHaveBeenCalled();
     expect(npmInstallCalls()).toHaveLength(0);
     expect(telemetryMock.track).toHaveBeenCalledWith(
@@ -422,9 +418,7 @@ describe("update — interactive decline", () => {
     );
   });
 
-  // An update with nothing to install asks nothing, so it reaches the config
-  // refresh with no terminal — where the sweep's cross-project removals would
-  // otherwise open a confirmation nobody can answer.
+  // Nothing to install, so a terminal-less run reaches the sweep.
   it("hands the sweep no confirmer when there is no terminal", async () => {
     stageArgentPackage(stagedGlobalRoot(), "99.0.0");
     setIsTty(undefined);

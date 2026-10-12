@@ -212,11 +212,7 @@ Notes:
 `);
 }
 
-// clack reads keystrokes straight from stdin. Answers piped in do settle its
-// prompts, but the moment that input runs out the promise never settles: the
-// command unwinds through no branch at all and exits 0 having done nothing.
-// Off a terminal there is no way to know an answer will arrive, so a command
-// that has to ask refuses instead of gambling on one.
+// A clack prompt on exhausted stdin never settles, and the command exits 0 having done nothing.
 function canPromptUser(): boolean {
   return process.stdin.isTTY === true;
 }
@@ -366,9 +362,7 @@ export async function link(argv: string[]): Promise<void> {
     process.exit(2);
   }
 
-  // A missing --host is asked for; a missing --port is too, unless --yes takes
-  // the default. Refuse before the intro so the run ends on one line rather
-  // than on a half-drawn prompt nobody can answer.
+  // A missing --host is asked for; a missing --port too, unless --yes takes 3001.
   if ((flags.host === null || (flags.port === null && !flags.yes)) && !canPromptUser()) {
     refuseWithoutTerminal(
       "argent link",

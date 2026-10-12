@@ -23,8 +23,7 @@ vi.mock("@argent/tools-client", () => ({
   parseLinkTarget: () => null,
 }));
 
-// Node leaves isTTY undefined on a stdin that is not a terminal; the declared
-// type admits only boolean, hence the cast.
+// Off a terminal Node leaves isTTY undefined, which its boolean type forbids.
 function setIsTty(value: boolean | undefined): void {
   (process.stdin as { isTTY?: boolean }).isTTY = value;
 }
@@ -66,8 +65,6 @@ function stderr(): string {
   return errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
 }
 
-// A prompt with no terminal behind it never settles: the run would end at a
-// rendered question, exit 0, and have written nothing.
 describe("link — nobody to ask", () => {
   it("refuses to ask for the host when stdin is not a terminal", async () => {
     setIsTty(undefined);
@@ -138,8 +135,6 @@ describe("link — nobody to ask", () => {
     );
   });
 
-  // The retry menu the failed pre-flight opens is a question too; with nobody
-  // to answer it the run must fail on the unreachable server, not hang there.
   it("fails the pre-flight instead of offering the retry menu without a terminal", async () => {
     setIsTty(undefined);
     // A retry menu that a mutation lets through must land on an assertion, not

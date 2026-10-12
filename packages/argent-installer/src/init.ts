@@ -3,6 +3,7 @@ import pc from "picocolors";
 import {
   init as telemetryInit,
   track,
+  hasShownFirstRunNotice,
   warmTelemetryIdentitySync,
   writeConsentFlag,
 } from "@argent/telemetry";
@@ -31,6 +32,7 @@ import { canPromptUser, noTerminalMessage } from "./terminal.js";
 import {
   InitTelemetry,
   INSTALL_MODE_FLAG_CONFLICT,
+  INSTALL_NEEDS_TERMINAL,
   INSTALL_UNCLASSIFIED_FAILED,
 } from "./init-telemetry.js";
 import { promptInstallMode, type BlockedGlobalInstall } from "./init-mode-prompt.js";
@@ -60,11 +62,26 @@ export async function init(args: string[]): Promise<void> {
     let version = getInstalledVersion() ?? "unknown";
     p.log.info(`${pc.dim("Package:")} ${PACKAGE_NAME}@${version}`);
 
-    // Without --yes every path below has a prompt in it, so a run with nobody
-    // to ask is refused before it installs or configures anything — and before
-    // consent is resolved, which is why the refusal itself is not tracked.
+    const trackStart = (): void => {
+      // Before the first event, so cli_init_start carries the same distinct_id
+      // as every later one instead of a fallback the background upgrade only
+      // migrates to mid-run. Sync by design: the async variant awaits an
+      // unref'd resolver that never settles in a short-lived CLI.
+      warmTelemetryIdentitySync();
+      track("installation:cli_init_start", {
+        package_manager: detectPackageManager(),
+        is_non_interactive: parsed.nonInteractive,
+      });
+    };
+
+    // Without --yes every path below has a prompt in it. Consent is one of them
+    // on a first run, so the refusal is tracked only once consent is settled.
     if (!parsed.nonInteractive && !canPromptUser()) {
       p.log.error(noTerminalMessage("argent init", "to take the defaults without being asked."));
+      if (!parsed.noTelemetry && hasShownFirstRunNotice()) {
+        trackStart();
+        await tel.finalize(INSTALL_NEEDS_TERMINAL);
+      }
       process.exit(2);
     }
 
@@ -80,16 +97,7 @@ export async function init(args: string[]): Promise<void> {
       process.exit(0);
     }
 
-    // Resolve the host fingerprint before the first event, so cli_init_start
-    // carries the same distinct_id as every later event instead of a fallback the
-    // background upgrade only migrates to mid-run. Sync by design: the async
-    // variant awaits an unref'd resolver that never settles in a short-lived CLI.
-    warmTelemetryIdentitySync();
-
-    track("installation:cli_init_start", {
-      package_manager: detectPackageManager(),
-      is_non_interactive: parsed.nonInteractive,
-    });
+    trackStart();
 
     // Seeds the non-interactive default and the prompt highlight, so re-running
     // init in a local-mode repo doesn't silently revert it to global. Absent a
@@ -129,12 +137,9 @@ export async function init(args: string[]): Promise<void> {
       ? { target: globalTarget, pm: detectPackageManager() }
       : null;
 
-    // A blocked global install leaves nothing to ask when argent could carry
-    // out none of the remedies even if one were chosen. Fall back to what the
-    // project already recorded, the same answer resolveInstallModeFromFlags
-    // gives `--yes` for this situation; without a record the global path makes
-    // the install step below say why, with the remedies spelled out, instead of
-    // offering a choice that ends there.
+    // Nothing to ask when argent could carry out none of the remedies: fall back
+    // to the recorded mode, as `--yes` does. Without a record the install step
+    // below spells the remedies out.
     const skipBlockedModePrompt =
       blockedGlobal !== null &&
       !canRecoverBlockedGlobal(

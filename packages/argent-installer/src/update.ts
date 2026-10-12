@@ -716,7 +716,7 @@ export async function update(args: string[]): Promise<void> {
         await trackPackageAction("update_failed", updateStartTime, false, UPDATE_NEEDS_TERMINAL);
         await failUpdateTelemetry(UPDATE_NEEDS_TERMINAL);
         p.outro(pc.red("Update failed."));
-        process.exit(1);
+        process.exit(2);
       }
 
       const picked = await promptInstallTargets("update");
@@ -774,13 +774,14 @@ export async function update(args: string[]): Promise<void> {
       process.exit(0);
     }
 
-    // Nothing updated and a target hard-failed: failure telemetry, exit 1, no
-    // refresh. A partial run with an "updated" target falls through — it still
-    // needs its refresh, and the failure resurfaces in the exit code below.
+    // Nothing updated and a target hard-failed: failure telemetry, exit 1 (2
+    // for a no-terminal refusal), no refresh. A partial run with an "updated"
+    // target falls through — it still needs its refresh, and the failure
+    // resurfaces in the exit code below.
     if (firstFailure && !outcomes.includes("updated")) {
       await failUpdateTelemetry(firstFailure);
       p.outro(pc.red("Update failed."));
-      process.exit(1);
+      process.exit(firstFailure === UPDATE_NEEDS_TERMINAL ? 2 : 1);
     }
 
     // The refresh is keyed on the PROJECT's mode (installMode), not the install
@@ -906,11 +907,9 @@ export async function update(args: string[]): Promise<void> {
         scope: localAdapters.length > 0 ? "local" : "global",
         effectiveRoot: projectRoot,
         // Same one-shot confirmation init uses for cross-project removals.
-        // An update with nobody to ask — --yes, or no terminal — passes no
-        // confirmer and the sweep reports instead of removing: an unattended
-        // run must never delete cross-project state on a fallible PATH probe.
-        // A terminal-less run reaches here only with nothing to install and no
-        // coexisting pair to pick between; both of those questions refuse.
+        // --yes or no terminal passes no confirmer (the sweep goes report-only):
+        // an unattended run must never delete cross-project state on a
+        // fallible PATH probe.
         confirmCrossProjectRemovals:
           nonInteractive || !canPromptUser()
             ? undefined

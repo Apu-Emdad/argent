@@ -296,10 +296,8 @@ if [[ "$PHASE" == "preinstall" ]]; then
   absent "$out" "EACCES"
 
   # A Dockerfile or CI step runs the same command with no terminal behind it.
-  # A prompt there is never answered: the run would end at a rendered menu, exit
-  # 0, and have installed and configured nothing. Not Nix-specific — this suite
-  # is simply where an end-to-end init runs. Scenario A is the same command with
-  # --yes, which gets as far as the store and reports what blocks it there.
+  # A menu there would never be answered: the run would end at a rendered
+  # prompt, exit 0, and have installed nothing.
   begin "A2. argent init --global with no terminal to prompt on"
   home="$(new_home a2)"
   project="$(new_project a2)"

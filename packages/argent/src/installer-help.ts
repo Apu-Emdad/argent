@@ -109,9 +109,6 @@ interface InstallerCommandMeta {
   aliasOf?: InstallerCommand;
 }
 
-// init always has a question to ask; update only has one when an install is
-// pending or a global and a local install coexist, and runs to completion
-// without a terminal when it has neither.
 const NON_INTERACTIVE_OPTION: InstallerOption = {
   flag: "--yes, -y",
   description: "Run without prompts, accepting defaults. Required with no terminal on stdin.",

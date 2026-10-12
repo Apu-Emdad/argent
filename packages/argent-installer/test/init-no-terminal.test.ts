@@ -23,6 +23,7 @@ const telemetryMock = vi.hoisted(() => ({
   flush: vi.fn(async () => {}),
   warmTelemetryIdentitySync: vi.fn(),
   writeConsentFlag: vi.fn(),
+  hasShownFirstRunNotice: vi.fn(() => false),
 }));
 vi.mock("@argent/telemetry", () => telemetryMock);
 
@@ -32,8 +33,7 @@ vi.mock("../src/first-run-notice.js", () => ({
   resolveTelemetryConsent: vi.fn(async () => ({ kind: "cancelled" })),
 }));
 
-// Node leaves isTTY undefined on a stdin that is not a terminal; the declared
-// type admits only boolean, hence the cast.
+// Off a terminal Node leaves isTTY undefined, which its boolean type forbids.
 function setIsTty(value: boolean | undefined): void {
   (process.stdin as { isTTY?: boolean }).isTTY = value;
 }
@@ -60,8 +60,6 @@ afterEach(() => {
   exitSpy.mockRestore();
 });
 
-// A menu with no terminal behind it never settles once stdin runs dry: the run
-// would end at a rendered prompt, exit 0, and have installed nothing.
 describe("init — nobody to ask", () => {
   it("refuses before resolving consent or installing when stdin is not a terminal", async () => {
     setIsTty(undefined);
@@ -70,15 +68,48 @@ describe("init — nobody to ask", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2);
     expect(resolveTelemetryConsent).not.toHaveBeenCalled();
-    // The refusal lands before consent is resolved, so the run is never started
-    // in telemetry either. (The spied exit throws instead of leaving, so init's
-    // own catch does still fire here; a real exit(2) leaves at the guard.)
+    // No settled consent on a first run. (The spied exit throws, so init's
+    // catch still fires here; a real exit(2) does not reach it.)
     expect(telemetryMock.track).not.toHaveBeenCalledWith(
       "installation:cli_init_start",
       expect.anything()
     );
     const errors = vi.mocked(log.error).mock.calls.map(([m]) => m as string);
     expect(errors.some((m) => m.includes("take the defaults without being asked"))).toBe(true);
+  });
+
+  it("tracks the refusal once consent is settled", async () => {
+    setIsTty(undefined);
+    telemetryMock.hasShownFirstRunNotice.mockReturnValueOnce(true);
+
+    await expect(init([])).rejects.toThrow(ExitSentinel);
+
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(telemetryMock.track).toHaveBeenCalledWith(
+      "installation:cli_init_start",
+      expect.anything()
+    );
+    expect(telemetryMock.track).toHaveBeenCalledWith(
+      "installation:cli_init_complete",
+      expect.objectContaining({ is_success: false, error_code: "INSTALL_NEEDS_TERMINAL" })
+    );
+  });
+
+  it("tracks nothing under --no-telemetry", async () => {
+    setIsTty(undefined);
+    telemetryMock.hasShownFirstRunNotice.mockReturnValue(true);
+
+    try {
+      await expect(init(["--no-telemetry"])).rejects.toThrow(ExitSentinel);
+    } finally {
+      telemetryMock.hasShownFirstRunNotice.mockReturnValue(false);
+    }
+
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(telemetryMock.track).not.toHaveBeenCalledWith(
+      "installation:cli_init_start",
+      expect.anything()
+    );
   });
 
   it("runs on past the guard under --yes", async () => {

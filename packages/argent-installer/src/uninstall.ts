@@ -143,8 +143,8 @@ const UNINSTALL_NEEDS_TERMINAL: InstallerFailureSignal = {
   error_kind: "validation",
 };
 
-// Catch-all for any unexpected throw in the prune/cleanup section or a prompt,
-// so the buffered cli_uninstall_start still flushes with a terminal event.
+// Terminal event for an otherwise unclassified throw, so the buffered
+// cli_uninstall_start still gets flushed.
 const UNINSTALL_UNCLASSIFIED_FAILED: InstallerFailureSignal = {
   error_code: FAILURE_CODES.UNINSTALL_UNCLASSIFIED_FAILED,
   failure_stage: "installer_uninstall_unclassified",

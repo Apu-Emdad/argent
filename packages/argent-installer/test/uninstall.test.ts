@@ -64,8 +64,7 @@ vi.mock("@clack/prompts", () => ({
   note: vi.fn(),
 }));
 
-// Node leaves isTTY undefined on a stdin that is not a terminal; the declared
-// type admits only boolean, hence the cast.
+// Off a terminal Node leaves isTTY undefined, which its boolean type forbids.
 function setIsTty(value: boolean | undefined): void {
   (process.stdin as { isTTY?: boolean }).isTTY = value;
 }
@@ -124,8 +123,6 @@ afterEach(() => {
 });
 
 describe("uninstall — nobody to confirm with", () => {
-  // A confirm with no terminal behind it never settles: the run would end at a
-  // rendered prompt, exit 0, and have removed nothing.
   it("refuses before removing anything when stdin is not a terminal", async () => {
     process.chdir(tmpDir);
     // The refusal reports install_mode, so give the project a mode that is not
