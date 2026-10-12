@@ -12,7 +12,6 @@ import { isYarnPnp } from "./preflight.js";
 // update/uninstall probe and handle each independently.
 
 // `which argent` also matches the copy a temp package runner prepends to PATH.
-// Matched against the path with `/` separators.
 const TEMP_RUNNER_PATTERNS = [
   // npx: <npm cache>/_npx/<hash>/node_modules/.bin
   /\/_npx\//,

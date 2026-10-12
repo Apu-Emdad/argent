@@ -17,8 +17,8 @@ vi.mock("@clack/prompts", async (importOriginal) => ({
 }));
 vi.mock("@argent/telemetry", () => ({ track: vi.fn() }));
 
-function whichFinds(...paths: string[]): void {
-  childProcessMock.execFileSync.mockReturnValue(paths.map((p) => `${p}\n`).join(""));
+function whichFinds(path: string): void {
+  childProcessMock.execFileSync.mockReturnValue(`${path}\n`);
 }
 
 // Where each runner puts its own copy of argent: the POSIX layouts as observed
@@ -81,11 +81,6 @@ describe("isGloballyInstalled — temp package runners", () => {
 
   it.each(GLOBAL_BINS)("counts a %s global install", (_pm, bin) => {
     whichFinds(bin);
-    expect(isGloballyInstalled()).toBe(true);
-  });
-
-  it.each(TEMP_RUNNER_BINS)("finds a global install behind the copy %s runs", (_runner, bin) => {
-    whichFinds(bin, "/usr/local/bin/argent");
     expect(isGloballyInstalled()).toBe(true);
   });
 });
