@@ -226,9 +226,11 @@ describe("isNixStorePath", () => {
     const realStore = path.join(tmpRoot, "nix", "store");
     fs.mkdirSync(realStore, { recursive: true });
     fs.symlinkSync(path.join(tmpRoot, "nix"), path.join(tmpRoot, "nixlink"));
+    fs.symlinkSync(realStore, path.join(tmpRoot, "npm-global"));
     vi.stubEnv("NIX_STORE_DIR", path.join(tmpRoot, "nixlink", "store"));
     try {
       expect(isNixStorePath(realStore)).toBe(true);
+      expect(isNixStorePath(path.join(tmpRoot, "npm-global"))).toBe(true);
     } finally {
       vi.unstubAllEnvs();
     }
