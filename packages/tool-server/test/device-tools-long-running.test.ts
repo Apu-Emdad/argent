@@ -1,5 +1,3 @@
-// Each can run past the MCP adapter's 30s FETCH_TIMEOUT_MS, which aborts and
-// replays a call that is not longRunning (packages/argent-mcp/src/tool-caller.ts).
 import { describe, expect, it } from "vitest";
 import { Registry } from "@argent/registry";
 import { createBootDeviceTool } from "../src/tools/devices/boot-device";

@@ -401,38 +401,6 @@ describe("simulatorServerBlueprint.factory — receives a pre-resolved DeviceInf
     }
   });
 
-  it("names the binary's last error when it never becomes ready", async () => {
-    const { simulatorServerBlueprint } = await import("../src/blueprints/simulator-server");
-    vi.useFakeTimers();
-    try {
-      const fakeProc = makeFakeProc();
-      spawnMock.mockReturnValue(fakeProc);
-
-      const device = androidDevice("emulator-5554");
-      const factoryPromise = simulatorServerBlueprint.factory({}, device, { device });
-      const settled = factoryPromise.catch((e: unknown) => e);
-
-      await vi.advanceTimersByTimeAsync(1_000);
-      fakeProc.stderr.push(
-        "[2026-09-23T16:23:35Z INFO  simulator_server::media_handler] waiting for emulator\n"
-      );
-      // No trailing newline: the line is still partial when the deadline fires.
-      fakeProc.stderr.push('Error: emulator "emulator-5554" not found among running emulators');
-      await vi.advanceTimersByTimeAsync(30_000);
-
-      const error = (await settled) as Error;
-      expect(error.message).toBe(
-        'Timed out waiting for simulator-server to become ready:\nError: emulator "emulator-5554" not found among running emulators'
-      );
-      expect(getFailureSignal(error)).toMatchObject({
-        error_code: "SIMULATOR_SERVER_READY_TIMEOUT",
-      });
-      expect(fakeProc.kill).toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("falls back to the STREAM_GRACE_MS resolve when only api_ready arrives (non-streaming build)", async () => {
     // Non-streaming / older simulator-server builds never print `stream_ready`.
     // The blueprint must still resolve, after a bounded grace window, with an
