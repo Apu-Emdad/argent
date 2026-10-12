@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { stripVTControlCharacters } from "node:util";
 import { update } from "../src/update.js";
 
 // Declining the update prompt must cancel + exit 0 without the config refresh
@@ -227,7 +228,7 @@ describe("update — read-only global directory", () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(promptsMock.confirm).not.toHaveBeenCalled();
       expect(npmInstallCalls()).toHaveLength(0);
-      const message = String(promptsMock.log.error.mock.calls[0]?.[0]);
+      const message = stripVTControlCharacters(String(promptsMock.log.error.mock.calls[0]?.[0]));
       expect(message).toContain(`cannot ${verb} @swmansion/argent globally`);
       expect(message.split("\n").map((line) => line.trim())).toContain(localInit);
     }
