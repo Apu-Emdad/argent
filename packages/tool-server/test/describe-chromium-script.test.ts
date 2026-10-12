@@ -11,8 +11,8 @@ import { DESCRIBE_DOM_SCRIPT } from "../src/tools/describe/platforms/chromium";
  *
  * The mock implements only the DOM surface the script reads: getBoundingClientRect,
  * getComputedStyle (display / visibility / opacity / overflow{,X,Y} / position, plus
- * whatever transform-like property a fixture sets, and a select's ::picker(select)),
- * client{Left,Top,Width,Height} and offset{Left,Top,Width,Height} (clipping), children,
+ * whatever transform-like property a fixture sets), client{Left,Top,Width,Height} and
+ * offset{Width,Height} (padding-box clipping), children,
  * childNodes (text), getAttribute/hasAttribute, open shadowRoot, iframe contentDocument,
  * and a Range whose rect unions the element's own painted content with the still-laid-out
  * boxes of its descendants (everything but display:none) — so it reproduces the real
@@ -64,8 +64,6 @@ defineNative(MockElement.prototype, "clientLeft", "__clientLeft");
 defineNative(MockElement.prototype, "clientTop", "__clientTop");
 defineNative(MockHTMLElement.prototype, "offsetWidth", "__offsetWidth");
 defineNative(MockHTMLElement.prototype, "offsetHeight", "__offsetHeight");
-defineNative(MockHTMLElement.prototype, "offsetLeft", "__offsetLeft");
-defineNative(MockHTMLElement.prototype, "offsetTop", "__offsetTop");
 // getAttribute / hasAttribute / getBoundingClientRect are methods on Element.prototype.
 // The script invokes them via the captured `Element.prototype.X` so a [LegacyOverrideBuiltins]
 // form can't shadow them to a control element (which would crash with "not a function").
@@ -98,8 +96,6 @@ type Opts = {
   // client{Left,Top,Width,Height}: border-left/top and the padding box minus scrollbars
   client?: { left: number; top: number; width: number; height: number };
   offset?: { width: number; height: number }; // untransformed border-box size
-  offsetPos?: { left: number; top: number }; // offsetLeft / offsetTop
-  picker?: Record<string, string>; // computed style of a select's ::picker(select)
   scrollSize?: { width: number; height: number }; // scrollWidth / scrollHeight
   svg?: boolean; // an Element in the SVG namespace
   // A nested <svg>: its viewport in the parent's user space, mapped by the parent's
@@ -147,11 +143,6 @@ function el(opts: Opts = {}): MockElement {
     node.__offsetWidth = opts.offset.width;
     node.__offsetHeight = opts.offset.height;
   }
-  if (opts.offsetPos) {
-    node.__offsetLeft = opts.offsetPos.left;
-    node.__offsetTop = opts.offsetPos.top;
-  }
-  node.__picker = opts.picker;
   if (opts.scrollSize) {
     node.__scrollWidth = opts.scrollSize.width;
     node.__scrollHeight = opts.scrollSize.height;
@@ -257,8 +248,7 @@ function run(
   g.window = {
     innerWidth: W,
     innerHeight: H,
-    getComputedStyle: (e: Record<string, unknown>, pseudo?: string) =>
-      pseudo === "::picker(select)" ? e.__picker : e.__style,
+    getComputedStyle: (e: Record<string, unknown>) => e.__style,
   };
   g.document = {
     documentElement: root,
@@ -1150,72 +1140,32 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
     }
   });
 
-  it("clips an open select's picker content to the picker instead of its clips, except a leading <button>", () => {
-    // The picker's border box is 82x62 at (0, 160) with a 1px border and 4px padding, so its
-    // padding box spans x 1..81, y 161..221. Its content is scrolled up by 20px.
-    const edges = (prop: (side: string) => string, v: string) =>
-      Object.fromEntries(["Top", "Right", "Bottom", "Left"].map((side) => [prop(side), v]));
-    const box = {
-      ...edges((s) => `padding${s}`, "4px"),
-      ...edges((s) => `border${s}Width`, "1px"),
-    };
-    for (const picker of [
-      { ...box, boxSizing: "border-box", width: "82px", height: "62px" },
-      { ...box, boxSizing: "content-box", width: "72px", height: "52px" },
-    ]) {
-      const select = (open: boolean, children: MockElement[]) =>
-        el({
-          tag: "select",
-          topLayer: open ? ":open" : undefined,
-          picker,
-          rect: { x: 1, y: 60, w: 80, h: 25 },
-          style: { display: "inline-block" },
-          children,
-        });
-      const kid = (tag: string, id: string, y: number, opts: Opts = {}) =>
-        el({ tag, attrs: { id }, rect: { x: 5, y, w: 72, h: 20 }, ...opts });
-      const { tree } = run([
-        scroller(
-          [
-            select(true, [
-              kid("button", "lead", 170),
-              kid("option", "gone", 0, { style: { display: "none" } }),
-              kid("option", "floating", 231, { style: { position: "absolute" } }),
-              kid("option", "pinned", 240, { style: { position: "fixed" } }),
-              kid("option", "first", 147, {
-                offsetPos: { left: 4, top: 166 },
-                style: { marginLeft: "0px", marginTop: "2px" },
-              }),
-              kid("button", "late", 169, { rect: { x: 5, y: 169, w: 100, h: 20 } }),
-              kid("option", "cut", 211),
-              kid("option", "past", 231),
-            ]),
-            select(true, [kid("option", "only", 165, { offsetPos: { left: 4, top: 164 } })]),
-            select(true, [kid("option", "loose", 170, { style: { position: "absolute" } })]),
-            select(false, [kid("option", "closed", 170, { offsetPos: { left: 4, top: 164 } })]),
-            el({
-              tag: "details",
-              topLayer: ":open",
-              picker,
-              children: [kid("div", "disclosed", 170, { offsetPos: { left: 4, top: 164 } })],
-            }),
-          ],
-          { style: { position: "relative" } }
-        ),
-      ]);
-      const at = picker.boxSizing;
-      expect(pxFrame(tree, "lead").h, at).toBe(0);
-      expect(pxFrame(tree, "floating").h, at).toBe(0);
-      expect(pxFrame(tree, "pinned"), at).toEqual({ x: 5, y: 240, w: 72, h: 20 });
-      expect(pxFrame(tree, "first"), at).toEqual({ x: 5, y: 161, w: 72, h: 6 });
-      expect(pxFrame(tree, "late"), at).toEqual({ x: 5, y: 169, w: 76, h: 20 });
-      expect(pxFrame(tree, "cut"), at).toEqual({ x: 5, y: 211, w: 72, h: 10 });
-      expect(pxFrame(tree, "past").h, at).toBe(0);
-      expect(pxFrame(tree, "only"), at).toEqual({ x: 5, y: 165, w: 72, h: 20 });
-      expect(pxFrame(tree, "loose"), at).toEqual({ x: 5, y: 170, w: 72, h: 20 });
-      expect(pxFrame(tree, "closed").h, at).toBe(0);
-      expect(pxFrame(tree, "disclosed").h, at).toBe(0);
-    }
+  it("lets an open select's picker content escape its clips, but not its leading <button>", () => {
+    const BELOW = (y: number) => ({ x: 1, y, w: 80, h: 20 });
+    const select = (open: boolean, children: MockElement[]) =>
+      el({
+        tag: "select",
+        topLayer: open ? ":open" : undefined,
+        rect: { x: 1, y: 60, w: 80, h: 25 },
+        style: { display: "inline-block" },
+        children,
+      });
+    const btn = (id: string, y: number) => el({ tag: "button", attrs: { id }, rect: BELOW(y) });
+    const opt = (id: string, y: number) => el({ tag: "option", attrs: { id }, rect: BELOW(y) });
+    const { tree } = run([
+      scroller([
+        select(true, [btn("lead", 150), opt("opt", 170), btn("late", 190)]),
+        select(true, [opt("first", 210)]),
+        select(false, [opt("closed", 230)]),
+        el({ tag: "details", topLayer: ":open", children: [opt("disclosed", 250)] }),
+      ]),
+    ]);
+    expect(pxFrame(tree, "lead").h).toBe(0);
+    expect(pxFrame(tree, "opt")).toEqual(BELOW(170));
+    expect(pxFrame(tree, "late")).toEqual(BELOW(190));
+    expect(pxFrame(tree, "first")).toEqual(BELOW(210));
+    expect(pxFrame(tree, "closed").h).toBe(0);
+    expect(pxFrame(tree, "disclosed").h).toBe(0);
   });
 
   it("extends an overflow: clip or contain: paint edge by overflow-clip-margin", () => {

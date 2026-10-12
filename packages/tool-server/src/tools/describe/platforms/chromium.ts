@@ -73,8 +73,6 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
   const getClientTop = protoGetter(Element.prototype, "clientTop");
   const getOffsetWidth = protoGetter(HTMLElement.prototype, "offsetWidth");
   const getOffsetHeight = protoGetter(HTMLElement.prototype, "offsetHeight");
-  const getOffsetLeft = protoGetter(HTMLElement.prototype, "offsetLeft");
-  const getOffsetTop = protoGetter(HTMLElement.prototype, "offsetTop");
   const getAttr = Element.prototype.getAttribute;
   const hasAttr = Element.prototype.hasAttribute;
   const getBCR = Element.prototype.getBoundingClientRect;
@@ -233,36 +231,10 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
   }
 
   // An open customizable select draws every child but a leading <button> in its
-  // top-layer ::picker(select), a scroll container with no DOM box. Its padding box is
-  // placed from its first laid-out child's offsetLeft/Top, which ignore its scroll.
-  function pickerClips(el, kids) {
-    if (getTagName.call(el) !== "SELECT" || !matches(el, ":open")) return null;
-    const first = kids.find((k, i) => {
-      const s = window.getComputedStyle(k);
-      return (
-        (i > 0 || getTagName.call(k) !== "BUTTON") &&
-        !/none|contents/.test(s.display) &&
-        !/absolute|fixed/.test(s.position)
-      );
-    });
-    if (!first) return NO_CLIP;
-    const ps = window.getComputedStyle(el, "::picker(select)");
-    const fs = window.getComputedStyle(first);
-    const n = (v) => parseFloat(v) || 0;
-    // offsetLeft/Top skip the picker's border.
-    const left =
-      getOffsetLeft.call(first) - n(fs.marginLeft) - n(ps.paddingLeft) + n(ps.borderLeftWidth);
-    const top =
-      getOffsetTop.call(first) - n(fs.marginTop) - n(ps.paddingTop) + n(ps.borderTopWidth);
-    const content = ps.boxSizing !== "border-box";
-    const width = content
-      ? n(ps.width) + n(ps.paddingLeft) + n(ps.paddingRight)
-      : n(ps.width) - n(ps.borderLeftWidth) - n(ps.borderRightWidth);
-    const height = content
-      ? n(ps.height) + n(ps.paddingTop) + n(ps.paddingBottom)
-      : n(ps.height) - n(ps.borderTopWidth) - n(ps.borderBottomWidth);
-    const clip = { left, top, right: left + width, bottom: top + height };
-    return { flow: clip, abs: clip, fixed: null };
+  // top-layer ::picker(select).
+  function inPicker(el, child, i) {
+    if (getTagName.call(el) !== "SELECT" || !matches(el, ":open")) return false;
+    return i > 0 || getTagName.call(child) !== "BUTTON";
   }
 
   function ownClip(clips, style) {
@@ -523,11 +495,9 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     const clip = ownClip(clips, style);
     const inner = childClips(el, style, clips, clip);
     const childResults = [];
-    const kids = Array.from(getChildrenEls.call(el));
-    const picker = pickerClips(el, kids);
+    const kids = getChildrenEls.call(el);
     for (let i = 0; i < kids.length; i++) {
-      const inPicker = picker && (i > 0 || getTagName.call(kids[i]) !== "BUTTON");
-      const c = walk(kids[i], depth + 1, inPicker ? picker : inner);
+      const c = walk(kids[i], depth + 1, inPicker(el, kids[i], i) ? NO_CLIP : inner);
       if (c) childResults.push(c);
     }
 
