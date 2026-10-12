@@ -1246,8 +1246,6 @@ describe("argent flow run", () => {
     expect(errs).toEqual([]);
   });
 
-  // Skipped as root / on Windows, where a mode-000 directory is still readable —
-  // see canDenyRead.
   it.skipIf(!canDenyRead)(
     "fails an unreadable flows directory instead of calling it absent",
     async () => {
@@ -1266,12 +1264,10 @@ describe("argent flow run", () => {
         await fsp.chmod(flowsDir, 0o700);
       }
 
-      // Same wording and exit code as `flow run` on the same directory. The
-      // path is matched by its tail: cwd resolves symlinks, and tmpdir is one
-      // on macOS.
-      const line = errs.join("\n");
-      expect(line.startsWith("Could not read flow directory: ")).toBe(true);
-      expect(line.endsWith(path.join("list-unreadable-project", ".argent", "flows"))).toBe(true);
+      const runRoot = await fsp.realpath(listRoot);
+      expect(errs).toEqual([
+        `Could not read flow directory: ${path.join(runRoot, ".argent", "flows")}`,
+      ]);
       expect(logs).toEqual([]);
     }
   );

@@ -1444,8 +1444,6 @@ export async function flow(argv: string[], options: FlowCommandOptions): Promise
       else console.log(paths.join("\n"));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        // Unreadable is not absent: reported as absence, a caller reads success
-        // and concludes the project has no flows.
         console.error(`Could not read flow directory: ${dir}`);
         return exitAfterFlush(2);
       }
