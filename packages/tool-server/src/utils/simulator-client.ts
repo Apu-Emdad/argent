@@ -596,6 +596,10 @@ export interface ServerRecordingResult {
   warning: string | null;
 }
 
+const SERVER_RECORDING_START_HINT =
+  "simulator-server may already be recording for this request, which blocks later starts " +
+  "until simulator-server exits. Call stop-simulator-server for that UDID, then retry.";
+
 /**
  * Start recording inside simulator-server. Returns the id `stopServerRecording`
  * must present, or null when this build has no recording route.
@@ -620,9 +624,7 @@ export async function startServerRecording(
     // A recording may be running, so falling back would capture twice.
     throw new FailureError(
       `screen-recording-start failed: simulator-server answered the recording command with ` +
-        `${JSON.stringify(body).slice(0, 200)} instead of a status. A recording an earlier ` +
-        `start attempt began may still be running inside simulator-server — for example one ` +
-        `whose reply was lost — and ends at its own time limit; retrying after that should succeed.`,
+        `${JSON.stringify(body).slice(0, 200)} instead of a status. ${SERVER_RECORDING_START_HINT}`,
       {
         error_code: FAILURE_CODES.SCREEN_RECORDING_PROCESS_ERROR,
         failure_stage: "screen_recording_server_start",
@@ -698,13 +700,7 @@ async function recordingPost<T extends { error?: string }>(
   signal?: AbortSignal
 ): Promise<T | null> {
   const toolLabel = `screen-recording-${stage}`;
-  // A start whose reply was lost may have left a recording running.
-  const startHint =
-    stage === "start"
-      ? "A recording an earlier start attempt began may still be running inside " +
-        "simulator-server — for example one whose reply was lost — and ends at its own " +
-        "time limit; retrying after that should succeed."
-      : undefined;
+  const startHint = stage === "start" ? SERVER_RECORDING_START_HINT : undefined;
   let res: Response;
   try {
     res = await fetch(`${api.apiUrl}/api/recording/${stage}`, {

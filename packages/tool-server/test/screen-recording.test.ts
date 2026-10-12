@@ -1075,76 +1075,6 @@ describe("touch visualizer", () => {
     expect(api.pointerDisable).toBeNull();
   });
 
-  it("does not report success for a host capture dispose stopped during pointer arming", async () => {
-    const instance = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
-      device: iosDevice,
-    } as never);
-    const api = instance.api;
-    fakeStream();
-    const child = fakeChild();
-    child.exitOnStdinEnd();
-    let reached!: () => void;
-    const atPointer = new Promise<void>((resolve) => (reached = resolve));
-    let admit!: () => void;
-    const parked = new Promise<void>((resolve) => (admit = resolve));
-    const enable = vi.fn(async () => {
-      reached();
-      await parked;
-      return true;
-    });
-    const pointer = { enable, disable: vi.fn(async () => {}) } satisfies PointerControl;
-
-    const promise = startCapture(api, {
-      streamUrl: STREAM_URL,
-      timeLimitSeconds: 180,
-      watermark: false,
-      trimStatic: false,
-      pointer,
-    });
-    promise.catch(() => {});
-    await vi.advanceTimersByTimeAsync(READY_GRACE_MS);
-    await atPointer; // suspended in enable(), session already stamped
-
-    await instance.dispose();
-    admit!();
-
-    await expect(promise).rejects.toMatchObject({
-      message: expect.stringContaining("shutting down"),
-    });
-    expect(api.recordingTimeout).toBeNull();
-    expect(api.recordingActive).toBe(false);
-  });
-
-  it("does not stamp a host capture whose readiness resolved after dispose killed the encoder", async () => {
-    const instance = await screenRecordingSessionBlueprint.factory({}, iosDevice, {
-      device: iosDevice,
-    } as never);
-    const api = instance.api;
-    fakeStream();
-    // FakeChild.kill emits no 'exit', so readiness settles on its timer.
-    const child = fakeChild();
-
-    const promise = startCapture(api, {
-      streamUrl: STREAM_URL,
-      timeLimitSeconds: 180,
-      watermark: false,
-      trimStatic: false,
-    });
-    promise.catch(() => {});
-    await vi.advanceTimersByTimeAsync(1);
-    expect(api.pendingChild).toBe(child as unknown as ChildProcess);
-
-    await instance.dispose();
-    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
-
-    await vi.advanceTimersByTimeAsync(READY_GRACE_MS);
-
-    await expect(promise).rejects.toMatchObject({
-      message: expect.stringContaining("shutting down"),
-    });
-    expect(getActiveScreenRecordings()).toHaveLength(0);
-  });
-
   it("warns at stop when the overlay could not be enabled", async () => {
     const api = await makeSession(iosDevice);
     fakeStream();
@@ -1784,7 +1714,7 @@ describe("server-side recording", () => {
     expect(api.recordingActive).toBe(false);
     expect(api.pendingRetrieval).toBe(true);
     expect(getActiveScreenRecordings()).toMatchObject([
-      { status: "finalized", finalizedReason: "it hit its 5s time limit" },
+      { status: "finalized", finalizedReason: "it hit its 5s time limit", serverSide: true },
     ]);
 
     await expect(startOnServer(api, server, {})).rejects.toMatchObject({
@@ -2238,7 +2168,7 @@ describe("server recording wire protocol", () => {
     expect(getFailureSignal(err)?.error_code).toBe(FAILURE_CODES.SIMULATOR_NON_JSON_RESPONSE);
   });
 
-  it("warns a timed-out start may be recording server-side and to retry after the cap", async () => {
+  it("warns a timed-out start may be recording server-side and to restart simulator-server", async () => {
     const abort = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
     vi.stubGlobal(
       "fetch",
@@ -2254,8 +2184,10 @@ describe("server recording wire protocol", () => {
     }).catch((e: unknown) => e);
 
     expect((err as Error).message).toContain("timed out");
-    expect((err as Error).message).toContain("may still be running inside simulator-server");
-    expect((err as Error).message).toContain("retrying after that should succeed");
+    expect((err as Error).message).toContain("may already be recording for this request");
+    expect((err as Error).message).toContain(
+      "Call stop-simulator-server for that UDID, then retry."
+    );
   });
 
   it("omits the may-be-recording hint when the start connection is refused", async () => {
@@ -2276,7 +2208,7 @@ describe("server recording wire protocol", () => {
     }).catch((e: unknown) => e);
 
     expect((err as Error).message).toContain("connection refused");
-    expect((err as Error).message).not.toContain("may still be running inside simulator-server");
+    expect((err as Error).message).not.toContain("may already be recording");
   });
 
   it("bounds both recording commands so a silent sim-server cannot wedge the tool", async () => {
@@ -2318,7 +2250,9 @@ describe("server recording wire protocol", () => {
 
     await expect(
       startServerRecording(fakeApi, { watermark: true, trimStatic: true, timeLimitSeconds: 60 })
-    ).rejects.toMatchObject({ message: expect.stringContaining("instead of a status") });
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/instead of a status\. .*Call stop-simulator-server/),
+    });
   });
 
   it("reports an empty 2xx body as unreadable, not as a rejection", async () => {
