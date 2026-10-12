@@ -153,14 +153,6 @@ interface FormatDescribeOptions {
   source: DescribeSource;
 }
 
-/** Gesture tools per source, where they differ from the touch default. */
-const GESTURE_TOOLS_BY_SOURCE: Partial<Record<DescribeSource, string>> = {
-  "cdp-dom": "gesture-tap / gesture-scroll / gesture-drag",
-  "xcuitest-runner": "gesture-tap / gesture-swipe",
-};
-
-const DEFAULT_GESTURE_TOOLS = "gesture-tap / gesture-swipe / gesture-pinch";
-
 export function formatDescribeTree(root: DescribeNode, opts: FormatDescribeOptions): string {
   // The iOS providers emit a flat list of leaves under a synthetic root; the
   // sources below return a real parent/child tree, whose descendants beyond
@@ -191,10 +183,12 @@ export function formatDescribeTree(root: DescribeNode, opts: FormatDescribeOptio
         'and count rows/columns to build the path (e.g. one row down and two columns right → ["down","right","right","select"]).'
     );
   } else {
+    // Physical iOS has no two-finger gestures. Do not recommend gesture-pinch for this source.
     header.push(
-      `Pass them straight to ${GESTURE_TOOLS_BY_SOURCE[opts.source] ?? DEFAULT_GESTURE_TOOLS}, which expect this same space.` +
-        // Physical iOS drops pinch (table above); spell out why so an agent does not reach for it.
-        (opts.source === "xcuitest-runner" ? " No two-finger gestures on physical iOS." : "")
+      opts.source === "xcuitest-runner"
+        ? "Pass them straight to gesture-tap / gesture-swipe, which expect this same space. " +
+            "No two-finger gestures on physical iOS."
+        : "Pass them straight to gesture-tap / gesture-swipe / gesture-pinch, which expect this same space."
     );
     header.push(
       "To tap an element, use its centre: tap_x = frame.x + frame.width / 2, tap_y = frame.y + frame.height / 2."

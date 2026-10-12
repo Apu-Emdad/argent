@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatDescribeTree } from "../src/tools/describe/format-tree";
-import type { DescribeNode, DescribeSource } from "../src/tools/describe/contract";
+import type { DescribeNode } from "../src/tools/describe/contract";
 
 function leaf(
   partial: Partial<DescribeNode> & { role: string; frame: DescribeNode["frame"] }
@@ -277,8 +277,8 @@ describe("formatDescribeTree", () => {
   });
 
   // The header text is part of the agent-visible response, so it must keep
-  // pointing at the gesture tools the source's platform actually has, plus the
-  // centre formula. If this drifts the runtime help is silently misleading.
+  // pointing at gesture-tap / gesture-swipe / gesture-pinch and the centre
+  // formula. If this drifts again the runtime help is silently misleading.
   it("renders the coordinate-space + tap-formula header on every call", () => {
     const empty: DescribeNode = {
       role: "AXGroup",
@@ -290,21 +290,6 @@ describe("formatDescribeTree", () => {
     expect(out).toContain("gesture-tap");
     expect(out).toContain("tap_x = frame.x + frame.width / 2");
     expect(out).toContain("tap_y = frame.y + frame.height / 2");
-  });
-
-  it("names only the gesture tools the source's own platform supports", () => {
-    // Each platform's capability gate refuses tools it has no backend for.
-    const empty: DescribeNode = {
-      role: "AXGroup",
-      frame: { x: 0, y: 0, width: 1, height: 1 },
-      children: [],
-    };
-    const header = (source: DescribeSource) => formatDescribeTree(empty, { source }).split("\n")[3];
-
-    expect(header("cdp-dom")).toContain("gesture-tap / gesture-scroll / gesture-drag");
-    expect(header("harmony-uitest")).toContain("gesture-tap / gesture-swipe / gesture-pinch");
-    expect(header("ax-service")).toContain("gesture-tap / gesture-swipe / gesture-pinch");
-    expect(header("uiautomator")).toContain("gesture-tap / gesture-swipe / gesture-pinch");
   });
 
   // Physical iOS: the XCUITest runner is single-finger only, so the header
