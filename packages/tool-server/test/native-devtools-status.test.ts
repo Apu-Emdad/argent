@@ -488,7 +488,7 @@ describe("native-* feature tools — the non-injectable throw propagates out of 
     expectNotInjectableThrow(() =>
       nativeNetworkLogsTool.execute(
         { nativeDevtools: mkApi() },
-        { udid: U, bundleId: SYSTEM_APP, limit: 50, clear: false }
+        { udid: U, bundleId: SYSTEM_APP, limit: 50, format: "requests", clear: false }
       )
     ));
 
@@ -849,6 +849,7 @@ describe("precheckNativeDevtools maps a measured state to its remedy", () => {
           y: 1,
           className: "UIView",
           limit: 1,
+          format: "requests",
           clear: false,
         }
       )) as { status: string; message: string };
