@@ -452,9 +452,25 @@ export function withNpmForce(npxArgs: string[]): string[] {
   return ["--force", ...npxArgs];
 }
 
+// `npx --package <spec> -- argent ...` (and `npx -p <spec> argent ...`) runs
+// argent with `npm_config_package=<spec>` in its environment. A nested `npx`
+// inherits it and npm then installs <spec> in place of the requested package,
+// so `npx skills add ...` re-runs argent instead of the skills CLI (#1335).
+// The skills commands argent spawns get an environment without it.
+export function npxChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const childEnv = { ...env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.toLowerCase() === "npm_config_package") {
+      delete childEnv[key];
+    }
+  }
+  return childEnv;
+}
+
 export function isSkillsCliAvailable(): boolean {
   try {
     execSync("npx --force --no-install skills --version", {
+      env: npxChildEnv(),
       stdio: ["ignore", "ignore", "ignore"],
       timeout: PROBE_TIMEOUT_MS,
     });
