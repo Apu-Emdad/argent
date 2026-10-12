@@ -1314,19 +1314,22 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
         children: [
           el({
             tag: "svg",
-            // x/y 10 in a parent user space translated by (5, 5): viewport 15..55.
-            nestedSvg: { viewport: { x: 10, y: 10, w: 40, h: 40 }, ctm: [1, 0, 0, 1, 5, 5] },
-            rect: { x: 15, y: 15, w: 80, h: 20 },
+            // The parent's user space is scaled 2x horizontally and moved by (5, 5), so the
+            // viewport spans x 25..105, y 15..55.
+            nestedSvg: { viewport: { x: 10, y: 10, w: 40, h: 40 }, ctm: [2, 0, 0, 1, 5, 5] },
+            rect: { x: 25, y: 15, w: 110, h: 50 },
             style: { display: "inline", overflow: "hidden" },
             children: [
-              row("svin", { x: 15, y: 15, w: 20, h: 20 }),
-              row("svout", { x: 75, y: 15, w: 20, h: 20 }),
+              row("svin", { x: 25, y: 15, w: 20, h: 20 }),
+              row("svedge", { x: 95, y: 45, w: 20, h: 20 }),
+              row("svout", { x: 115, y: 15, w: 20, h: 20 }),
             ],
           }),
         ],
       }),
     ]);
-    expect(pxFrame(tree, "svin")).toEqual({ x: 15, y: 15, w: 20, h: 20 });
+    expect(pxFrame(tree, "svin")).toEqual({ x: 25, y: 15, w: 20, h: 20 });
+    expect(pxFrame(tree, "svedge")).toEqual({ x: 95, y: 45, w: 10, h: 10 });
     expect(pxFrame(tree, "svout").w).toBe(0);
   });
 
