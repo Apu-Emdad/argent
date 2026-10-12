@@ -40,9 +40,18 @@ function queryGlobalInstallDir(pm: PackageManager): string | null {
 }
 
 export function isNixStorePath(target: string): boolean {
-  const storeDir = path.resolve(process.env.NIX_STORE_DIR || "/nix/store");
-  const resolved = path.resolve(target);
+  const storeDir = realPath(process.env.NIX_STORE_DIR || "/nix/store");
+  const resolved = realPath(target);
   return resolved === storeDir || resolved.startsWith(storeDir + path.sep);
+}
+
+// A store path that does not exist is still a store path by name.
+function realPath(target: string): string {
+  try {
+    return fs.realpathSync(target);
+  } catch {
+    return path.resolve(target);
+  }
 }
 
 function nearestExistingDir(dir: string): string | null {

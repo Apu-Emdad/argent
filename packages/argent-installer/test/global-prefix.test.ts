@@ -3,9 +3,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const { mockExecFileSync } = vi.hoisted(() => ({ mockExecFileSync: vi.fn() }));
+const { mockExecFileSync, mockAccessSync } = vi.hoisted(() => ({
+  mockExecFileSync: vi.fn(),
+  mockAccessSync: vi.fn(),
+}));
 
 vi.mock("node:child_process", () => ({ execFileSync: mockExecFileSync }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  mockAccessSync.mockImplementation(actual.accessSync);
+  return { ...actual, accessSync: mockAccessSync };
+});
 
 import {
   isNixStorePath,
@@ -62,6 +70,15 @@ describe("probeGlobalInstallTarget", () => {
     fs.mkdirSync(globalDir, { recursive: true });
     fs.chmodSync(globalDir, 0o555);
     mockExecFileSync.mockReturnValue(`${globalDir}\n`);
+
+    expect(probeGlobalInstallTarget("npm")?.blocked).toBe(true);
+  });
+
+  it.each(["EACCES", "EPERM", "EROFS"])("treats %s from the write probe as blocked", (code) => {
+    mockExecFileSync.mockReturnValue(`${tmpRoot}\n`);
+    mockAccessSync.mockImplementationOnce(() => {
+      throw Object.assign(new Error(code), { code });
+    });
 
     expect(probeGlobalInstallTarget("npm")?.blocked).toBe(true);
   });
@@ -202,6 +219,18 @@ describe("isNixStorePath", () => {
     } finally {
       if (previous === undefined) delete process.env.NIX_STORE_DIR;
       else process.env.NIX_STORE_DIR = previous;
+    }
+  });
+
+  it("resolves symlinks in the store path", () => {
+    const realStore = path.join(tmpRoot, "nix", "store");
+    fs.mkdirSync(realStore, { recursive: true });
+    fs.symlinkSync(path.join(tmpRoot, "nix"), path.join(tmpRoot, "nixlink"));
+    vi.stubEnv("NIX_STORE_DIR", path.join(tmpRoot, "nixlink", "store"));
+    try {
+      expect(isNixStorePath(realStore)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 });
