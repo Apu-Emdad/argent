@@ -105,6 +105,10 @@ function logsCmd(follow: boolean): void {
   // the way a terminal user expects.
   const child = spawn("tail", ["-f", LOG_FILE], { stdio: "inherit" });
   child.on("exit", (code) => process.exit(code ?? 0));
+  child.on("error", (err) => {
+    console.error(`argent server logs: cannot follow ${LOG_FILE}: ${err.message}`);
+    process.exit(1);
+  });
 }
 
 interface StartFlags {
