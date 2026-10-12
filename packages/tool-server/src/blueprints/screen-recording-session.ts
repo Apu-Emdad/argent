@@ -138,7 +138,6 @@ export interface ScreenRecordingSessionApi {
 // finalize contract.
 const DISPOSE_FINALIZE_GRACE_MS = 1_500;
 const DISPOSE_REAP_MS = 1_000;
-/** How long an abandoned server recording's stop is waited on. */
 export const DISPOSE_SERVER_STOP_MS = 1_500;
 
 function clearLiveState(state: ScreenRecordingSessionApi): void {

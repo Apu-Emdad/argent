@@ -191,8 +191,6 @@ export async function stopServerCapture(
       outputFile,
       sizeBytes: size,
       durationMs: result.durationMs,
-      // Only when trimming cut something and the wall clock it was cut from
-      // is known.
       ...(result.trimmedMs !== null && result.trimmedMs > 0 && result.wallClockMs !== null
         ? { wallClockMs: result.wallClockMs, trimmedMs: result.trimmedMs }
         : {}),
