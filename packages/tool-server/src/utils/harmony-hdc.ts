@@ -9,58 +9,29 @@ import { resolveDevecoBinary } from "./harmony-cli";
 const execFileAsync = promisify(execFile);
 
 /**
- * Wrapper for `hdc`, the HarmonyOS device connector — the platform's `adb`.
+ * Wrapper for `hdc`, the HarmonyOS `adb`, which exits 0 for everything:
  *
- * It shares the `Emulator` manager's defining hazard (see `harmony-cli.ts`) and
- * makes it worse: `hdc` exits 0 for *everything*. Measured against hdc 3.2.0d:
+ *   shell (unknown target)       exit 0   `[Fail]Not match target...`
+ *   file recv (missing file)     exit 0   `[Fail]Error opening file...`
+ *   shell 'exit 3'               exit 0   remote status discarded
  *
- *   list targets           (none)             exit 0   ok, prints `[Empty]`
- *   shell echo hi                             exit 0   ok
- *   shell (unknown target)                    exit 0   FAILED, `[Fail]Not match target...`
- *   file recv (missing file)                  exit 0   FAILED, `[Fail]Error opening file...`
- *   shell 'exit 3'                            exit 0   remote status DISCARDED
- *
- * Two consequences drive this module:
- *
- * 1. Transport failures are classified from what was printed, never the exit
- *    code, so `runHdc` returns output rather than rejecting on a non-zero exit.
- *    Device-level errors carry a `[Fail]` prefix; a client that cannot reach its
- *    own server does not, so both `hdcFailure` and `hdcProse` are needed to
- *    cover the two, and a command with a positive success line is read off that
- *    instead of off the absence of either.
- * 2. The remote command's own exit status never reaches the host — `hdc shell`
- *    reports the status of the *connection*, not of what ran. `runHdcShell`
- *    therefore appends an `echo` of `$?` and parses it back off stdout, which is
- *    the only way to tell `uitest` succeeding from `uitest` not being installed.
+ * So failures are classified from output, and `runHdcShell` echoes `$?` back.
  */
 
-/** Prefix `hdc` puts on its own transport-level diagnostics. */
 const HDC_FAILURE_PREFIX = "[Fail]";
 
-/** `hdc list targets` prints this token rather than nothing when no device is attached. */
 export const HDC_EMPTY_SENTINEL = "[Empty]";
 
-/**
- * Sentinel used to smuggle the remote exit status back over a transport that
- * drops it. Prefixed with `__argent` so it cannot collide with a line the
- * command under test legitimately prints.
- */
 const RC_SENTINEL = "__argent_hdc_rc";
 
-/** Path of `hdc` relative to a DevEco Studio install root. */
 const HDC_RELATIVE = join("sdk", "default", "openharmony", "toolchains", "hdc");
 
 const BINARY_TTL_MS = 60_000;
 let cachedHdc: { path: string | null; checkedAt: number } | undefined;
 
 /**
- * Absolute path to `hdc`, or null when neither DevEco Studio nor a standalone
- * OpenHarmony command-line-tools install provides it.
- *
- * Unlike the emulator manager — whose binary is named `Emulator`, too generic to
- * match on PATH — `hdc` is a distinctive name owned by the HarmonyOS toolchain,
- * so PATH is consulted as a fallback for hosts that installed the command-line
- * tools without the IDE.
+ * `hdc` from DevEco Studio, else PATH: unlike `Emulator`, the name is
+ * distinctive enough to trust there.
  */
 export async function resolveHdc(): Promise<string | null> {
   const now = Date.now();
@@ -101,19 +72,12 @@ interface HdcRunResult {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-// `execFile`'s `timeout` sends `killSignal` once and never escalates, and the
-// default SIGTERM is exactly what an `hdc` client blocked on a wedged daemon can
-// ignore — leaving the parent waiting past the deadline, so every timeout below
-// would be advisory. Same reasoning and same shape as `ADB_KILL_SIGNAL`: `hdc` is
-// a single-process client of a persistent shared daemon, so reaping the direct
-// child is complete, and a group kill would wrongly take the daemon with it.
+// `execFile` sends `killSignal` once, and an `hdc` client blocked on a wedged
+// daemon ignores SIGTERM. Only the direct child: a group kill would take the
+// shared daemon. See `ADB_KILL_SIGNAL`.
 const HDC_KILL_SIGNAL = "SIGKILL" as const;
 
-/**
- * Run `hdc` with the given argv. Returns the child's output whether it exited 0
- * or not — see the header: the exit code carries no signal, so classification is
- * left to `hdcFailure`. Only a spawn failure or a timeout kill rejects.
- */
+/** Resolves with output whatever the exit code; rejects only on spawn failure or timeout. */
 export async function runHdc(
   args: string[],
   timeoutMs = DEFAULT_TIMEOUT_MS
@@ -137,9 +101,6 @@ export async function runHdc(
     if (!e.killed && typeof e.code === "number" && (e.stdout != null || e.stderr != null)) {
       return { stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
     }
-    // Kind from what happened to the child, as `adb`'s wrapper reads it: a
-    // client killed at its ceiling is a timeout, not a command that failed, and
-    // the two want different answers from whoever reads the telemetry.
     throw new FailureError(formatSubprocessFailure("hdc", args, err), {
       error_code: FAILURE_CODES.HARMONY_HDC_COMMAND_FAILED,
       failure_stage: "harmony_hdc_run",
@@ -151,13 +112,8 @@ export async function runHdc(
 }
 
 /**
- * The `[Fail]…` line `hdc` printed, or null when it reported no transport error.
- *
- * Matched on the prefix rather than a substring so a remote command that merely
- * prints the token — a log line, a test name — cannot forge a transport failure.
- * Anchored at column 0 for the same reason: `hdc` writes `[Fail]…` flush left
- * (measured on 3.2.0d), while {@link runHdcShell} passes the REMOTE command's
- * own combined output through here, where an indented line is ordinary.
+ * The column-0 `[Fail]` line, or null. Anchored so a remote command's own
+ * output, which `runHdcShell` passes through here, cannot forge one.
  */
 export function hdcFailure(result: HdcRunResult): string | null {
   const text = `${result.stdout}\n${result.stderr}`;
@@ -166,19 +122,9 @@ export function hdcFailure(result: HdcRunResult): string | null {
 }
 
 /**
- * A diagnostic `hdc` printed without the `[Fail]` prefix, or null.
- *
- * The prefix does not cover everything. Measured on hdc 3.2.0d, a client that
- * cannot reach its server writes a bare `Connect server failed` to STDERR,
- * leaves stdout empty and exits 0 — so the prefix, the streams and the status
- * all miss it, and every caller reading only {@link hdcFailure} takes the empty
- * stdout at face value. Device-level errors carry the prefix; this one fails at
- * the connector, below it.
- *
- * Prose is told from output by its delimiters: `hdc`'s own tabular output is
- * tab-separated, and a bare connect key is one word. Neither is a line that
- * holds a space and no tab. Callers whose command has a positive success signal
- * should check that first — this only says what was printed instead.
+ * Unprefixed prose `hdc` printed, or null: a client that cannot reach its
+ * server writes `Connect server failed` to stderr and exits 0. A line with a
+ * space and no tab is neither a table row nor a connect key.
  */
 export function hdcProse(result: HdcRunResult): string | null {
   return (
@@ -189,36 +135,19 @@ export function hdcProse(result: HdcRunResult): string | null {
   );
 }
 
-/**
- * Escape a string for interpolation into the single remote command line that
- * `hdc shell` hands to the device's `/bin/sh`.
- *
- * `hdc shell` takes a *command line*, not an argv — so every value that reaches
- * it (text to type, a bundle name, a file path) is shell metacharacter-bearing
- * input on a shell running as the `shell` user. POSIX single-quoting with the
- * `'\''` break is the only form that needs no escape table: verified through a
- * real device against `;`, backticks, `$`, both quote characters and non-ASCII.
- */
+/** POSIX single-quoting for the remote `/bin/sh` line `hdc shell` runs. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 interface HdcShellResult {
-  /** Everything the remote command wrote, with the status sentinel removed. */
   stdout: string;
-  /** The remote command's own exit status, recovered via the sentinel. */
   exitCode: number;
 }
 
 /**
- * Run a command on the device and return its output *and its real exit status*.
- *
- * `command` is interpolated into a remote `/bin/sh` line verbatim — build it with
- * `shellQuote` around every caller-supplied value.
- *
- * Throws on a transport failure (unknown target, dead connection) so callers can
- * treat the result as "the command ran"; a non-zero `exitCode` then means the
- * command ran and failed, which is a different thing and theirs to interpret.
+ * Run `command` (quote caller values with `shellQuote`) and return its output
+ * and real exit status. Throws on a transport failure.
  */
 export async function runHdcShell(
   connectKey: string,
@@ -244,20 +173,11 @@ export async function runHdcShell(
     );
   }
   const lines = `${result.stdout}`.split(/\r?\n/);
-  // Scan from the end: the sentinel is the last thing echoed, and a command that
-  // printed something resembling it earlier must not win over the real one.
+  // Last match: the command's own output may resemble the sentinel.
   const idx = lines.findLastIndex((l) => l.trim().startsWith(`${RC_SENTINEL}=`));
   if (idx === -1) {
-    // The device dropped the trailing echo — the command was killed on-device, or
-    // the transport truncated. Either way the status is unknown, and reporting a
-    // fabricated 0 here would turn a dead command into a silent success.
-    //
-    // A connector that never reached the device lands here too, and needs the
-    // opposite repair, so the two are told apart by what came back: any output
-    // at all means the command ran and was cut off, while an empty stdout is a
-    // call that produced nothing — the shape an unprefixed `hdc` diagnostic has
-    // (see {@link hdcProse}). Reading a truncated command's own output as that
-    // diagnostic would quote the app back at the caller as hdc's verdict.
+    // No status. Empty stdout means `hdc` never reached the device (report its
+    // prose); any output means the command was cut off.
     const prose = result.stdout.trim().length === 0 ? hdcProse(result) : null;
     throw new FailureError(
       prose
@@ -280,19 +200,9 @@ export async function runHdcShell(
   };
 }
 
-/**
- * What a completed transfer prints, measured on hdc 3.2.0d:
- *
- *   FileTransfer finish, Size:6, File count = 1, time:10ms rate:0.60kB/s
- *
- * Matched positively, because the absence of `[Fail]` does not mean the file
- * arrived: a client that cannot reach its server prints bare prose to stderr,
- * leaves stdout empty and exits 0 (see {@link hdcProse}), which read as success
- * hands the caller a path with nothing at it.
- */
+/** Matched positively: an unreachable server prints no `[Fail]` and exits 0. */
 const HDC_TRANSFER_OK = "FileTransfer finish";
 
-/** Copy a file off the device. Throws with hdc's own diagnostic if it did not arrive. */
 export async function hdcFileRecv(
   connectKey: string,
   remotePath: string,

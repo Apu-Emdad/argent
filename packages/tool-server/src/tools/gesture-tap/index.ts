@@ -86,9 +86,7 @@ const capability: ToolCapability = {
 };
 
 // Timings keep a multi-tap inside the OS double-tap window, which separate
-// tool calls could not guarantee. The gap holds only where the injection itself
-// is free: on HarmonyOS each click is its own `hdc shell` round trip, so only
-// the native `doubleClick` {@link tapHarmony} uses for a count of 2 stays inside.
+// tool calls could not guarantee.
 const TAP_HOLD_MS = 50;
 const MULTI_TAP_GAP_MS = 100;
 
@@ -111,41 +109,19 @@ async function tapChromium(
   }
 }
 
-/**
- * HarmonyOS taps go through the device's own `uitest uiInput`, not
- * simulator-server — the platform has no simulator-server controller, and
- * `uitest` is the vendor's supported injection path. This mirrors how `button`
- * and `keyboard` already reach Android through `adb` rather than the HID
- * transport.
- *
- * `uitest` has a native double-click, so a 2-tap request uses it rather than two
- * timed clicks: two separate injections are not guaranteed to land inside the
- * OS double-tap window, which is the whole point of `clickCount`. Counts above 2
- * have no native form and fall back to repeated clicks — a round trip apart, so
- * outside that window, which is why `clickCount`'s description says so rather
- * than promising a multi-tap the platform cannot deliver.
- */
+/** A count of 2 uses `uitest`'s native `doubleClick`; separate clicks are a round trip apart. */
 async function tapHarmony(
   connectKey: string,
   x: number,
   y: number,
   clickCount: number
 ): Promise<void> {
-  // One deadline for both display reads and every injection that follows them,
-  // so a multi-tap cannot spend a fresh ceiling per click and outlive the MCP
-  // layer's abort-and-replay cap — where the replay is another tap on the same
-  // spot.
+  // One deadline for the whole multi-tap, under the MCP abort-and-replay cap.
   const deadline = Date.now() + HARMONY_INTERACTION_TIMEOUT_MS;
-  // Fast prefilter, ahead of the queue wait: a panel already suspended or not
-  // yet composited is refused without waiting behind this device's queued work.
-  // It is NOT the check the injection trusts — see inside the hold.
+  // Prefilter without queueing; the trusted check is inside the hold.
   const display = await harmonyDisplay(connectKey);
   assertHarmonyDisplayReady(display, "tap");
   await holdUitestQueue(connectKey, deadline, async (ui) => {
-    // The check the injection trusts, read while holding the queue: the
-    // prefilter above saw a state that may be a full queue depth stale by the
-    // time this call reaches the device, and `uitest uiInput` answers `No
-    // Error` into a suspended panel regardless.
     const live = await harmonyDisplay(
       connectKey,
       remainingBudget(connectKey, deadline, "the display re-read")
@@ -190,9 +166,7 @@ Before tapping, determine the correct coordinates by using discovery tools — p
     if (isIosPhysicalDevice(device)) {
       return { iosDeviceRunner: iosDeviceRunnerRef(device) };
     }
-    // HarmonyOS drives `uitest` over hdc, so resolving the iOS/Android-only
-    // simulator-server blueprint here would fail the tap before it runs — the
-    // factory refuses any platform but those two.
+    // No simulator-server controller exists for HarmonyOS.
     if (device.platform === "harmony") return {};
     return { simulatorServer: simulatorServerRef(device) };
   },

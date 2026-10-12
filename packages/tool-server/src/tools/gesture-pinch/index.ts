@@ -88,22 +88,12 @@ const capability: ToolCapability = {
   harmony: { device: true },
 };
 
-/** The two contacts' normalized positions at progress `t` (0 = start, 1 = end). */
 interface Contacts {
   first: { x: number; y: number };
   second: { x: number; y: number };
 }
 
-/**
- * Where the two fingers are at `t` through the pinch.
- *
- * Every coordinate here is linear in `t`: the separation and the centroid each
- * interpolate linearly, and projecting them onto a fixed axis keeps them
- * linear. So the pair at `t = 0` and the pair at `t = 1` fully determine the
- * path, which is what lets HarmonyOS hand the device two straight lines and
- * still trace exactly what the per-frame iOS/Android train traces. Shared by
- * both so neither can drift into a different pinch from the same parameters.
- */
+/** Linear in `t`, so the endpoints alone determine the path HarmonyOS draws as two lines. */
 function contactsAt(params: Params, t: number): Contacts {
   const angleRad = ((params.angle ?? 0) * Math.PI) / 180;
   const cosA = Math.cos(angleRad);
@@ -135,37 +125,25 @@ Use when you need to zoom in or out on a map, image, or zoomable view. Returns {
   capability,
   services: (params): Record<string, ServiceRef> => {
     const device = resolveDevice(params.udid);
-    // HarmonyOS pinches go over hdc; resolving the iOS/Android-only blueprint
-    // would fail the pinch before it runs — the factory refuses any platform
-    // but those two.
+    // No simulator-server controller exists for HarmonyOS.
     if (device.platform === "harmony") return {};
     return { simulatorServer: simulatorServerRef(device) };
   },
   async execute(services, params) {
     const duration = params.durationMs ?? 300;
     const device = resolveDevice(params.udid);
-    // HarmonyOS has no simulator-server controller, and no per-frame injection
-    // either: `uinput -T -m` takes both contacts' endpoints in ONE call and
-    // interpolates them on-device. It has to be one call — a second `uinput`
-    // does not add a finger to the one already down, it replaces it.
+    // `uinput -T -m` moves both contacts in one call; a second call would
+    // replace the first finger, not add to it.
     if (device.platform === "harmony") {
       await ensureDep("hdc");
       const connectKey = harmonyConnectKey(device.id);
-      // One deadline for both display reads and the injection they feed, so the
-      // whole gesture stays under the MCP layer's abort-and-replay cap.
       const deadline = Date.now() + HARMONY_INTERACTION_TIMEOUT_MS;
-      // Fast prefilter, ahead of the queue wait: a panel already suspended or
-      // not yet composited is refused without waiting behind this device's
-      // queued work. It is NOT the check the injection trusts — see inside.
+      // Prefilter without queueing; the trusted check is inside the hold.
       const display = await harmonyDisplay(connectKey);
       assertHarmonyDisplayReady(display, "pinch");
       let timestampMs = 0;
       await holdUitestQueue(connectKey, deadline, async (ui) => {
-        // The check the injection trusts, read while holding the queue: the
-        // prefilter saw a state that may be a full queue depth stale by the
-        // time this call reaches the device — and on a foldable the geometry
-        // may have changed with it, so the endpoints scale against what is
-        // live now.
+        // Re-read: the geometry of a foldable may have changed while queued.
         const live = await harmonyDisplay(
           connectKey,
           remainingBudget(connectKey, deadline, "the display re-read")

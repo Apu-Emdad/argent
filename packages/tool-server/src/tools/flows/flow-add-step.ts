@@ -133,14 +133,7 @@ function platformOf(udid: unknown): string | undefined {
   return typeof udid === "string" ? authoringPlatform(resolveDevice(udid).platform) : undefined;
 }
 
-/**
- * Whether the runner has a tree to read on this device at all — the real
- * platform, not the authoring one, because this asks about a machine.
- *
- * An indeterminate verdict means the source did not answer, and the repair
- * turns on which kind of silence it was: a source that is DOWN can be brought
- * back, one that does not exist cannot.
- */
+/** Whether this device has a flow tree at all, so a silent source is absent rather than down. */
 function hasRunnerTree(udid: unknown): boolean {
   return typeof udid === "string" && supportsFlowTree(resolveDevice(udid).platform);
 }
@@ -522,8 +515,8 @@ async function probeAgainstRunnerTree(
     return {};
   }
   if (typeof args.udid !== "string") return {}; // nothing to probe against
-  // No try/catch: a tree read that fails, or an id with no flow tree, throws
-  // inside `fetchFlowTree`, which the probe already reports as indeterminate.
+  // No try/catch: a tree read that fails throws inside `fetchFlowTree`, which
+  // the probe already reports as indeterminate.
   const device = resolveDevice(args.udid);
   // Giving up must STOP the loop, not just stop waiting for it. `settleWithin`
   // abandons the promise, but the loop keeps its tree read and then fires one

@@ -86,8 +86,7 @@ const capability: ToolCapability = {
   // supported. Without this key the HTTP layer's `assertSupported` would reject
   // a Vega udid before any step runs.
   vega: { vvd: true },
-  // Same for HarmonyOS, where batching pays most: every step there is an
-  // `hdc` process spawn.
+  // Same for HarmonyOS.
   harmony: { device: true },
 };
 

@@ -220,11 +220,7 @@ export async function runSnapshot(
   // outage on `ActionEnv.treeOutage` for a later gesture to spend. A gesture
   // that swallows one warns; a capture has no `warning` channel, which makes
   // this the one settle that passes silently.
-  //
-  // Skipped outright where no flow tree source exists (`supportsFlowTree`),
-  // like the gesture path: every read there fails by construction, so the
-  // settle could only spend its window proving nothing about a capture it
-  // cannot stabilize anyway.
+  // Skipped where no flow tree source exists: every read would fail.
   if (opts.cropOn === undefined && supportsFlowTree(env.device.platform)) {
     try {
       await settleTree(env);

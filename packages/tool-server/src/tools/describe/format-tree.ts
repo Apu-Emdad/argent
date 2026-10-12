@@ -55,17 +55,7 @@ function formatAttr(name: string, value: string | undefined): string {
   return ` ${name}="${escapeForLine(value)}"`;
 }
 
-/**
- * Sources whose platform has no way to perform a long press, so the flag is a
- * dead end rather than a target.
- *
- * Same reasoning as {@link GESTURE_TOOLS_BY_SOURCE}: naming an interaction the
- * device's own gate then refuses costs a round trip and leaves nothing to fall
- * back on. HarmonyOS earns it — `uitest` has a `longClick` verb but nothing
- * wires it, and `gesture-custom`, where the skill sends an agent for a hold,
- * declares no harmony capability — while 11 of the 86 nodes on the launcher
- * home screen report `longClickable=true` (measured, 6.1.1).
- */
+/** Sources whose platform cannot long-press, so `long-clickable` would be a dead end. */
 const NO_LONG_PRESS_SOURCES: ReadonlySet<DescribeSource> = new Set(["harmony-uitest"]);
 
 function formatFlags(n: DescribeNode, source: DescribeSource): string {
@@ -163,18 +153,7 @@ interface FormatDescribeOptions {
   source: DescribeSource;
 }
 
-/**
- * The gesture tools whose backend covers the platform a source comes from. A
- * frame is only useful to the agent as an argument to one of these, so naming a
- * tool the device's own gate then refuses costs a round trip and leaves nothing
- * to fall back on.
- *
- * Only the sources whose platform is not the touch default appear here:
- * Chromium has no touch at all and gets the CDP-driven pair; physical iOS
- * (`xcuitest-runner`) has no two-finger gestures, so pinch is dropped. HarmonyOS
- * reaches every tool in the default — pinch included, over `uinput` rather than
- * `uitest`.
- */
+/** Gesture tools per source, where they differ from the touch default. */
 const GESTURE_TOOLS_BY_SOURCE: Partial<Record<DescribeSource, string>> = {
   "cdp-dom": "gesture-tap / gesture-scroll / gesture-drag",
   "xcuitest-runner": "gesture-tap / gesture-swipe",

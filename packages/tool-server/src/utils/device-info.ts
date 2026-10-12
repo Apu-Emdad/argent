@@ -59,49 +59,26 @@ export const CHROMIUM_ID_PREFIX = "chromium-cdp-";
  */
 const VEGA_SERIAL_PREFIX = "amazon-";
 
-/**
- * HarmonyOS device-id prefix. Every HarmonyOS id carries it, so the platform is
- * decided by shape like the others — argent mints these ids rather than
- * receiving them, the same way `chromium-cdp-<port>` is argent's own.
- */
+/** argent-minted HarmonyOS id prefix, as `chromium-cdp-` is. */
 export const HARMONY_ID_PREFIX = "harmony-";
 
 /**
- * Marks the ids that name an emulator *instance* rather than a connected target.
- *
- * The two are different things addressed by different CLIs: an instance is a
- * config directory that `Emulator -start` boots, a connected target is an `hdc`
- * connect key that `uitest` drives. They cannot be told apart by shape — an
- * instance name is user-chosen and could be spelled exactly like a hardware
- * serial — so the distinction is carried in the id itself, mirroring how a local
- * Android AVD is identifiable from its `emulator-<port>` serial.
- *
- * A running emulator therefore appears twice in `list-devices`: once as its
- * instance (bootable, stoppable) and once as whatever connect key it registered
- * with `hdc` (drivable). This is exactly what Android does with `avds` vs
- * `adb devices`, and for the same reason.
+ * Marks an emulator instance (what `Emulator -start` boots) as opposed to an
+ * `hdc` connect key (what `uitest` drives); an instance name could be spelled
+ * like a serial, so the id carries the distinction. A running emulator is
+ * listed as both, like an AVD and its adb serial.
  */
 export const HARMONY_EMULATOR_ID_PREFIX = "harmony-emulator-";
 
-/** Build the `list-devices` id for an emulator instance. */
 export function harmonyEmulatorId(instanceName: string): string {
   return `${HARMONY_EMULATOR_ID_PREFIX}${instanceName}`;
 }
 
-/** Build the `list-devices` id for a target `hdc` is connected to. */
 export function harmonyDeviceId(connectKey: string): string {
   return `${HARMONY_ID_PREFIX}${connectKey}`;
 }
 
-/**
- * The emulator instance name behind a `harmony-emulator-<name>` id.
- *
- * Exactly one prefix is stripped, so an instance genuinely named `emulator-x`
- * round-trips through `harmonyEmulatorId` unharmed. A connect-key id keeps its
- * `harmony-` prefix rather than being read as an instance name, so handing a
- * phone's id to `boot-device` fails on an instance that does not exist instead
- * of silently starting whichever one happens to be named after a serial.
- */
+/** Strips exactly one prefix; any other id passes through and fails as an unknown instance. */
 export function harmonyInstanceName(udid: string): string {
   return udid.startsWith(HARMONY_EMULATOR_ID_PREFIX)
     ? udid.slice(HARMONY_EMULATOR_ID_PREFIX.length)
@@ -109,14 +86,8 @@ export function harmonyInstanceName(udid: string): string {
 }
 
 /**
- * The `hdc` connect key behind a `harmony-<connectKey>` id.
- *
- * An instance id is refused rather than stripped: `harmony-emulator-<name>`
- * carries the `harmony-` prefix too, so slicing it yields `emulator-<name>` — a
- * key no target holds, which `hdc` answers with `[Fail]Not match target` naming
- * a device the caller never asked for. The capability gate turns an instance id
- * away at the HTTP edge, but a flow step reaches `execute` through the registry,
- * which does not gate it.
+ * The connect key behind a `harmony-<key>` id. An instance id is refused: a
+ * flow step reaches here without the HTTP capability gate.
  */
 export function harmonyConnectKey(udid: string): string {
   if (udid.startsWith(HARMONY_EMULATOR_ID_PREFIX)) {

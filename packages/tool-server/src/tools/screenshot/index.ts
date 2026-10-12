@@ -304,13 +304,9 @@ Fails if the simulator-server / emulator backend / Chromium CDP / \`hdc\` is not
         return { image, ...(note ? { [RESULT_NOTE_KEY]: note } : {}) };
       }
 
-      // HarmonyOS captures on-device with `uitest screenCap` and copies the PNG
-      // back over hdc; there is no simulator-server controller for the platform.
+      // No simulator-server controller exists for HarmonyOS.
       if (device.platform === "harmony") {
         if (params.rotation) {
-          // A per-ARGUMENT refusal, not a per-tool one: screenshot works on
-          // every harmony device — only this parameter has no effect. Same
-          // class the keyboard backend uses for an unsupported key.
           throw new InvalidToolInputError(
             "rotation is not supported on HarmonyOS: `uitest screenCap` captures the display in its current orientation and has no override. Rotate the device itself, or drop the rotation parameter.",
             {

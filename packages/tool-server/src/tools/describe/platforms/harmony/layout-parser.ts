@@ -3,43 +3,12 @@ import type { HarmonyLayoutNode } from "../../../../utils/harmony-uitest";
 import { clipBoundsToScreen } from "../android/uiautomator-parser";
 
 /**
- * Turn a `uitest dumpLayout` tree into the shared describe tree.
- *
- * The dump is ArkUI's component hierarchy, and it is shaped much like a
- * uiautomator dump — `[x1,y1][x2,y2]` bounds, `clickable`/`checkable` flags, a
- * `type` that plays the part of Android's `class` — so this mirrors the Android
- * trimmer's structure. It is markedly shorter for one measured reason: `uitest`
- * already merges the window stack and emits what is on screen, so a full
- * Settings list is 177 nodes and its one `visible: false` node is a zero-area
- * `ListItem`.
- *
- * What is deliberately NOT mirrored is the Android side's scroll clip. A `List`
- * rect is not a clip rect here: scroll that same Settings screen and its
- * "Log in to HUAWEI ID" row sits at y=164-308 while the `List` it belongs to
- * starts at y=332, still rendered (screenshot-checked) under the collapsing
- * title. Pruning by the scrolling ancestor's rect would drop six such nodes on
- * one scroll, every one of them visible and tappable.
- *
- * What it must handle that Android's does not:
- *
- * - **Every value is a string**, `"true"`/`"false"` included.
- * - **`description` is often a single space** rather than empty — the
- *   calculator's keypad labels every Button `" "`. Trimming is what stops each
- *   one becoming a blank-labelled node that reads as a real label.
- * - **Windows are top-level children**, each carrying `bundleName` /
- *   `abilityName`, so which app owns which subtree is knowable and worth
- *   surfacing.
- * - **`UIExtensionComponent` subtrees are USUALLY opaque — but not always.**
- *   System extension UI (the "open with" app selector, share sheets) renders in
- *   another process and the dump carries the node with no children; those are
- *   labelled so the emptiness reads as a fact. But on HarmonyOS 6.1.1 the same
- *   node can arrive with the FULL subtree — the HUAWEI ID login sheet carries
- *   its TextInput and both Buttons (45 nodes measured), and those targets are
- *   live (their geometry taps). Children win: a subtree that exists is parsed
- *   normally, and only a genuinely childless one is labelled opaque.
+ * `uitest dumpLayout` to the shared describe tree. Modelled on the Android
+ * trimmer, but `uitest` already merges windows and drops hidden nodes, and a
+ * `List` rect is not a clip rect (rows render under a collapsing title), so
+ * there is no scroll clip. All attribute values are strings.
  */
 
-/** Bounds arrive as `[left,top][right,bottom]`, in device pixels. */
 export function parseHarmonyBounds(bounds: string): PixelRect | null {
   const m = /\[(-?\d+),(-?\d+)]\[(-?\d+),(-?\d+)]/.exec(bounds);
   if (!m) return null;
@@ -56,12 +25,7 @@ interface PixelRect {
 
 const isTrue = (attrs: Record<string, string>, key: string): boolean => attrs[key] === "true";
 
-/**
- * ArkUI layout primitives and framework scaffolding: real nodes in the tree,
- * but never a tap target and never worth a line of an agent's context. Walked
- * through rather than emitted, exactly as the Android trimmer treats
- * `FrameLayout`/`LinearLayout`.
- */
+/** Layout scaffolding, walked through rather than emitted. */
 const LAYOUT_CONTAINERS = new Set([
   "",
   "Column",
@@ -79,49 +43,23 @@ const LAYOUT_CONTAINERS = new Set([
   "JsView",
 ]);
 
-/**
- * Pure decoration with no label and no behaviour. Dropped outright rather than
- * walked through — unlike the containers above, these never carry a subtree
- * worth keeping.
- */
 const DECORATIONS = new Set(["Divider", "ScrollBar", "metaballNode"]);
 
-/**
- * Renders in another process, so the dump USUALLY carries the node and none of
- * its content. A childless one is kept and labelled, so the emptiness is
- * visible as a fact rather than as an absence. One that arrives WITH children
- * (measured on HarmonyOS 6.1.1) is parsed normally — see the header.
- */
+/** Renders out of process; usually dumped childless, sometimes with its subtree. */
 const OPAQUE_EXTENSION = "UIExtensionComponent";
 
-/** ArkUI containers that scroll their content. */
 const SCROLL_TYPES = new Set(["List", "Grid", "Scroll", "Swiper", "WaterFlow"]);
 
 function isScrollable(attrs: Record<string, string>): boolean {
   return SCROLL_TYPES.has(attrs.type ?? "") || isTrue(attrs, "scrollable");
 }
 
-/**
- * One attribute as trimmed text.
- *
- * The dump is `JSON.parse`d and asserted to be all-strings, which is measured
- * on 6.1.1 but not guaranteed by anything: a single numeric or boolean value
- * would otherwise throw a bare `TypeError` out of the parser and take the whole
- * `describe` down, with no failure signal, rather than costing one attribute.
- */
+/** Tolerates a non-string value rather than throwing out of `describe`. */
 function attrText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-/**
- * The screen-reader-meaningful label.
- *
- * `description` (ArkUI's `accessibilityText`) wins over `text` for the same
- * reason `content-desc` does on Android: when both are set they describe
- * different things, and the contract carries the typed content separately as
- * `value`. `hint` is the placeholder of an empty field, which is the only label
- * such a field has.
- */
+/** `description` (accessibilityText) over `text`, as Android's `content-desc`; `hint` labels an empty field. */
 export function harmonyLabel(attrs: Record<string, string>): string {
   const description = attrText(attrs.description);
   if (description) return description;
@@ -147,7 +85,6 @@ interface HarmonyNode {
   children: HarmonyNode[];
 }
 
-/** A node with no size cannot be tapped and cannot be seen. */
 function hasArea(b: PixelRect | null): boolean {
   return b !== null && b.w > 0 && b.h > 0;
 }
@@ -164,21 +101,13 @@ function build(node: HarmonyLayoutNode): HarmonyNode[] {
 
   if (DECORATIONS.has(type)) return [];
 
-  // Only a genuinely childless extension is opaque. One carrying a subtree is
-  // real, live UI (its Buttons tap), so it falls through and is parsed like
-  // anything else — replacing it with the placeholder would discard the only
-  // controls that dismiss the sheet, and `uitest screenCap` does not capture
-  // the surface either, so the agent would have nothing.
+  // Only a childless extension is opaque; one with a subtree is live UI.
   if (type === OPAQUE_EXTENSION && children.length === 0) {
     return [
       {
         ...blank(attrs, bounds),
         role: "SystemOverlay",
-        // In `identifier`, not `label`, for the reason the window tag below
-        // spells out: the matcher reads `label` as visible text, and a
-        // full-screen node labelled with a sentence containing "system",
-        // "contents" or "screenshot" answers `exists: {text: ...}` on every
-        // screen a share sheet or app selector covers.
+        // `identifier`, not `label`: see the window tag in parseHarmonyLayout.
         identifier: attrText(attrs.id) || attrText(attrs.key) || "ui-extension-overlay",
         children: [],
       },
@@ -195,39 +124,23 @@ function build(node: HarmonyLayoutNode): HarmonyNode[] {
     children,
   };
   if (label) own.label = label;
-  // Only surface `text` separately when `description` already claimed the label
-  // slot and the two genuinely differ — otherwise `value` just repeats `label`.
   const text = attrText(attrs.text);
   if (text && text !== own.label) own.value = text;
   const identifier = attrText(attrs.id) || attrText(attrs.key);
   if (identifier) own.identifier = identifier;
 
-  // Scaffolding contributes nothing itself; hoist whatever survived beneath it.
-  // A container that is *itself* clickable, labelled, or carrying something the
-  // subtree beneath it does not know is a real node wearing a layout type: ArkUI
-  // builds buttons out of `Stack`/`Row`, and puts `.id()` — the string an
-  // `await-ui-element {identifier}` selects on — on plain `Column`s.
+  // Hoist through scaffolding unless it carries its own label, tap or state:
+  // ArkUI builds buttons from `Stack`/`Row` and puts `.id()` on plain `Column`s.
   if (LAYOUT_CONTAINERS.has(type) && !label && !own.clickable && !ownCarriesState(own)) {
     return children;
   }
 
-  // A wrapper whose only child covers exactly the same rect is a duplicate
-  // layer: collapse to whichever of the two carries the label.
-  //
-  // Only when the wrapper is genuinely a duplicate, though. ArkUI sets `.id()`
-  // and the state flags on the OUTER component, so a `Toggle` wrapping one
-  // full-bleed `Image` — or a `List` holding a single full-height row — is the
-  // node that knows it is checked, disabled or scrollable, and the child that
-  // fills its rect knows none of it. Collapsing those dropped the identifier an
-  // agent selects on and every flag but `clickable`, which reported a disabled
-  // button as a plain tappable one.
+  // Collapse a wrapper whose only child fills its rect, unless the wrapper holds
+  // the id or state flags (ArkUI puts them on the outer component).
   if (own.children.length === 1 && own.pixelBounds && !ownCarriesState(own)) {
     const only = own.children[0];
     if (only.pixelBounds && rectsEqual(only.pixelBounds, own.pixelBounds) && !own.label) {
-      // The wrapper's role wins when its type maps onto the shared vocabulary:
-      // ArkUI puts the meaningful widget on the outer node (`ListItem` -> Cell)
-      // and fills it with a bare layout child. An unmapped type carries no such
-      // information, so the child's role stands.
+      // A mapped wrapper role wins (`ListItem` -> Cell over its layout child).
       return [
         {
           ...only,
@@ -241,14 +154,7 @@ function build(node: HarmonyLayoutNode): HarmonyNode[] {
   return [own];
 }
 
-/**
- * Whether a node knows something the subtree beneath it cannot: an identifier to
- * select on, or any state flag other than `clickable` (which the collapse
- * merges onto the surviving child, and which the hoist tests separately).
- *
- * `value` is deliberately absent: it is only ever set alongside a label, and
- * both callers already check for one.
- */
+/** An identifier or a state flag besides `clickable`, which a collapse merges. */
 function ownCarriesState(n: HarmonyNode): boolean {
   return Boolean(
     n.identifier ||
@@ -271,9 +177,7 @@ function blank(attrs: Record<string, string>, bounds: PixelRect | null): Harmony
     scrollable: isScrollable(attrs),
     checkable: isTrue(attrs, "checkable"),
     checked: isTrue(attrs, "checked"),
-    // `enabled` is present on every node, so a missing value means the dump
-    // changed shape — treat that as enabled rather than reporting the whole
-    // screen as greyed out.
+    // Missing means enabled.
     disabled: attrs.enabled === "false",
     focused: isTrue(attrs, "focused"),
     selected: isTrue(attrs, "selected"),
@@ -306,11 +210,6 @@ const MAPPED_ROLES = new Set([
   "Button",
 ]);
 
-/**
- * Map an ArkUI component type onto the role vocabulary the describe formatter
- * and the agent-facing guidance already use, so a HarmonyOS tree reads like an
- * iOS or Android one.
- */
 function deriveRole(type: string, attrs: Record<string, string>): string {
   switch (type) {
     case "Text":
@@ -346,27 +245,16 @@ function deriveRole(type: string, attrs: Record<string, string>): string {
     case "Button":
       return "Button";
     default:
-      // An unmapped type is still better information than a generic label: it
-      // is the component the app author actually wrote.
       return type || "Group";
   }
 }
 
 /**
- * Whether a node lies entirely outside the screen and takes nothing with it.
- *
- * A `List` keeps its scrolled-off rows in the dump with real off-screen bounds,
- * and clipping those to the screen leaves a zero-area rect. Emitting it anyway
- * puts a `[clickable]` line in front of the agent whose documented tap centre
- * (`x + width/2`, `y + height/2`) is the status bar for a row above the fold and
- * the nav bar for one below it. The Android trimmer prunes the same rows, by its
- * own scroll-clip pass; harmony has no clip window to inherit, so the clipped
- * rect is the signal. A node with surviving children is kept regardless: it is
- * the child that would be lost, and a bounds-less parent's frame is their union.
+ * Off-screen `List` rows clip to zero area; emitting them would put tappable
+ * lines centred on the status or nav bar. Kept if any child survives.
  */
 function isFullyOffScreen(frame: DescribeNode["frame"], children: DescribeNode[]): boolean {
-  // Zero AREA, not zero in both axes: a row scrolled above the fold clips to the
-  // full screen width and no height at all.
+  // Area, not both axes: a row above the fold clips to full width, zero height.
   return children.length === 0 && frame.width * frame.height === 0;
 }
 
@@ -391,18 +279,7 @@ function toDescribeNode(n: HarmonyNode, screenW: number, screenH: number): Descr
   return out;
 }
 
-/**
- * Clip a pixel rect to the screen, then normalise — the same discipline as the
- * Android and Vega adapters.
- *
- * ArkUI reports off-screen bounds for rows scrolled past the edge of a List, so
- * the order matters: normalising each component independently and clamping it
- * into [0,1] turns a row at `[0,-400][1216,-260]` into `y=0, height=0.052` — a
- * full-width tap target at the top of the screen, indistinguishable from the
- * genuinely visible row straddling that edge. Clipping first leaves an entirely
- * off-screen row with zero area, and keeps `x + width` inside the frame
- * contract for one only partly off-screen.
- */
+/** Clip to the screen before normalising, or an off-screen row clamps onto the edge as a phantom target. */
 function normalizeFrame(
   b: { x: number; y: number; w: number; h: number },
   screenW: number,
@@ -432,12 +309,8 @@ interface HarmonyTreeResult {
 }
 
 /**
- * Build the describe tree.
- *
- * The screen size comes from the dump's own root bounds rather than a separate
- * device query: the two are read at different instants, and on a foldable that
- * is enough for a rotation between them to normalise every frame against the
- * wrong axis. `fallback` covers a root that reports no bounds.
+ * Screen size comes from the dump's root bounds, read at the same instant as
+ * the frames; `fallback` covers a root with none.
  */
 export function parseHarmonyLayout(
   root: HarmonyLayoutNode,
@@ -449,14 +322,8 @@ export function parseHarmonyLayout(
       ? { width: rootBounds.w, height: rootBounds.h }
       : fallback;
 
-  // Each top-level child is a window. Tag it with the app that owns it so a
-  // tree spanning an app plus the status bar (always a separate `sceneboard`
-  // window) is readable rather than two anonymous stacks. The bundle goes in
-  // `identifier`, NOT `label`: the shared matcher treats `label` as the
-  // element's visible text, and a full-screen node "named" `com.huawei.hmos.*`
-  // is a phantom text node — it ties with the app's real title in reading
-  // order (poisoning a `text` wait for the app's own name), and it makes
-  // `exists: {text: "sceneboard"}` true on every screen.
+  // Each top-level child is a window, tagged with its owning bundle in
+  // `identifier`: as a `label` it would match text searches on every screen.
   const windows: DescribeNode[] = [];
   for (const child of root.children ?? []) {
     const attrs = child.attributes ?? {};

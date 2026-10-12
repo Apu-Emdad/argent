@@ -1371,16 +1371,7 @@ function bootVega(params: {
   return promise;
 }
 
-/**
- * `udid` is the id to drive next: the connect-key id once the instance reached
- * `hdc`, the instance id when it did not. Only the first is an id the
- * interaction tools accept.
- *
- * `note` does not mark which of the two it is. It carries whatever the boot
- * left unproven — why no key was resolved, or what is unestablished about the
- * one that was — so a caller reading it as "this is the instance id" is wrong
- * exactly when the caveat matters.
- */
+/** `udid` is the connect-key id once the instance reached `hdc`, else the instance id. */
 type HarmonyBootResult = {
   platform: "harmony";
   udid: string;
@@ -1389,122 +1380,62 @@ type HarmonyBootResult = {
   note?: string;
 };
 
-// Coalesce concurrent HarmonyOS boots (mirrors `inFlightVegaBoots`): two callers
-// must not both shell out `Emulator -start` for the same instance. The flag
-// travels beside the promise so a boot with the other `force` value can tell
-// sharing from serialization.
+// One in-flight boot per instance, as `inFlightVegaBoots`; `force` tells a
+// boot that can be shared from one that must queue.
 const inFlightHarmonyBoots = new Map<
   string,
   { force: boolean; promise: Promise<HarmonyBootResult> }
 >();
 
-/**
- * Sized for a `force` restart, which spends one budget on a shutdown and a boot.
- * The start reaches a connected target in 8-20s; the shutdown is the
- * unpredictable half, since `-stop` returns as soon as it has asked and the
- * instance then took anywhere from 9s to ~70s to actually go down across
- * measured runs — and once had not gone down three minutes later.
- */
+/** Also spans a `force` shutdown, which runs on unpredictably after `-stop` returns. */
 const HARMONY_BOOT_TIMEOUT_MS = 180_000;
 
-/**
- * Each poll spawns `hdc` and round-trips its daemon, an order of magnitude
- * dearer than the adb polls in {@link BOOT_POLL_INTERVALS_MS} — and a boot this
- * waits on is minutes long.
- */
+/** Each poll spawns `hdc`, far dearer than an adb poll. */
 const HARMONY_TARGET_POLL_MS = 2_000;
 
-/**
- * How long the manager is watched for an immediate failure when there is no
- * `hdc` to wait on a target with. A failing `-start` prints its diagnostic and
- * exits at once, so this only has to outlast process startup — it is not a boot
- * budget, and the connector-absent path must still fail fast.
- */
+/** Only outlasts process startup: a failing `-start` prints and exits at once. */
 const HARMONY_NO_HDC_GRACE_MS = 3_000;
 
 /** How long a spent start-attempt log may keep occupying tmpdir before a sweep. */
 const HARMONY_LOG_TTL_MS = 24 * 60 * 60 * 1_000;
 
-/** Cadence for the grace above; short, since it is only outlasting a process start. */
 const HARMONY_EXIT_POLL_MS = 50;
 
-/**
- * `Emulator -install` outside mainland China prints "…available only in the
- * Chinese mainland" and downloads nothing, and no instance can be created
- * without an image. The manager only ever reports the symptom of that — a
- * missing instance, or a missing image — so name the cause ourselves.
- */
+/** The manager reports only the symptom: a missing instance or image. */
 const HARMONY_IMAGE_RESTRICTION =
   "Huawei serves HarmonyOS emulator images only within mainland China; outside it no image can " +
   "be downloaded, so no instance can be created and none can be started. argent cannot supply " +
   "the image; an instance has to be created in DevEco Studio on a host that can download one.";
 
-/**
- * Said when the start failed and the listing came back empty. Empty is what a
- * host that simply has not created an instance yet looks like — including
- * inside mainland China, where the download works — and equally what a `-list`
- * that ran and printed a diagnostic looks like, since `listHarmonyInstances`
- * answers `[]` for that too. So this states what was observed and offers the
- * restriction as a possible cause rather than asserting it the way
- * {@link HARMONY_IMAGE_RESTRICTION} does.
- */
+/** A failed `-list` is also empty, so the restriction is offered, not asserted. */
 const HARMONY_NO_INSTANCES =
   "The emulator manager listed no HarmonyOS instances — either none has been created, or the " +
   "listing itself failed; `Emulator -list -details` shows which. Create one in DevEco Studio if " +
   "there is none. If creating one fails for want of an image, note that Huawei serves HarmonyOS " +
   "emulator images only within mainland China.";
 
-/** Said when the instance was already running, its target therefore unidentifiable. */
 const HARMONY_ALREADY_RUNNING =
   "The instance was already running, so argent did not restart it — and an instance argent did " +
   "not start cannot be matched to the `hdc` connect key it registered under. Take the connect " +
   'key from `list-devices` (the `kind: "device"` entry), or re-run with `force: true` to ' +
   "restart the instance and have its key resolved here.";
 
-/**
- * Said when the instance started but never reached `hdc` in time. Not a
- * failure — the manager did start it, and a cold boot can outlast a budget the
- * caller chose.
- */
 const HARMONY_NO_TARGET =
   "The instance started but had not registered with `hdc` before the boot budget ran out, so " +
   "this payload names the instance rather than a connect key. Give it longer with " +
   "`bootTimeoutMs`, or call `list-devices` once it finishes booting and drive the `kind: " +
   '"device"` entry that appears.';
 
-/**
- * Said when more than one eligible target registered inside the boot window, so
- * arrival cannot pick the instance out. Distinct from {@link HARMONY_NO_TARGET}:
- * the budget is not the problem — both targets DID register — and pointing the
- * caller at `bootTimeoutMs` would misdiagnose a refusal to guess.
- */
 const HARMONY_AMBIGUOUS_TARGET =
   "More than one `hdc` target registered while the instance was booting, so argent could not " +
   "tell which is the instance it started and did not guess. Call `list-devices` and drive the " +
   '`kind: "device"` entry for the instance, or stop the other emulator and re-run.';
 
-/**
- * Said when every target that registered answered with some other device's
- * panel. Distinct from {@link HARMONY_NO_TARGET} in the same way
- * {@link HARMONY_AMBIGUOUS_TARGET} is: something did register, so a longer
- * budget cannot help, and the caller needs to know a target was seen and
- * declined rather than that none appeared.
- */
 const HARMONY_MISMATCHED_TARGET =
   "A target registered while the instance was booting, but its display is not the panel this " +
   "instance is configured with, so it is another device rather than the one argent started. " +
   'Call `list-devices` and drive the `kind: "device"` entry for the instance once it appears.';
 
-/**
- * Said when a target registered but never reported a panel to check it against.
- * Distinct from {@link HARMONY_MISMATCHED_TARGET}, which knows the target is
- * someone else's, and from {@link HARMONY_NO_TARGET}, whose "had not registered"
- * would be a plain untruth here.
- *
- * A guest still composing its first frame answers `0x0` and reaches this too,
- * so unlike the other refusals a longer budget CAN be the remedy — it is
- * offered second, after the reading the caller can act on directly.
- */
 const HARMONY_UNPROBEABLE_TARGET =
   "A target registered while the instance was booting but never reported a display argent could " +
   "read, so it could not tell whether the target is this instance or another device that " +
@@ -1512,83 +1443,37 @@ const HARMONY_UNPROBEABLE_TARGET =
   'so call `list-devices` and drive the `kind: "device"` entry for the instance, or give the ' +
   "boot longer with `bootTimeoutMs`.";
 
-/**
- * Said when the key rests on arrival alone, because no panel for this instance
- * was on record to check it against. Deliberately does not say WHY there was
- * none: the manager listing may have failed, or timed out, or not mentioned the
- * instance, or described a profile that does not key a single LCD — and nothing
- * here distinguishes those. The key is returned because it is the only
- * candidate that appeared and usually is the instance, but silently returning
- * an unchecked id is how every later tap ends up on someone else's device.
- */
 const HARMONY_UNCONFIRMED_TARGET =
   "argent had no panel on record for this instance, so it could not check the target it returned " +
   "against one and matched on arrival timing alone. If another emulator or device reconnected " +
   "while the instance was booting, this may be its connect key; confirm against `list-devices` " +
   "before relying on it.";
 
-/**
- * Said when the instance registered but never answered `uitest` in time. The
- * connect key is returned regardless — it is the right id, and an interaction
- * tool retried by hand may well work — so this is a caveat, not a failure.
- */
 const HARMONY_NOT_DRIVABLE =
   "The instance registered with `hdc` but had not answered `uitest` before the boot budget " +
   "ran out, so `describe`, `screenshot` and the gesture tools may fail for a little longer. " +
   "Retry the first interaction, or give the boot longer with `bootTimeoutMs`.";
 
-/**
- * Said when `hdc`'s device table could not be read for the whole wait.
- *
- * Distinct from {@link HARMONY_NO_TARGET}, which reports that nothing
- * registered: nothing is known here about whether the instance registered, and
- * the remedy is argent's own connector rather than a longer budget. The
- * pre-start snapshot refuses outright on this condition
- * (`BOOT_HARMONY_TARGET_LIST_FAILED`); by this point the instance has been
- * started, so here it is a caveat on a boot that did happen.
- */
 const HARMONY_UNLISTABLE_TARGETS =
   "`hdc list targets` failed every time argent asked while the instance was booting, so it could " +
   "not tell whether the instance registered — this says nothing about the instance itself. Check " +
   "that `hdc` works (`hdc list targets`), then call `list-devices` and drive the " +
   '`kind: "device"` entry for the instance.';
 
-/**
- * Said when the boot budget ran out before the target wait could read `hdc`'s
- * table even once — a `force` restart can spend all of it waiting out the
- * shutdown. Distinct from {@link HARMONY_UNLISTABLE_TARGETS}, which reports
- * listings that were asked for and failed: here `hdc` was never invoked by the
- * wait at all, so sending the caller to check it would misdiagnose a short
- * budget as a broken connector.
- */
 const HARMONY_UNATTEMPTED_LISTING =
   "The boot budget ran out before argent could ask `hdc list targets` once while the instance " +
   "was coming up, so whether the instance registered was never checked — this says nothing " +
   'about `hdc` itself. Call `list-devices` and drive the `kind: "device"` entry for the ' +
   "instance once it appears.";
 
-/** Said when the instance started but the connector that would reach it is missing. */
 const HARMONY_NO_HDC =
   "The instance started, but `hdc` was not found, so argent cannot tell which target it " +
   "registered as and no interaction tool can reach it. Install DevEco Studio's device " +
   "connector (or put `hdc` on PATH), then call `list-devices`.";
 
 /**
- * The targets `hdc` can drive right now, and whether the table could be read at
- * all.
- *
- * A failed listing is not an empty one. The pre-start snapshot already makes
- * that distinction — {@link connectedHarmonyKeys} raises
- * `BOOT_HARMONY_TARGET_LIST_FAILED` rather than treat an unreadable table as
- * "nothing connected" — and the wait that polls this needs it for the same
- * reason: a daemon that dies mid-boot otherwise reads as an instance that never
- * registered, and the caller is sent to raise `bootTimeoutMs` for a budget that
- * was never the problem. `ok` stays false only if EVERY attempt failed; one
- * `hdc` still coming up early in the boot is not a diagnosis.
- *
- * Hence the STRICT listing, as the snapshot uses: `hdc` exits 0 whatever
- * happens, so a dead server prints a diagnostic and no rows, which the tolerant
- * listing answers as `[]` — the one shape that makes `ok` mean nothing here.
+ * Strict listing: `hdc` exits 0 on its own failures, and an unreadable table
+ * must not read as "nothing registered". `ok` is false only if every poll failed.
  */
 async function connectedHarmonyTargets(
   timeoutMs?: number
@@ -1602,55 +1487,17 @@ async function connectedHarmonyTargets(
 }
 
 /**
- * The connect keys `hdc` reports as `Connected` right now.
- *
- * The pre-start snapshot records that STATE, not mere membership in the
- * listing. A stopped instance leaves its row behind indefinitely
- * (`127.0.0.1:5555  TCP  Offline  localhost`, measured across `-stop`) and a
- * restart re-registers on the same port, so a snapshot of every listed key can
- * never see that instance arrive: every second boot of an instance this `hdc`
- * daemon has already seen, and every `force` restart, would spend the whole
- * budget concluding nothing registered and hand back an id no interaction tool
- * accepts.
- *
- * A key that is `Connected` here belongs to a guest this call did not start —
- * by this point the instance is known to be down, either because the manager
- * reported it stopped or because `-stop` was waited out — so excluding those,
- * and only those, is what leaves arrival meaning something.
- *
- * `Offline` is also what a connection blip leaves behind, so a foreign device
- * reconnecting is an arrival by this rule too. {@link waitForHarmonyTarget}
- * settles that with the panel the instance is configured with.
- *
- * A failed listing is not an empty one. Every later poll can shrug one off as
- * "nothing new yet", but the baseline cannot: empty, it makes every emulator
- * already connected count as this boot's arrival, and a peer off the same
- * device profile answers the same panel — so nothing downstream catches it and
- * the boot hands back a drivable id for the wrong device. Hence the STRICT
- * listing: `hdc` exits 0 for its own failures, so the tolerant one reports a
- * broken daemon as an empty device table. Retried once, since the daemon
- * restarting after a `-stop` is both the likely cause and one that clears,
- * then refused before anything is spawned.
- *
- * `stoppedInstance` names the instance a `force` restart has already stopped by
- * this point, since refusing here is the one path that leaves the host in a
- * state the caller did not ask for: they asked for a restart and get an error,
- * with the instance down and nothing started in its place. The other side of the
- * `force` path says so too, and staying quiet here would have the same failure
- * read as "nothing happened" depending only on which call failed.
+ * Keys `Connected` before the start. Not every listed key: a stopped instance
+ * leaves an `Offline` row that it re-registers on, so it could never arrive.
+ * Strict, because an empty baseline would make every connected emulator an
+ * arrival; retried once, as the daemon restarting after `-stop` clears.
  */
 async function connectedHarmonyKeys(
   stoppedInstance: string | null,
   deadline: number
 ): Promise<Set<string>> {
   for (let attempt = 0; ; attempt++) {
-    // The snapshot is spent from the same budget as everything after it. Left
-    // on its own ceilings it runs 18s past the deadline on the `force` path —
-    // a shutdown is given "the whole remaining budget" by design, so arriving
-    // here with none left is the ordinary case, not the odd one — and the wait
-    // it feeds then returns on its first line. A budget too small to trace the
-    // key is refused here rather than overspent: the message below is the one
-    // that says the instance is down and the restart has to be re-run.
+    // Spent from the boot budget: a `force` shutdown often leaves none.
     const budget = Math.max(1, deadline - Date.now());
     try {
       const targets = await listHarmonyHdcTargetsStrict(Math.min(HDC_LIST_TIMEOUT_MS, budget));
@@ -1670,11 +1517,7 @@ async function connectedHarmonyKeys(
             error_code: FAILURE_CODES.BOOT_HARMONY_TARGET_LIST_FAILED,
             failure_stage: "boot_harmony_target_snapshot",
             failure_area: "tool_server",
-            // Carried up from whatever `hdc` did, not asserted: `runHdc` is the
-            // frame that can tell a client SIGKILLed at its ceiling from one
-            // that failed, and `getFailureSignal` takes the OUTERMOST signal —
-            // so stamping `subprocess` here re-buckets the timeout it just
-            // classified.
+            // `runHdc` already classified a timeout; keep its kind.
             error_kind: getFailureSignal(err)?.error_kind ?? "subprocess",
             failure_command: "hdc",
           },
@@ -1688,13 +1531,7 @@ async function connectedHarmonyKeys(
   }
 }
 
-/**
- * Whether two panels are the same one, whichever way round it is composited.
- *
- * The guest reports its display as currently oriented, the manager as
- * configured, so comparing the axes pairwise would read a landscape instance as
- * a different device.
- */
+/** The guest reports its panel as oriented, the manager as configured. */
 function sameHarmonyPanel(
   a: { width: number; height: number },
   b: { width: number; height: number }
@@ -1705,30 +1542,14 @@ function sameHarmonyPanel(
   );
 }
 
-/**
- * Whether a target could be the emulator this host just started.
- *
- * An emulator runs on the host and `hdc` reaches it over TCP loopback
- * (`127.0.0.1:5555`, measured), so a target the connector reports as `USB` is a
- * cable-attached handset and cannot be it. Anything else — including a null
- * connection, which is what a row too short to carry that column parses to — is
- * left eligible rather than filtered out, so an image that registers in some
- * shape not seen here still boots.
- */
+/** A `USB` target is a handset; an emulator is reached over TCP loopback. */
 function couldBeHarmonyEmulator(target: { connection: string | null }): boolean {
   return target.connection !== "USB";
 }
 
 /**
- * Start an instance, without waiting for it to finish.
- *
- * `Emulator -start` is not a launcher that hands off — it is the emulator's
- * supervisor, and it runs for as long as the emulator does (measured: a
- * `-start` awaited under a 15-minute budget returned only when that budget
- * killed it, taking the running emulator with it). So it is spawned detached
- * exactly as the Android emulator is, which also leaves the emulator up across
- * a tool-server restart. Its output goes to a log unique to this attempt so a
- * start that dies early can still be classified by what the manager printed.
+ * `Emulator -start` is the emulator's supervisor and runs for its whole
+ * lifetime, so it is spawned detached, logging to a file for diagnosis.
  */
 async function startHarmonyEmulator(
   instanceName: string
@@ -1743,14 +1564,8 @@ async function startHarmonyEmulator(
       failure_command: "deveco_emulator",
     });
   }
-  // Unique per attempt, not per instance: unlike Android there is no AVD lock
-  // guaranteeing a single writer — two tool-server processes can boot the same
-  // instance, and the coalescing map only covers one process's own window. A
-  // shared name opened `"w"` let the loser truncate the winner's diagnostic
-  // before anyone read it. Uniqueness means nothing reaps yesterday's logs, so
-  // attempts older than a day are swept first — harmless, because nothing reads
-  // a start log once its boot has returned, and every consumer of the exit
-  // latch lives inside that boot's deadline-bounded waits.
+  // Unique per attempt: two tool-servers can boot one instance, and a shared
+  // log would be truncated by the loser. Day-old logs are swept.
   try {
     for (const entry of readdirSync(tmpdir())) {
       if (!entry.startsWith("argent-harmony-") || !entry.endsWith(".log")) continue;
@@ -1759,17 +1574,15 @@ async function startHarmonyEmulator(
           rmSync(join(tmpdir(), entry), { force: true });
         }
       } catch {
-        // best-effort — a file another process holds or already removed is fine
+        // best-effort
       }
     }
   } catch {
-    // An unreadable tmpdir is handled by the guarded open below.
+    // the guarded open below handles an unreadable tmpdir
   }
   const safeName = instanceName.replace(/[^\w.-]/g, (c) => `%${c.codePointAt(0)!.toString(16)}`);
   const logPath = join(tmpdir(), `argent-harmony-${safeName}-${process.hrtime.bigint()}.log`);
-  // An unwritable tmpdir is an environment problem the boot should survive
-  // without its log — the diagnostic then reads "(nothing)" — rather than a raw
-  // `Error` escaping ahead of any failure signal of its own.
+  // Without a writable tmpdir the boot proceeds with no log.
   let logFd: number | null;
   try {
     logFd = openSync(logPath, "w");
@@ -1781,13 +1594,11 @@ async function startHarmonyEmulator(
     stdio: logFd === null ? "ignore" : ["ignore", logFd, logFd],
   });
   child.unref();
-  // The child holds its own handle; close the parent's copy so a descriptor
-  // does not leak per boot.
   if (logFd !== null) {
     try {
       closeSync(logFd);
     } catch {
-      // best-effort — the child keeps writing regardless
+      // best-effort
     }
   }
 
@@ -1798,29 +1609,20 @@ async function startHarmonyEmulator(
     try {
       output = readFileSync(logPath, "utf8");
     } catch {
-      // no log to read — the reason alone has to carry it
+      // no log; the reason alone carries it
     }
     exit = { reason, output };
   };
   child.on("exit", (code, signal) =>
     record(signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`)
   );
-  // `spawn` can fail asynchronously (ENOENT, EACCES). An unhandled `error`
-  // event would escape as an uncaught exception and take the tool-server with
-  // it, so it goes through the same latch.
+  // An unhandled async spawn `error` would crash the tool-server.
   child.on("error", (err) => record(`could not be spawned: ${err.message}`));
 
   return { exited: () => exit };
 }
 
-/**
- * What the boot says when the wait produced no connect key.
- *
- * A table rather than a chain of ternaries: keyed by the whole `reason` union,
- * so a reason added later is a compile error here instead of silently falling
- * through to "the instance had not registered" — which is the failure
- * {@link HARMONY_UNLISTABLE_TARGETS} exists because of.
- */
+/** Keyed by the whole `reason` union so a new reason must be worded here. */
 const HARMONY_NO_KEY_CAVEAT: Record<NonNullable<HarmonyTargetOutcome["reason"]>, string> = {
   ambiguous: HARMONY_AMBIGUOUS_TARGET,
   mismatched: HARMONY_MISMATCHED_TARGET,
@@ -1830,16 +1632,6 @@ const HARMONY_NO_KEY_CAVEAT: Record<NonNullable<HarmonyTargetOutcome["reason"]>,
   none: HARMONY_NO_TARGET,
 };
 
-/**
- * What the wait for a target concluded.
- *
- * `reason` says why there is no key, and is read only when there is none;
- * `unconfirmed` marks a key that arrival alone picked out. Both feed the boot's
- * `note`, and each has to stay distinct there, since they send the caller
- * somewhere different: "ambiguous" and "mismatched" are decisions no budget
- * changes, while "none" and "unprobeable" can both be a boot still in progress,
- * and "unlistable" is argent's own connector rather than the instance at all.
- */
 type HarmonyTargetOutcome = {
   key: string | null;
   unconfirmed?: boolean;
@@ -1847,22 +1639,9 @@ type HarmonyTargetOutcome = {
 };
 
 /**
- * `work`, or null once `deadline` has passed.
- *
- * Every probe these waits are built on carries its own fixed timeout and takes
- * no budget from its caller, so a poll that probes each arrival in turn runs for
- * that timeout times the number of arrivals — measured at 95s against a 30s
- * `bootTimeoutMs`, with two stale rows reconnecting beside the instance. The
- * budget is the caller's word on how long boot-device may take: the Android boot
- * above clamps its frame wait against the same deadline, "so the frame-wait
- * stage cannot push total elapsed time past bootTimeoutMs".
- *
- * Only the waiting is abandoned. The probe's own timeout still ends the process
- * it spawned, so nothing outlives the call that would not have anyway.
- *
- * Takes a thunk rather than a promise: an argument is evaluated before the call,
- * so a promise passed in has already spawned its `hdc` client by the time the
- * clock is read here — one per arrival, every one of them past the deadline.
+ * `start()`, or null once `deadline` passes: each probe has a fixed timeout, so
+ * a poll over several arrivals would otherwise overrun `bootTimeoutMs`. A thunk,
+ * so nothing is spawned past the deadline.
  */
 async function withinBudget<T>(start: () => Promise<T>, deadline: number): Promise<T | null> {
   const remaining = deadline - Date.now();
@@ -1882,50 +1661,15 @@ async function withinBudget<T>(start: () => Promise<T>, deadline: number): Promi
 }
 
 /**
- * The connect key of the target that appears after a start, or null if none
- * does before `deadline`.
+ * The connect key of the one target that arrives after the start, or null.
+ * Arrival is the only join between the manager and `hdc`. USB arrivals are
+ * excluded, a candidate must report the instance's configured panel
+ * (`expected`; null skips the check and marks the key `unconfirmed`), and two
+ * confirmed arrivals are refused. A mismatched or unreadable panel is re-checked
+ * every poll, since a booting foldable's panel is not settled.
  *
- * Arrival, because nothing else joins the two: the `Emulator` manager reports a
- * configured `hw.hdc.port` but not the one a started instance registers under,
- * and `hdc` names connect keys and never mentions an instance. It is also the
- * one signal independent of how an emulator's key is spelled — measured as
- * `127.0.0.1:5555`, which is neither the hardware-serial shape a phone has nor
- * inside the range `-hdcPort` accepts.
- *
- * `checkAlive` is polled alongside, and throws if the emulator died: without it
- * a start that failed after the spawn returned would be indistinguishable from
- * one still booting, and would burn the whole budget before saying so.
- *
- * Exactly one *confirmed* arrival, or none. Arrival alone does not identify
- * anything once a second device can produce one, and returning the wrong key is
- * not a failed boot — it is a drivable id, so every later tap and keystroke
- * lands on that device instead. So USB arrivals are excluded outright (a
- * host-local emulator is not on a cable), a candidate is confirmed against
- * `expected` — the panel the instance is configured with, which the guest
- * reports back as its `render resolution` — and two confirmed arrivals are
- * refused rather than guessed between.
- *
- * The panel check is a filter and never a requirement. An instance whose config
- * does not describe a single panel passes `expected: null`, and its arrival is
- * taken on arrival alone, flagged `unconfirmed` so the caller is told the id
- * rests on timing rather than on identity.
- *
- * Nothing is rejected for good. A target that cannot be probed yet is left
- * pending — a row reaches `Connected` before its render service answers — and
- * so is one answering `0x0`, which is that service up but not yet composited.
- * Even a target answering someone else's panel is only skipped for that poll:
- * the reading is not final, since this platform's flagship form factors are
- * foldables whose resolution changes with the fold, and a boot is when a
- * guest's panel is least settled. Latching a verdict off one early reading
- * would disqualify the instance argent itself started for the whole budget.
- *
- * What this does NOT cover: two instances sharing one device profile, whose
- * panels are identical by construction; and a second emulator registering
- * during the window but outside it — started from DevEco Studio, or by a
- * concurrent `boot-device` for another instance, which `inFlightHarmonyBoots`
- * does not coalesce. Nothing in `hdc` or the manager ties a key to an instance,
- * so closing those needs a lock across every harmony boot on the host, which
- * would head-of-line block them all on one slow start.
+ * Not covered: two instances of one device profile, or another emulator started
+ * outside this call during the window.
  */
 async function waitForHarmonyTarget(
   before: Set<string>,
@@ -1935,18 +1679,9 @@ async function waitForHarmonyTarget(
 ): Promise<HarmonyTargetOutcome> {
   let sawMismatch = false;
   let sawUnprobeable = false;
-  // Every listing so far having failed is a different answer from none having
-  // arrived, and it is latched rather than sampled: `hdc` is often still coming
-  // up on the first poll of a cold boot, so only a table that was never readable
-  // is worth reporting as one. Whether the wait ever got to ask at all is a
-  // third answer again — a `force` restart can spend the whole budget before
-  // this loop's first look, and blaming `hdc` for listings it was never asked
-  // for would send the caller hunting a broken connector.
+  // Never asking (a `force` shutdown spent the budget) is not a broken `hdc`.
   let listedOnce = false;
   let asked = false;
-  // What was seen beats what was not: a target that registered and was declined
-  // says more than an unreadable table, which in turn says more than nothing
-  // having arrived.
   const noKeyReason = (): HarmonyTargetOutcome["reason"] =>
     sawMismatch
       ? "mismatched"
@@ -1958,17 +1693,10 @@ async function waitForHarmonyTarget(
             ? "unlistable"
             : "unattempted";
   for (;;) {
-    // The listing is bounded by the budget too, not just the probes it feeds:
-    // `hdc list targets` carries its own 8s ceiling, so a daemon slow enough to
-    // reach it would return this wait a quarter past `bootTimeoutMs`. Bounded
-    // rather than abandoned, since a listing that lands at the deadline still
-    // names the key this whole wait exists to find.
+    // Bounded, not abandoned: a listing landing at the deadline still names the key.
     const budget = deadline - Date.now();
     if (budget <= 0) {
-      // Polled before giving up, not only mid-loop: an emulator that died inside
-      // the final poll interval — the sleep at the bottom clamps to `remaining`,
-      // so expiry always lands here — would otherwise fall through to a note
-      // telling the caller to raise the budget for a start that crashed.
+      // Catches an emulator that died in the final interval.
       checkAlive();
       return { key: null, reason: noKeyReason() };
     }
@@ -1988,12 +1716,7 @@ async function waitForHarmonyTarget(
         () => harmonyDisplay(target.connectKey).catch(() => null),
         deadline
       );
-      // A guest that has not composited yet answers `0x0`. The manager side of
-      // this comparison refuses zero as a panel for the same reason, so reading
-      // it as someone else's would have the two sides disagree about the one
-      // value that joins them. A probe the budget cut short lands here too:
-      // unprobed and unrejected are the same thing to the poll after it, and
-      // once the budget is gone the rest of this round costs nothing.
+      // `0x0` is a guest not yet composited; a budget-cut probe lands here too.
       if (!display || display.width <= 0 || display.height <= 0) {
         sawUnprobeable = true;
         continue;
@@ -2004,17 +1727,11 @@ async function waitForHarmonyTarget(
     if (confirmed.length === 1) {
       return { key: confirmed[0]!, unconfirmed: !expected };
     }
-    // Two confirmed arrivals is a refusal to guess, not a slow boot, and it is
-    // answered here rather than latched: polling on would spend the rest of the
-    // budget on a decision already made, and would turn the refusal into a
-    // guess the moment one of the two flapped and left the other alone.
+    // Refused now: polling on would turn the refusal into a guess once one flaps.
     if (confirmed.length > 1) return { key: null, reason: "ambiguous" };
     checkAlive();
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      // A target that registered and was declined, or one that registered and
-      // never answered, are both distinct from nothing arriving at all — the
-      // budget is not what failed, so the caller must not be sent to raise it.
       return { key: null, reason: noKeyReason() };
     }
     await new Promise((r) => setTimeout(r, Math.min(HARMONY_TARGET_POLL_MS, remaining)));
@@ -2022,26 +1739,8 @@ async function waitForHarmonyTarget(
 }
 
 /**
- * Wait until the guest answers `uitest`, answering whether it did.
- *
- * A target reports `Connected` as soon as `hdc` can reach the guest's daemon,
- * which is not the same as the window service being up: `uitest dumpLayout`
- * answers `DumpLayout failed:Get window nodes failed` for a window after that,
- * so a key returned on `Connected` alone can fail every interaction tool for
- * seconds while looking drivable. Every other platform gates its boot on a
- * readiness signal — `sys.boot_completed` and a first frame on Android,
- * `simctl bootstatus` on iOS, `waitForVvdRunning` on Vega — and this is
- * HarmonyOS'.
- *
- * The probe is a real `dumpLayout` rather than something cheaper because that
- * is the call the gap is in; `hidumper` answers throughout it.
- *
- * `checkAlive` is polled here for the same reason the wait for the target polls
- * it: an emulator that dies in this window answers no probe, which is exactly
- * what one still starting its window service looks like. Without it the manager
- * can be gone — with its diagnostic already latched — for the whole remaining
- * budget, and the boot still reports a drivable id under a note telling the
- * caller to retry.
+ * Whether the guest answered `uitest dumpLayout` in time: `Connected` comes
+ * before the window service, which fails dumps for a while after.
  */
 async function waitForHarmonyDrivable(
   connectKey: string,
@@ -2049,24 +1748,15 @@ async function waitForHarmonyDrivable(
   checkAlive: () => void
 ): Promise<boolean> {
   const probePath = join(tmpdir(), `argent-harmony-bootprobe-${process.hrtime.bigint()}.json`);
-  // Non-null only while a probe is in flight, which past the deadline is a probe
-  // nothing is waiting for any more.
   let inFlight: Promise<unknown> | null = null;
   try {
     for (;;) {
-      // Asked before it is spawned, not only before it is awaited: a target
-      // confirmed on arrival alone (no panel to check it against) can resolve at
-      // the deadline itself, and a probe started then is one nothing will ever
-      // read.
       const budget = deadline - Date.now();
       if (budget <= 0) {
         checkAlive();
         return false;
       }
-      // Capped by the budget as well as by `uitest`'s own ceiling: a probe this
-      // wait abandons at the deadline still holds the device's `uitest` queue
-      // until its client is killed, and the retry the caller is about to be told
-      // to make is what waits behind it.
+      // An abandoned probe holds the device's `uitest` queue until killed.
       const probe = harmonyDumpLayout(
         connectKey,
         probePath,
@@ -2085,11 +1775,7 @@ async function waitForHarmonyDrivable(
       await new Promise((r) => setTimeout(r, Math.min(HARMONY_TARGET_POLL_MS, remaining)));
     }
   } finally {
-    // A probe abandoned at the deadline can still write `probePath` after this
-    // point, so its removal waits it out — bounded by the probe's own timeout —
-    // rather than racing it and leaving the dump behind in the temp directory.
-    // That one is not awaited, since the budget that would pay for it is what
-    // just ran out; on every other path the dump is gone before this returns.
+    // An abandoned probe may still write the dump; remove it once it settles.
     const remove = () => rm(probePath, { force: true }).catch(() => {});
     if (inFlight) void inFlight.then(remove);
     else await remove();
@@ -2111,31 +1797,17 @@ async function waitForHarmonyExit(
 }
 
 /**
- * Wait until the manager stops reporting the instance as running, answering
- * whether it did.
- *
- * `-stop` returns as soon as it has asked, not once the emulator is gone, and
- * the guest's `hdc` endpoint dies well before the process does — so a restart
- * that waited on the target dropping would call `-start` into "this emulator
- * instance is already running" (measured). `isRunning` is the one signal that
- * tracks the process itself. An unreadable listing answers nothing, so it keeps
- * waiting rather than assuming the instance is gone.
+ * Whether the manager stopped reporting the instance as running. `-stop`
+ * returns before the process is gone, and the `hdc` endpoint dies first.
  */
 async function waitForHarmonyInstanceStopped(name: string, deadline: number): Promise<boolean> {
   for (;;) {
-    // Bounded for the same reason as the arrival wait's listing: this one
-    // carries a 6s ceiling of its own, and a `force` restart spends one budget
-    // on the shutdown and the boot that follows it.
     const budget = deadline - Date.now();
     if (budget <= 0) return false;
     const instances = await listHarmonyInstances(Math.min(HARMONY_LIST_TIMEOUT_MS, budget)).catch(
       () => null
     );
-    // Only a listing WITH ROWS can say the instance stopped. A `-list` that ran
-    // and printed a diagnostic resolves to `[]` rather than throwing, and the
-    // stopped instance itself is still a row (with `isRunning` false), so an
-    // empty answer is the unreadable one — and reading it as "gone" would
-    // `-start` into an instance still running.
+    // A failed `-list` resolves `[]`, while a stopped instance is still a row.
     if (instances?.length && !instances.some((i) => i.name === name && i.running)) return true;
     const remaining = deadline - Date.now();
     if (remaining <= 0) return false;
@@ -2151,23 +1823,12 @@ async function bootHarmonyImpl(params: {
   await ensureDep("harmony-emulator");
   const bootDeadline = Date.now() + params.bootTimeoutMs;
 
-  // Answers two questions: whether this instance is already up, and — if the
-  // start fails — whether the host has any at all. `null` is a listing that
-  // itself failed and answers neither, so it neither blocks a start nor lets
-  // one be blamed on a host with no instances.
+  // `null` (the listing failed) neither blocks the start nor explains its failure.
   const instances = await listHarmonyInstances(
     Math.min(HARMONY_LIST_TIMEOUT_MS, Math.max(1, bootDeadline - Date.now()))
   ).catch(() => null);
-  // A name the manager does not know can only fail, and the listing that names
-  // the caller's typo is already in hand — the same refusal Android makes off
-  // `emulator -list-avds`. Left to `-start`, the boot instead spends the budget
-  // and answers with the manager's own words, which name nothing that exists.
-  //
-  // Only a listing WITH ROWS refuses. An empty one is not the same claim: a
-  // `-list` that ran but printed a diagnostic — "Cannot find image" on a host
-  // whose images were never downloaded — comes back from `listHarmonyInstances`
-  // as `[]` too, and refusing on that would block a boot of an instance the host
-  // has. That case is still left to the start, whose failure says as much.
+  // Refuse an unknown name, as Android does. Only a listing with rows can: a
+  // failed `-list` also resolves `[]`.
   if (instances?.length && !instances.some((i) => i.name === params.instanceName)) {
     throw new FailureError(
       `HarmonyOS emulator instance "${params.instanceName}" not found. ` +
@@ -2194,10 +1855,7 @@ async function bootHarmonyImpl(params: {
     };
   }
   if (alreadyRunning) {
-    // Bounded by the budget like every wait after it: `-stop` returns as soon as
-    // it has asked, but its own 30s ceiling is the whole of a minimum budget,
-    // and a manager slow to answer would leave nothing for the shutdown this
-    // call still has to wait out.
+    // `-stop`'s own 30s ceiling can be a whole minimum budget.
     const stopped = await runHarmonyEmulator(
       ["-stop", params.instanceName],
       Math.min(EMULATOR_TIMEOUT_MS, Math.max(1, bootDeadline - Date.now()))
@@ -2215,9 +1873,6 @@ async function bootHarmonyImpl(params: {
         }
       );
     }
-    // The whole remaining budget rather than a slice of it: an instance still up
-    // leaves nothing worth spending the rest on, since starting it can only
-    // report that it is already running.
     if (!(await waitForHarmonyInstanceStopped(params.instanceName, bootDeadline))) {
       throw new FailureError(
         `HarmonyOS emulator "${params.instanceName}" was still running when the ` +
@@ -2235,46 +1890,30 @@ async function bootHarmonyImpl(params: {
     }
   }
 
-  // Asked rather than waited out: with no connector there is no target list to
-  // watch, so the wait would spend the whole budget concluding that nothing
-  // registered — blaming the emulator for the connector's absence. Asked before
-  // the snapshot because the snapshot is that same target list, and refuses the
-  // boot when it cannot be read.
+  // Without a connector there is no target list to wait on; checked before the
+  // snapshot, which reads that list.
   const hdcAvailable = Boolean(await resolveHdc());
 
-  // Snapshot immediately before the start, so a target already driveable
-  // (another emulator, a phone on USB) is excluded by identity rather than by
-  // any assumption about how an emulator's key is spelled. Reaching `Connected`
-  // after this point is what marks the instance just booted — including on the
-  // key it held before, since a stopped instance's row survives as `Offline`.
-  // `alreadyRunning` can only still be set on the `force` path — the other
-  // return above — so it is exactly "this call has stopped the instance".
+  // Keys connected now belong to other devices; reaching `Connected` after this
+  // marks the instance, even on the key it held before. `alreadyRunning` here
+  // means this call stopped the instance.
   const before = hdcAvailable
     ? await connectedHarmonyKeys(alreadyRunning ? params.instanceName : null, bootDeadline)
     : new Set<string>();
-  // The panel this instance is configured with, which the guest reports back as
-  // its `render resolution` — the only thing that separates the instance
-  // reconnecting from another device doing the same. Read before the start
-  // because the listing is already in hand; a config's panel does not change.
+  // Separates the instance reconnecting from another device doing the same.
   const expectedPanel = instances?.find((i) => i.name === params.instanceName)?.display ?? null;
 
   const emulator = await startHarmonyEmulator(params.instanceName);
 
-  // Set once the target wait resolves a key, so a death reported from the
-  // readiness wait can say which side of registration it happened on.
+  // Lets a death in the readiness wait say it came after registration.
   let resolvedKey: string | null = null;
   const assertEmulatorAlive = () => {
     {
       const exit = emulator.exited();
       if (!exit) return;
-      // The exit code is no verdict: `-start` on a missing instance exits 1
-      // while the manager's other failures exit 0, so the diagnostic it
-      // printed is the only signal (see `harmony-cli.ts`).
+      // The exit code is no verdict; only the printed diagnostic is (see `harmony-cli.ts`).
       const diagnostic = emulatorFailure({ stdout: exit.output, stderr: "" });
       if (!diagnostic) {
-        // Both waits poll this, and they sit on opposite sides of the key being
-        // resolved — saying "before it registered" during the readiness wait
-        // would deny the registration the failing probe is aimed at.
         const when = resolvedKey
           ? `while "${params.instanceName}" (\`${resolvedKey}\`) was still coming up`
           : `before "${params.instanceName}" registered with \`hdc\``;
@@ -2292,8 +1931,7 @@ async function bootHarmonyImpl(params: {
       }
       const imageMissing =
         isChinaOnlyRestriction(diagnostic) || diagnostic.includes("Cannot find image");
-      // Only the manager's own words justify blaming the region; an empty
-      // instance list is merely consistent with it.
+      // Only the manager's own words justify blaming the region.
       const cause = imageMissing
         ? ` ${HARMONY_IMAGE_RESTRICTION}`
         : instances?.length === 0
@@ -2314,20 +1952,10 @@ async function bootHarmonyImpl(params: {
     }
   };
 
-  // Without a connector there is no target list to watch, but the manager can
-  // still be watched for a short grace: otherwise a start that fails — a missing
-  // image, an instance already running — is reported as `booted: true` under a
-  // note whose first clause, "the instance started", nothing has checked.
-  //
-  // Asking once is not enough. Nothing between the spawn and here does any I/O
-  // at all, so a single check runs microtasks after the spawn, before the child
-  // could have exited. The grace is small and bounded because a failing
-  // `-start` prints and exits at once — this must not become the whole-budget
-  // wait the connector-absent path exists to avoid.
+  // Without a connector, still watch the manager briefly so a failing start is
+  // not reported `booted: true`. A single check would run before the child could
+  // exit.
   if (!hdcAvailable) {
-    // Clamped against the boot deadline like every other wait on this path: the
-    // grace is a ceiling, not an entitlement of its own, and a caller with 2s of
-    // budget left must not be answered 3s past it.
     const grace = Math.min(HARMONY_NO_HDC_GRACE_MS, Math.max(0, bootDeadline - Date.now()));
     if (grace > 0) await waitForHarmonyExit(emulator, grace);
     assertEmulatorAlive();
@@ -2338,17 +1966,12 @@ async function bootHarmonyImpl(params: {
     : { key: null };
   const connectKey = outcome.key;
 
-  // Registered is not driveable. The remaining budget rather than a slice of
-  // it: the key is already in hand, so there is nothing else left to spend it
-  // on, and an expiry is reported rather than walked into.
+  // Registered is not drivable.
   resolvedKey = connectKey;
   const drivable = connectKey
     ? await waitForHarmonyDrivable(connectKey, bootDeadline, assertEmulatorAlive)
     : false;
 
-  // Collected rather than picked: a key can be both unchecked and not yet
-  // answering, and dropping either caveat for the other would leave the payload
-  // asserting something the boot did not establish.
   const caveats: string[] = [];
   if (connectKey) {
     if (outcome.unconfirmed) caveats.push(HARMONY_UNCONFIRMED_TARGET);
@@ -2374,14 +1997,8 @@ function bootHarmony(params: {
   bootTimeoutMs: number;
   force?: boolean;
 }): Promise<HarmonyBootResult> {
-  // Keyed on the instance alone, as the Android map keys on the AVD name. Two
-  // boots that would do the same work share one run; a boot with the opposite
-  // `force` value SERIALIZES behind the in-flight one instead, because letting
-  // a plain and a forced boot reach `-start` together started the instance
-  // twice (measured: one caller told BOOT_HARMONY_MANAGER_EXITED while the
-  // other handed back the booted connect key). Waiting the prior attempt out
-  // keeps `force`'s restart real — it runs its own stop+start against whatever
-  // the first boot left behind.
+  // Same-`force` boots share one run; opposite ones serialize, since a plain and
+  // a forced boot reaching `-start` together started the instance twice.
   const key = params.instanceName;
   const force = Boolean(params.force);
   const existing = inFlightHarmonyBoots.get(key);
@@ -2391,7 +2008,7 @@ function bootHarmony(params: {
       try {
         await existing.promise;
       } catch {
-        // The prior attempt failed; this one still runs and reports for itself.
+        // the prior attempt failed; this one reports for itself
       }
     }
     return bootHarmonyImpl(params);
@@ -2485,10 +2102,7 @@ HarmonyOS hands the instance to DevEco Studio's Emulator manager, then waits for
         if (platform === "ios-remote") {
           return bootIosRemote(params.udid!, registry, params.force);
         }
-        // A HarmonyOS id reaching here is an emulator instance — the
-        // capability gate admits only `kind: "emulator"` — so route it to the
-        // emulator manager rather than to simctl, which would reject it as an
-        // unknown iOS udid.
+        // The capability gate admits only HarmonyOS emulator instances here.
         if (platform === "harmony") {
           return bootHarmony({
             instanceName: harmonyInstanceName(params.udid!),

@@ -78,7 +78,6 @@ const capability: ToolCapability = {
 // Nothing is declared in `services`, because the registry resolves declared
 // services before `execute` — the TV probe is async, and simulator-server would
 // then be spawned even for a tvOS udid it cannot drive.
-// (See platforms/{ios,android,chromium,vega,tv,harmony}.ts.)
 export function createKeyboardTool(registry: Registry): ToolDefinition<Params, KeyboardResult> {
   const dispatch = dispatchByPlatform<
     Record<string, unknown>,

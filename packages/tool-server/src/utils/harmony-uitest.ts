@@ -3,114 +3,44 @@ import { FAILURE_CODES, FailureError } from "@argent/registry";
 import { hdcFileRecv, runHdcShell, shellQuote } from "./harmony-hdc";
 
 /**
- * Driver for the two on-device binaries argent injects through.
+ * Driver for the on-device injectors: `uitest` (layout dump, screen capture,
+ * single-contact input, keys, text) and `uinput -T -m` (up to three contacts).
  *
- * `uitest` is HarmonyOS' UI automation surface — `uiautomator`, `screencap` and
- * `input` in one:
+ * `uitest` exits non-zero with a diagnostic on failure, unlike `hdc`, but
+ * validates almost nothing: an off-screen click answers `No Error`, while any
+ * coordinate below 1 is refused. {@link toDevicePoint} clamps both ends.
  *
- *   uitest dumpLayout -p <path>                    the accessibility tree, as JSON
- *   uitest screenCap  -p <path>                    a PNG of the display
- *   uitest uiInput click|doubleClick|longClick     touch
- *   uitest uiInput swipe|drag|fling|dircFling      gestures
- *   uitest uiInput keyEvent <id|Back|Home|Power>   hardware keys
- *   uitest uiInput text|inputText                  typing
- *
- * Every one of those verbs is single-contact. What `uitest` has no verb for at
- * all is the second finger, and that is what `uinput` — the platform's lower
- * level injector, `/system/bin/uinput`, root-owned but `0755` so `hdc`'s uid
- * 2000 may run it — adds:
- *
- *   uinput -T -m <x1 y1 x2 y2>… [-k keep] [ms]     1-3 contacts, each along a line
- *
- * See {@link multiTouchArgs} for its argument shape and the measurements behind
- * the way it is called.
- *
- * Two measured properties of `uitest` shape everything here (hdc 3.2.0d /
- * HarmonyOS 6.0.1, on a physical Mate 60):
- *
- * - **Its exit status is trustworthy, unlike its transport's.** `hdc` exits 0
- *   for everything (see `harmony-hdc.ts`), but `uitest` itself exits 1 and names
- *   the problem — `Invalid parameters.`, `Please confirm that the coordinate
- *   values are correct.`, `The number of parameters is incorrect.` — so the
- *   status recovered by `runHdcShell` is the success signal, and `No Error` on
- *   stdout is not needed to confirm it.
- *
- * - **It validates almost nothing.** A click at `99999 99999`, far outside a
- *   1216x2688 display, returns `No Error` and exit 0 having done nothing
- *   observable. What it does refuse is any coordinate below 1: measured on a
- *   HarmonyOS 6.1.1 emulator, `click 0 0`, `click 100 0` and `click 0 100`
- *   each exit 1 with `Please confirm that the coordinate values are correct.`,
- *   while `click 1 1` runs. So out-of-range coordinates are argent's to catch:
- *   `toDevicePoint` clamps into the addressable pixels on BOTH ends, which
- *   keeps a normalized 0-1 rounding error from silently becoming a no-op tap
- *   at one edge or a refused gesture at the other.
- *
- * **Why not the simulator-server**, which is how iOS and Android reach a
- * device: neither of its controllers has a counterpart here. An Android
- * emulator is driven over the emulator's own gRPC console, and DevEco's
- * `Emulator` 6.1.1.200 is stock `ohos-qemu` behind a Qt UI — no gRPC anywhere
- * in the binary, no QEMU passthrough in its CLI, `hdc` the only host-side
- * channel it ships. An Android phone is driven by a screen-sharing agent pushed
- * over adb, which HarmonyOS has no equivalent of. What is left either way is
- * `hdc`, reaching these same two binaries, from Rust instead.
+ * There is no simulator-server path: DevEco's emulator has no gRPC console and
+ * HarmonyOS has no screen-sharing agent, so `hdc` is the only channel.
  */
 
-/** Where on-device artifacts are staged before being copied to the host. */
 const REMOTE_TMP = "/data/local/tmp";
 
-/**
- * Per-`uitest` ceiling. Exported because a caller working to a deadline of its
- * own has to cap its probe against it: a probe outliving the call that made it
- * holds this device's queue, and the next call is what waits.
- */
+/** Per-`uitest` ceiling; a probe outliving its caller holds the device's queue. */
 export const UITEST_TIMEOUT_MS = 20_000;
 
 /**
- * Whole-call ceiling for one interaction — the display read, the wait for this
- * device's `uitest` queue and every injection come out of it together.
- *
- * None of the interaction tools declares `longRunning`, so the MCP client aborts
- * a call at 30s and *replays* it while the abandoned `hdc` children keep running
- * and keep holding the queue. For a tap that replay is a second touch for one
- * the caller believes never happened, so the tool has to fail on its own budget
- * first — which two legs on {@link UITEST_TIMEOUT_MS} each cannot do.
+ * Whole-call ceiling for one interaction, under the MCP client's 30s
+ * abort-and-replay, which would otherwise re-inject a tap the caller thinks
+ * never happened.
  */
 export const HARMONY_INTERACTION_TIMEOUT_MS = 20_000;
 
-/**
- * Ceiling for one render-service read, and the reason the whole interaction fits
- * inside one `uitest` ceiling: the read is measured at 50-190ms and the slowest
- * `hdc shell` round trip measured on an emulator is 0.8s, so this is ~6x headroom
- * for a loaded host rather than a bound a healthy read approaches.
- */
 export const HARMONY_DISPLAY_TIMEOUT_MS = 5_000;
 
-/**
- * Ceiling for the on-device cleanup delete, which runs after the caller's budget
- * is already spent. `runHdcShell`'s 30s default would add that much again past a
- * deadline the caller has exhausted; a `rm -f` is the lightest shell round trip
- * there is, against the 0.1-0.8s measured for one.
- */
+/** The cleanup `rm` runs after the caller's budget is spent, so it gets its own. */
 const REMOTE_CLEANUP_TIMEOUT_MS = 5_000;
 
 /**
- * `uitest` does not tolerate overlapping invocations: a second call on the
- * same device blocks until the first finishes, and if that takes past the
- * timeout the loser is SIGKILLed with the internal status sentinel in its
- * error. Measured: two concurrent `dumpLayout`s → one 20s failure; three →
- * two. So calls on one connect key are serialised here — queued behind each
- * other rather than raced — which turns an opaque 20s kill into the second
- * call simply starting once the first is done. Keyed per device so a phone
- * and an emulator, or two devices, still run in parallel; the map entry is
- * dropped once the queue drains so it cannot grow unboundedly.
+ * Overlapping `uitest` calls on one device block each other until one is
+ * SIGKILLed at its timeout, so calls are queued per connect key.
  */
 const uitestQueues = new Map<string, Promise<void>>();
 
 function enqueueUitest<T>(connectKey: string, run: () => Promise<T>): Promise<T> {
   const prior = uitestQueues.get(connectKey) ?? Promise.resolve();
   const result = prior.then(run);
-  // The queue tracks only the settlement signal, not the value, so a rejection
-  // never propagates into the next caller's chain.
+  // Track settlement only, so a rejection never reaches the next caller.
   const drained = result.then(
     () => undefined,
     () => undefined
@@ -122,23 +52,15 @@ function enqueueUitest<T>(connectKey: string, run: () => Promise<T>): Promise<T>
   return result;
 }
 
-/**
- * `uitest` prints its multi-line usage block after every failure. Only the
- * leading line names the actual problem, so surface that and drop the rest —
- * pasting 12 lines of usage into an agent's context buries the diagnostic.
- */
+/** `uitest` follows a failure with its usage block; only the first line matters. */
 function uitestDiagnostic(stdout: string): string {
   const first = stdout.split(/\r?\n/).find((l) => l.trim().length > 0);
   return first?.trim() ?? "uitest failed without a diagnostic";
 }
 
 /**
- * Milliseconds left of a shared deadline, or a refusal when there are none.
- *
- * A leg started with nothing left is killed the moment it begins and reported as
- * a device that hung, which is the wrong repair for a budget that was gone
- * before it — and a spent budget cannot simply be passed on, since `execFile`
- * reads a timeout of 0 as *no* timeout.
+ * Milliseconds left of `deadline`, or a refusal. A spent budget cannot be passed
+ * on: `execFile` reads a timeout of 0 as none.
  */
 export function remainingBudget(connectKey: string, deadline: number, step: string): number {
   const left = deadline - Date.now();
@@ -157,7 +79,7 @@ export function remainingBudget(connectKey: string, deadline: number, step: stri
   );
 }
 
-/** The budget label `remainingBudget` names in its refusal, from the subcommand alone — the arguments carry the text being typed. */
+/** The subcommand alone: the arguments may carry typed text. */
 function uitestStep(args: string): string {
   return `\`uitest ${args.split(" ")[0]}\``;
 }
@@ -183,10 +105,7 @@ async function runUitestDirect(
 
 /** Run a `uitest` subcommand on a ceiling of its own, queued behind this device's previous one. */
 async function runUitest(connectKey: string, args: string, timeoutMs: number): Promise<string> {
-  // The ceiling spans the queue as well as the call. A clock started once this
-  // device's queue hands over cannot see the wait in front of it, so a caller
-  // queued behind another — the one case that makes an interaction outlive its
-  // budget — would be charged against no ceiling at all.
+  // The ceiling spans the wait in the queue too.
   const deadline = Date.now() + timeoutMs;
   return enqueueUitest(connectKey, () =>
     runUitestDirect(connectKey, args, remainingBudget(connectKey, deadline, uitestStep(args)))
@@ -201,29 +120,15 @@ interface HarmonyDisplay {
 }
 
 /**
- * The `ScreenPowerStatus` values that mean a touch can land.
- *
- * An allowlist, because the enum is long and mostly not interactive: the
- * HarmonyOS 6.1.1 system image also names `STANDBY`, `SUSPEND`, `OFF`,
- * `OFF_ADVANCED`, `OFF_FAKE`, `DOZE`, `DOZE_SUSPEND`, `ERROR` and `BUTT`
- * (read out of `system.img`). `uitest uiInput` answers `No Error` on every one
- * of them, so naming the two that are on makes an unmeasured state refuse
- * rather than report a touch that reached nothing.
- *
- * `ON_ADVANCED` is the pre-power-on state a wake passes through. Refusing it
- * would fail exactly the retry this guard's own message prescribes.
+ * The `ScreenPowerStatus` values a touch can land in. An allowlist, since
+ * `uitest` answers `No Error` in every state; `ON_ADVANCED` is the state a wake
+ * passes through.
  */
 const INTERACTIVE_POWER_STATUS = new Set(["POWER_STATUS_ON", "POWER_STATUS_ON_ADVANCED"]);
 
 /**
- * Display geometry and power state, read from the render service.
- *
- * Not cached. The obvious optimisation is wrong on this platform: HarmonyOS'
- * flagship form factors are foldables, whose resolution changes when the user
- * unfolds the device, and `powerStatus` changes on any screen timeout. A cached
- * width would silently misplace every subsequent tap on the other half of a
- * fold. The call is a local service dump measured at 50-190ms, cheap enough to
- * pay per gesture rather than risk that.
+ * Display geometry and power state from the render service. Not cached: a
+ * foldable's resolution changes with the fold, and power with any timeout.
  */
 export async function harmonyDisplay(
   connectKey: string,
@@ -234,24 +139,19 @@ export async function harmonyDisplay(
     "hidumper -s RenderService -a screen",
     timeoutMs
   );
-  // One line per panel, carrying both fields — measured on HarmonyOS 6.1.1:
+  // Both fields from the same `screen[N]:` line, so a foldable's sleeping half
+  // does not refuse input on the awake one:
   //   screen[0]: id=0, powerStatus=POWER_STATUS_ON, ..., render resolution=1320x2856, ...
-  // Both read off the SAME line: scanning the whole dump for POWER_STATUS_OFF
-  // refuses every gesture on an awake foldable the moment its other half sleeps.
   const screen = stdout
     .split("\n")
     .find((line) => /^\s*screen\[\d+\]:/.test(line) && /render resolution=\d+x\d+/.test(line));
   const res = screen ? /render resolution=(\d+)x(\d+)/.exec(screen) : null;
   const power = screen ? /powerStatus=(\w+)/.exec(screen) : null;
-  // Both or neither: defaulting an unparsed power state to "on" is the one
-  // answer that lets a suspended panel through every input tool.
+  // Both or neither: an unparsed power state must not default to "on".
   if (!res || !power) {
     throw new FailureError(
       `Could not read the display size and power state of HarmonyOS device '${connectKey}' from the render service.`,
       {
-        // The display, not `uitest`: this is a `hidumper` dump, and no `uitest`
-        // ran. `failure_stage` is what separates a dump that could not be parsed
-        // from one that parsed and reported nothing usable.
         error_code: FAILURE_CODES.HARMONY_DISPLAY_UNREADABLE,
         failure_stage: "harmony_display_size",
         failure_area: "tool_server",
@@ -268,15 +168,8 @@ export async function harmonyDisplay(
 }
 
 /**
- * Convert argent's normalized 0-1 coordinates to device pixels.
- *
- * Clamped into the addressable pixel range rather than to either bound. At the
- * top: `uitest` accepts an out-of-range coordinate silently (see the header),
- * so `y = 1.0` would otherwise inject at `height`, one row past the display,
- * and report success for a touch that never happened. At the bottom: it
- * refuses 0 outright, so an edge-normalized coordinate — a swipe ending at
- * the top edge, a back gesture starting at the left one — would otherwise be
- * handed a value the binary rejects and fail hard.
+ * Normalized 0-1 coordinates to device pixels, clamped to [1, size - 1]:
+ * `uitest` silently ignores a point past the edge and refuses 0.
  */
 export function toDevicePoint(
   x: number,
@@ -288,27 +181,12 @@ export function toDevicePoint(
 }
 
 /**
- * Refuse an input injection against a display that cannot receive one.
- *
- * `uitest uiInput` reports `No Error` whether or not the touch landed, so both
- * states it cannot land in are argent's to catch, off the one read every input
- * tool already makes:
- *
- * - **A non-positive panel.** The render service prints `render resolution=0x0`
- *   while the guest's compositor is still coming up, and every normalized
- *   coordinate then clamps onto the same corner pixel — a tap at (0.83, 0.42)
- *   goes out as a tap on that pixel, reported as the tap that was asked for.
- *   `boot-device` refuses the same read as unreadable rather than act on it.
- * - **A suspended panel.** Measured: a tap on the WLAN row of Settings with
- *   `powerStatus=POWER_STATUS_OFF` returned success and changed nothing.
- *   `describe` is honest about this state (its asleep hint); the input tools
- *   must be too, or a screen timeout mid-session turns every later gesture into
- *   a silent no-op that reports success.
+ * Refuse input `uitest` would report as delivered but that lands nowhere: a
+ * `0x0` panel still compositing (every point would clamp to one corner), or a
+ * suspended one.
  */
 export function assertHarmonyDisplayReady(display: HarmonyDisplay, action: string): void {
-  // Before the power state, which is read off the same dump: a service that
-  // could not name a panel has said nothing trustworthy about that panel's
-  // power either.
+  // A service that cannot name the panel says nothing trustworthy about its power.
   if (display.width <= 0 || display.height <= 0) {
     throw new FailureError(
       `Cannot ${action} on a HarmonyOS device whose render service reports a ` +
@@ -354,18 +232,8 @@ function touchArgs(command: HarmonyTouchCommand, point: { x: number; y: number }
 }
 
 /**
- * `uitest` takes a **velocity**, not a duration, so the caller translating a
- * duration speaks pixels travelled per second. Doing it the other way — passing
- * a fixed velocity — would make a short swipe and a screen-length one take
- * wildly different times, and the callers that pace a scroll loop against
- * `durationMs` would be pacing against nothing.
- *
- * `settle` picks the verb rather than reshaping the path. `uitest` exposes both
- * `swipe` (a drag that ends where it ends) and `fling` (which hands the scroller
- * a release velocity to coast on), so the momentum-free request maps onto the
- * one the platform already means by it. That is the vendor's own distinction
- * between the two commands; the resulting difference in coast distance was not
- * measured here.
+ * `uitest` takes a velocity, not a duration. `fling` hands the scroller a
+ * release velocity to coast on; `swipe` does not.
  */
 function swipeArgs(
   command: HarmonySwipeCommand,
@@ -377,13 +245,7 @@ function swipeArgs(
   return `uiInput ${command} ${from.x} ${from.y} ${to.x} ${to.y} ${v}`;
 }
 
-/**
- * `uinput -T -m` refuses a move time outside this range, printing `total time
- * is out of range:` / `1 <= total times <= 15000` and exiting 2 — measured at
- * both ends on a HarmonyOS 6.1.1 emulator. Unlike the velocity `uitest` takes,
- * the value is wall-clock milliseconds: 300 / 1500 / 5000 measured at 400 /
- * 1600 / 5101ms end to end, so a caller's duration maps straight onto it.
- */
+/** `uinput -T -m` move time bounds, in wall-clock milliseconds. */
 const HARMONY_MOVE_TIME_MIN = 1;
 const HARMONY_MOVE_TIME_MAX = 15_000;
 
@@ -394,22 +256,9 @@ interface HarmonyFingerPath {
 }
 
 /**
- * `uinput -T -m x1 y1 x1' y1' [x2 y2 x2' y2' […]] [ms]` — every contact's start
- * and end point, then the milliseconds the move takes, which the device spends
- * interpolating all of them together.
- *
- * That togetherness is the whole reason a multi-contact gesture is one call:
- * **contacts only coexist inside a single invocation.** Measured on a HarmonyOS
- * 6.1.1 emulator against the launcher, whose two-finger pinch-in opens the
- * home-screen editor — one call carrying both fingers opened it; the identical
- * geometry split across two concurrent `uinput` processes, one parking a finger
- * with `-k` while the other moved, did not.
- *
- * The straight line per contact is the shape of the primitive, not a
- * simplification here: `-m` cannot be repeated within an invocation (a second
- * one is `wrong number of parameters`), so a path with a bend in it has no
- * expression at all — which is why pinch is reachable on this platform and an
- * arc-shaped rotate is not.
+ * `uinput -T -m x1 y1 x1' y1' [...] [ms]`. Contacts only coexist within one
+ * invocation, and `-m` cannot repeat, so each contact moves along one straight
+ * line: a pinch is expressible, an arc is not.
  */
 function multiTouchArgs(paths: HarmonyFingerPath[], durationMs: number): string {
   const ms = Math.min(
@@ -424,14 +273,8 @@ function multiTouchArgs(paths: HarmonyFingerPath[], durationMs: number): string 
 const UINPUT_ARGUMENT_ECHO = /^(startX:|fingerCount:|keepTimeMs:|smoothTimeMs:)/;
 
 /**
- * The refusal out of whatever `uinput` printed — which on some builds is
- * nothing at all, see {@link runUinputDirect}.
- *
- * Where there is output, it echoes the arguments it parsed *before* validating
- * them and follows an unrecognised option with its ~90-line usage block, so
- * neither the first line nor the last is the diagnostic. Drop the echo, stop at
- * the usage block, and keep the two lines that can remain — a range refusal
- * puts the bound on the line after the message.
+ * `uinput` echoes its arguments before validating them and may follow with a
+ * usage block; keep the two lines between, which carry a range refusal's bound.
  */
 function uinputDiagnostic(stdout: string): string {
   const lines = stdout.split(/\r?\n/).map((line) => line.trim());
@@ -443,22 +286,8 @@ function uinputDiagnostic(stdout: string): string {
 }
 
 /**
- * Run one `uinput` command, throwing on a non-zero exit.
- *
- * The exit status is the whole signal, because the output is not portable: the
- * same successful `-T -m` prints an argument echo and a boundary hint on a
- * HarmonyOS 6.1.1 emulator and **nothing at all** on a 6.0.0.110 handset, whose
- * `hdc` does not forward the remote command's stderr to the host either — so
- * its refusals arrive as a bare exit code, with the diagnostic left on the
- * device. Do not build a check on what this prints.
- *
- * The status does carry every refusal `-T -m` itself can produce, identically
- * on both builds: 2 for a bad argument count or an out-of-range move time, 255
- * for a negative coordinate.
- *
- * The failure carries `HARMONY_UITEST_FAILED`, the bucket for an on-device
- * injector refusing an injection — the remedy an agent takes from it is the
- * same for both binaries. `failure_stage` is what names which one ran.
+ * The exit status is the only portable signal: some builds print nothing and
+ * `hdc` does not forward stderr.
  */
 async function runUinputDirect(connectKey: string, args: string, timeoutMs: number): Promise<void> {
   const { stdout, exitCode } = await runHdcShell(connectKey, `uinput ${args}`, timeoutMs);
@@ -475,11 +304,7 @@ async function runUinputDirect(connectKey: string, args: string, timeoutMs: numb
   );
 }
 
-/**
- * The injections one hold of this device's queue may put on the wire. Every leg
- * is charged what is left of the hold's shared deadline rather than a ceiling of
- * its own.
- */
+/** The injections one hold of the device's queue may make, all on the hold's deadline. */
 interface UitestSlot {
   touch(command: HarmonyTouchCommand, point: { x: number; y: number }): Promise<void>;
   swipe(
@@ -491,40 +316,15 @@ interface UitestSlot {
   keyEvent(key: string): Promise<void>;
   /** Type into whatever currently holds focus, in one shot. */
   type(text: string): Promise<void>;
-  /**
-   * Move up to three contacts at once — the binary's own limit, a fourth being
-   * refused with `wrong number of parameters:20` — each along a straight line,
-   * over `durationMs` of wall clock. This is the platform's only multi-contact
-   * injection, and it comes from `uinput` rather than `uitest`, which has no
-   * verb that puts a second finger on the glass.
-   */
+  /** Up to three contacts, each along a straight line, over `durationMs`. */
   multiTouchMove(paths: HarmonyFingerPath[], durationMs: number): Promise<void>;
 }
 
 /**
- * Hold this device's `uitest` queue while one whole input interaction runs:
- * the display re-read, its check and every injection come out of ONE slot, so
- * the state that is checked is the state that holds on the wire.
- *
- * The reason the read belongs inside the hold: an input tool that reads the
- * display before acquiring the queue checks a panel it does not act on until
- * every earlier call has drained — a wait as long as the queue is deep, during
- * which anything that does not go through `uitest` (`power-shell`, the physical
- * key, the OS timeout) can suspend the panel. Measured: a tap issued against an
- * awake panel injected 5.9s later, answering `No Error` into
- * `POWER_STATUS_OFF`. Re-reading inside the slot shrinks the checked state and
- * the injection to adjacent round trips.
- *
- * The read is a `hidumper` service dump, not a `uitest` invocation, so running
- * it inside the hold neither overlaps two `uitest` processes nor waits on
- * anything in this queue: no deadlock. What the adjacency cannot close is an
- * actor suspending the panel DURING the final round trip — physical button,
- * foreign host process, OS timeout mid-injection — which no ordering here can
- * see, let alone prevent. That residual is inherent to checking then acting
- * over a wire, and accepted.
- *
- * Nothing inside `unit` may enqueue again: every `uitest` leg goes through the
- * slot, which runs directly against the device this hold already owns.
+ * Run one input interaction, display check included, in a single hold of the
+ * device's queue, so the panel checked is the panel injected into. A display
+ * read made before queueing went stale behind a deep queue. `unit` must not
+ * enqueue again.
  */
 export async function holdUitestQueue<T>(
   connectKey: string,
@@ -544,10 +344,7 @@ export async function holdUitestQueue<T>(
       swipe: (command, from, to, velocity) => run(swipeArgs(command, from, to, velocity)),
       keyEvent: (key) => run(`uiInput keyEvent ${key}`),
       type: (text) => run(`uiInput text ${shellQuote(text)}`),
-      // `uinput` is a separate binary with no singleton of its own, so it is not
-      // the 20s kill this queue exists to prevent that puts it here — it is that
-      // an injection racing another tool's is the same interleaved-input mess on
-      // either binary. One queue per device covers both.
+      // Not a `uitest` singleton, but interleaved input is as bad on either binary.
       multiTouchMove: async (paths, durationMs) => {
         const args = multiTouchArgs(paths, durationMs);
         await runUinputDirect(
@@ -561,14 +358,9 @@ export async function holdUitestQueue<T>(
 }
 
 /**
- * Run `producer` against a freshly-named path under the device's tmp directory,
- * copy the result to `localPath`, then delete the on-device copy.
- *
- * The unique name matters for more than tidiness: two tool calls racing a fixed
- * path would have one overwrite the other's capture between write and fetch, and
- * the loser would silently receive the winner's screen. The delete runs even
- * when the fetch throws — otherwise a device accumulates a multi-hundred-KB PNG
- * per failed screenshot, on a partition nothing else prunes.
+ * Run `producer` against a unique on-device path, copy it to `localPath`, then
+ * delete it even on failure: a fixed name races concurrent calls, and nothing
+ * prunes the partition.
  */
 async function viaDeviceTmp(
   connectKey: string,
@@ -579,11 +371,7 @@ async function viaDeviceTmp(
 ): Promise<void> {
   const remotePath = `${REMOTE_TMP}/argent-${process.pid}-${process.hrtime.bigint()}${suffix}`;
   try {
-    // A caller working to a deadline spends it across BOTH round trips, so each
-    // leg is handed what is left of it rather than a ceiling of its own — a
-    // producer given the full budget leaves the fetch a sliver, and a fetch left
-    // on `hdc`'s 30s default runs that far past a deadline the caller has
-    // already exhausted.
+    // Both legs share the caller's deadline.
     await producer(remotePath, remainingBudget(connectKey, deadline, "the capture"));
     await hdcFileRecv(
       connectKey,
@@ -592,10 +380,7 @@ async function viaDeviceTmp(
       remainingBudget(connectKey, deadline, "copying the result off the device")
     );
   } finally {
-    // The delete is outside the shared budget — it runs after that budget is
-    // spent, and leaving a multi-hundred-KB capture on a partition nothing
-    // prunes is not the way to save the time — but on a ceiling of its own, so a
-    // wedged daemon cannot add 30s to a call that is already over.
+    // Outside the spent budget, on a short ceiling of its own.
     await runHdcShell(
       connectKey,
       `rm -f ${shellQuote(remotePath)}`,
@@ -627,14 +412,7 @@ export interface HarmonyLayoutNode {
   children?: HarmonyLayoutNode[];
 }
 
-/**
- * The current UI tree.
- *
- * `-i` is deliberately not passed: without it `uitest` merges the window stack
- * into one tree and filters invisible nodes, which is the view a caller asking
- * "what is on screen" wants. The unmerged form exposes every background window
- * of every app, including ones the user cannot see.
- */
+/** The merged, visible-only tree: `-i` would add every background window. */
 export async function harmonyDumpLayout(
   connectKey: string,
   localPath: string,

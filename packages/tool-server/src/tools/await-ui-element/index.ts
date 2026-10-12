@@ -445,18 +445,12 @@ screen, or before tapping an element that appears asynchronously.`,
           if (!blind && !data.stale) lastTrustedReadAt = nowMs;
           if (!blind && evaluateMatches(params, matches)) {
             const result: WaitResult = { success: true, elapsed: Date.now() - start };
-            // Both, not the first that applies: a `hidden` that met its
-            // condition on sight is exactly the wait a suspended panel resolves
-            // — the selector matches nothing in a frame composited before the
-            // screen went dark — and the caveat is what stops the tap that
-            // follows from landing nowhere.
+            // Both notes: a suspended panel can satisfy `hidden` on sight.
             const notes = [
               params.condition === "hidden" && !everMatched
                 ? "condition met immediately — the selector never matched any element, " +
                   "so it may have already been hidden before the wait, or the selector is wrong"
                 : null,
-              // A success read off a tree that may not be the live screen still
-              // owes the agent that caveat.
               data.hint && READ_CAVEAT_SOURCES.has(data.source) ? data.hint : null,
             ].filter((n): n is string => n !== null);
             if (notes.length > 0) result.note = notes.join(" ");

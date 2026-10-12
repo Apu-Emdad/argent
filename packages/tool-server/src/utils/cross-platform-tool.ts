@@ -61,12 +61,7 @@ export function dispatchByPlatform<
   iosDevice?: PlatformImpl<IosDeviceServices, Params, Result>;
   chromium?: PlatformImpl<ChromiumServices, Params, Result>;
   vega?: PlatformImpl<VegaServices, Params, Result>;
-  /**
-   * HarmonyOS branch, driven over `hdc`. Optional on the same terms as `vega`:
-   * a tool whose capability declares `harmony` but wires no branch here throws
-   * `NotImplementedOnPlatformError` (501) rather than falling through to
-   * chromium.
-   */
+  /** Optional like `vega`: a declared but unwired `harmony` throws 501. */
   harmony?: PlatformImpl<HarmonyServices, Params, Result>;
 }): (
   services: Record<string, unknown>,
@@ -143,9 +138,7 @@ export function dispatchByPlatform<
       return opts.vega.handler(services as unknown as VegaServices, params, device, invokeOptions);
     }
     if (device.platform === "harmony") {
-      // Explicit, not merely for symmetry: chromium is the fallthrough below, so
-      // without this branch a HarmonyOS device would be handed to the CDP handler
-      // and its result reported as a success.
+      // Explicit: chromium is the fallthrough below.
       if (!opts.harmony) {
         throw new NotImplementedOnPlatformError({ toolId: opts.toolId, platform: "harmony" });
       }

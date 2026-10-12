@@ -5,23 +5,9 @@ import type { OpenUrlParams, OpenUrlResult, OpenUrlServices } from "../types";
 import { httpDeepLinkNote } from "../deep-link-note";
 
 /**
- * `aa start -U <uri>` is HarmonyOS' implicit open — the system picks the
- * handler, which is exactly what this tool wants (and the one place implicit
- * start is the right verb; see `harmony-apps`).
- *
- * A scheme **no ability claims at all** is caught: `aa` prints `10103101 Failed
- * to find a matching application for implicit launch`, which `openHarmonyUrl`
- * turns into a throw.
- *
- * What the system does accept is not caught, and cannot be. Measured on
- * HarmonyOS 6.0.1, all printing `start ability successfully.`:
- * `https://example.com` leaves the foreground app unchanged, and `tel:` /
- * `mailto:` hand off to the system app selector, which puts up a modal "No
- * options to open with" that covers the screen until it is dismissed. Nothing in
- * `aa`'s output separates any of those from a link that was really followed, so
- * the caveat rides on every URL rather than on web ones alone: `opened: true`
- * here means "the system accepted the URI", which on this platform is weaker
- * than it sounds.
+ * `aa start -U` reports success for anything the system accepts: a web URL can
+ * leave the screen unchanged, and `tel:`/`mailto:` can leave a chooser up. So
+ * every URL carries the caveat.
  */
 const HARMONY_OPEN_CAVEAT =
   "On HarmonyOS specifically, `aa start -U` reports success whenever the system accepts the URI, " +

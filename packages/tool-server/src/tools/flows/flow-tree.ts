@@ -42,11 +42,7 @@ type FlowTreeSource = (
   target?: FlowTreeTarget
 ) => Promise<DescribeTreeData>;
 
-/**
- * The source {@link fetchFlowTree} reads on each platform, or `null` where flows
- * have none. Total by type: a `Platform` added without an entry here is a
- * compile error, so having no source is a decision rather than an omission.
- */
+/** Per-platform source; `null` where flows have none. */
 const FLOW_TREE_SOURCES: Record<Platform, FlowTreeSource | null> = {
   // Simulator iOS uses the injected hierarchy and an optional target.
   // Physical devices use the XCUITest runner tree.
@@ -63,17 +59,11 @@ const FLOW_TREE_SOURCES: Record<Platform, FlowTreeSource | null> = {
   "android": (registry, device) => queryAndroidFullHierarchy(registry, device),
   "chromium": (registry, device) => queryChromiumTree(registry, device),
   "vega": (_registry, device) => queryVegaTree(device),
-  // No flow adapter for the `uitest dumpLayout` tree: coordinate steps and
-  // `snapshot` run, selector steps error.
+  // Coordinate steps and `snapshot` run; selector steps error.
   "harmony": null,
 };
 
-/**
- * Whether a platform has a flow tree source at all. The distinction a caller
- * needs is "structurally absent" versus "down": with no source every read fails
- * by construction, so a best-effort caller would otherwise report a degradation
- * on every gesture of every run there — see `settleForGesture`.
- */
+/** Absent, not down: every read fails by construction. */
 export function supportsFlowTree(platform: Platform): boolean {
   return FLOW_TREE_SOURCES[platform] !== null;
 }

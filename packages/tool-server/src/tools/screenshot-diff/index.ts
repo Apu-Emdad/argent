@@ -134,8 +134,7 @@ Fails if the input sources are invalid, PNG files cannot be read, outputDir cann
     // touches the device.
     if (params.captureBaseline || params.captureCurrent) {
       const device = resolveDevice(params.udid);
-      // HarmonyOS has no simulator-server controller, so resolving the blueprint
-      // for one would throw before the capture path runs.
+      // No simulator-server controller exists for HarmonyOS.
       if (device.platform === "harmony") return {};
       if (isIosPhysicalDevice(device)) {
         return { iosDeviceRunner: iosDeviceRunnerRef(device) };
@@ -280,9 +279,6 @@ async function resolveInputPaths(
   // What the live captures had to say: on a foldable whose panel could not be
   // resolved, that the capture is of the cover panel.
   const warnings: string[] = [];
-  // Physical iPhones capture through the on-device XCUITest runner; every other
-  // platform goes through liveCapture (HarmonyOS on-device via `uitest`,
-  // simulators and Android via the simulator-server).
   const captureLive = async (name: "baseline" | "current"): Promise<string> => {
     const device = resolveDevice(params.udid);
     if (isIosPhysicalDevice(device)) {
@@ -309,19 +305,12 @@ async function resolveInputPaths(
   return { baselinePath, currentPath, warnings };
 }
 
-/** A live capture as a path on this host, plus what the capture had to say. */
 interface LiveCaptureResult {
   path: string;
   warning?: string;
 }
 
-/**
- * How this device produces a live full-resolution PNG, as a path on this host.
- *
- * iOS and Android go through the simulator-server; HarmonyOS has no controller
- * there and captures on-device with `uitest screenCap` instead, the same split
- * the `screenshot` tool makes.
- */
+/** HarmonyOS captures on-device with `uitest screenCap`; the rest via simulator-server. */
 function liveCapture(
   services: Record<string, unknown>,
   params: Params,
@@ -334,11 +323,7 @@ function liveCapture(
   if (device.platform === "harmony") {
     return async () => {
       if (params.rotation) {
-        // Inside the capture rather than up front: for a static two-path diff
-        // rotation is inert on every platform, and rejecting it there would
-        // make HarmonyOS the one platform an unused argument fails. A
-        // per-ARGUMENT refusal (same class as the keyboard key guard), not a
-        // per-tool one — screenshot-diff works on every harmony device.
+        // Refused only for a live capture: rotation is inert on a two-path diff.
         throw new InvalidToolInputError(
           "rotation is not supported for a live HarmonyOS capture: `uitest screenCap` captures the display in its current orientation and has no override. Rotate the device itself, or drop the rotation parameter.",
           {
@@ -487,14 +472,7 @@ async function captureLiveInput(params: {
   const { path: capturedPath, warning } = await params.capture();
   const suffix = crypto.randomBytes(4).toString("hex");
   const destination = path.join(params.outputDir, `${params.name}-${suffix}.live.png`);
-  // The capture is scratch, not an artifact: every backend writes a uniquely
-  // named PNG that nothing else prunes, so one per diff would accumulate in
-  // `tmpdir()` for the life of the process — and at `scale: 1.0`, which this
-  // path asks for, each is a full-resolution frame. `destination` is the copy
-  // that outlives the call, so the capture goes whether or not the copy worked.
-  // Same ownership `flow-pixels`' `capturePng` takes, and only reachable for a
-  // capture this function made: a caller-supplied `baselinePath`/`currentPath`
-  // never comes through here.
+  // The capture is scratch nothing else prunes; only the copy outlives the call.
   try {
     await fs.mkdir(params.outputDir, { recursive: true });
     await fs.copyFile(capturedPath, destination);

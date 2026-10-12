@@ -64,14 +64,10 @@ async function probe(dep: ToolDependency): Promise<boolean> {
   if (dep === "vega") {
     return (await resolveVegaBinary()) !== null;
   }
-  // The emulator manager lives inside DevEco Studio rather than on PATH, so it
-  // resolves through the DevEco-aware resolver.
+  // Both ship inside DevEco Studio rather than on PATH.
   if (dep === "harmony-emulator") {
     return (await resolveHarmonyEmulator()) !== null;
   }
-  // `hdc` ships inside DevEco Studio's SDK rather than on PATH for IDE installs,
-  // so it resolves through the DevEco-aware resolver (which falls back to PATH
-  // for standalone command-line-tools installs).
   if (dep === "hdc") {
     return (await resolveHdc()) !== null;
   }

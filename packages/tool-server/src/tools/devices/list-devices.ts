@@ -64,15 +64,8 @@ type AndroidDevice = {
 };
 
 /**
- * A HarmonyOS target, from either of the platform's two discovery sources.
- *
- * `kind: "device"` is a target `hdc` is connected to — a phone over USB, or a
- * booted emulator that has registered — and is what every interaction tool
- * drives. `kind: "emulator"` is a DevEco Studio *instance*, which exists whether
- * or not it is running and is what `boot-device` starts.
- *
- * A running emulator is therefore listed twice, once under each kind, the same
- * way a running Android AVD appears in both `avds` and `adb devices`.
+ * `kind: "device"` is an `hdc` target (drivable); `kind: "emulator"` is a
+ * DevEco instance (bootable). A running emulator is listed as both.
  */
 type HarmonyDevice = {
   platform: "harmony";
@@ -81,11 +74,8 @@ type HarmonyDevice = {
   kind: "emulator" | "device";
   /** `Connected`/`Offline` for a connected target; `running`/`stopped` for an instance. */
   state: string;
-  /** Instance form factor (`Phone`, `Foldable`, …). Null for a connected target. */
   deviceType?: string | null;
-  /** e.g. `HarmonyOS 6.1.1(24)`. Null for a connected target. */
   osVersion?: string | null;
-  /** Transport of a connected target (`USB`, `TCP`). Absent for an instance. */
   connection?: string | null;
 };
 
@@ -170,11 +160,9 @@ function readinessRank(d: ListedDevice): number {
   if (d.platform === "android") return d.state === "device" ? 0 : 1;
   if (d.platform === "vega") return d.state === "running" || d.state === "device" ? 0 : 1;
   if (d.platform === "chromium") return 0; // Chromium entries are only listed when their CDP is responsive
-  // A `Connected` hdc target is drivable now; a `running` instance has booted.
-  // Anything else (a stopped instance, an `Offline` target) needs work first.
+  // A `Connected` target or a `running` instance is ready.
   if (d.platform === "harmony") return d.state === "Connected" || d.state === "running" ? 0 : 1;
-  // Physical iOS: paired-but-unreachable ranks with shut-down devices. Checked
-  // after harmony, whose devices also carry kind "device" but rank by hdc state.
+  // Physical iOS: paired-but-unreachable ranks with shut-down devices.
   if ("kind" in d && d.kind === "device") return d.state === "connected" ? 0 : 1;
   return d.state === "Booted" ? 0 : 1; // ios + ios-remote
 }

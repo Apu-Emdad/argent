@@ -49,13 +49,8 @@ export const BUTTONS_BY_PLATFORM: Record<Platform, ReadonlySet<Params["button"]>
   // Vega buttons / D-pad go through the `tv-remote` tool; the capability omits
   // `vega`, so this entry only keeps the record total.
   "vega": new Set([]),
-  // `uitest uiInput keyEvent` names exactly these three (`Back`/`Home`/`Power`)
-  // and otherwise takes a raw numeric keyID. The named three are listed because
-  // each was confirmed on a device: Power toggles `powerStatus` ON↔SUSPEND, Home
-  // and Back both move the foreground bundle out of an app and back to the
-  // launcher. The rest are omitted rather than mapped from documented keycodes —
-  // `uitest` accepts any number and reports `No Error` whatever it does, so an
-  // unverified mapping would be indistinguishable from a working one.
+  // Verified on a device; `uitest` answers `No Error` to any keyID, so
+  // unverified mappings are left out.
   "harmony": new Set(["home", "back", "power"]),
 };
 
@@ -66,7 +61,6 @@ const capability: ToolCapability = {
   harmony: { device: true },
 };
 
-/** The names `uitest uiInput keyEvent` accepts, for the buttons it can press. */
 const HARMONY_BUTTON_KEYS: Partial<Record<Params["button"], string>> = {
   home: "Home",
   back: "Back",
@@ -123,11 +117,7 @@ Fails if the device backend is not reachable — the simulator-server for iOS, \
     const device = resolveDevice(params.udid);
     const available = BUTTONS_BY_PLATFORM[device.platform];
     if (!available.has(params.button)) {
-      // Name the set, as the sibling `keyboard` does for an unsupported key:
-      // HarmonyOS accepts three of the seven buttons, so a refusal that only
-      // says which one failed leaves an agent guessing at the other six. The
-      // platforms whose set is empty are refused by the capability gate above,
-      // so this list never is.
+      // Name the supported set, as `keyboard` does.
       throw new UnsupportedOperationError(
         "button",
         device,
@@ -174,32 +164,16 @@ Fails if the device backend is not reachable — the simulator-server for iOS, \
       return { pressed: params.button };
     }
     if (device.platform === "harmony") {
-      // Same reasoning as the Android branch above: presses go over the
-      // platform's own injection path rather than the simulator-server HID
-      // transport, so preflight the connector here (services() skips the
-      // sim-server for HarmonyOS). The BUTTONS_BY_PLATFORM guard above
-      // guarantees a key name exists for every accepted button.
+      // The guard above ensures a key name exists.
       await ensureDep("hdc");
       const connectKey = harmonyConnectKey(device.id);
-      // One deadline for both display reads and the press, so the pair stays
-      // under the MCP layer's abort-and-replay cap.
       const deadline = Date.now() + HARMONY_INTERACTION_TIMEOUT_MS;
-      // Fast prefilter, ahead of the queue wait: a panel already suspended is
-      // refused without waiting behind this device's queued work. It is NOT the
-      // check the injection trusts — see inside the hold.
+      // Prefilter without queueing; the trusted check is inside the hold.
       if (params.button !== "power") {
         assertHarmonyDisplayReady(await harmonyDisplay(connectKey), `press ${params.button}`);
       }
       await holdUitestQueue(connectKey, deadline, async (ui) => {
-        // `uitest uiInput keyEvent` answers `No Error` against a suspended panel
-        // while the press lands nowhere, so `home` and `back` share the guard
-        // every other input tool uses — re-read while holding the queue, since
-        // the prefilter saw a state that may be stale by the time the press
-        // reaches the device.
-        //
-        // `power` is exempt, and exempt before any display read — it is what
-        // the refusal tells the caller to wake the device with, and the one key
-        // that works while the panel is suspended.
+        // `power` is exempt: it is the key that wakes a suspended panel.
         if (params.button !== "power") {
           assertHarmonyDisplayReady(
             await harmonyDisplay(

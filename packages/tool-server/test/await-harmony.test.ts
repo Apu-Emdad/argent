@@ -292,8 +292,8 @@ describe("await-ui-element on HarmonyOS", () => {
         udid: HARMONY_ID,
         condition: "visible",
         selector: { text: "Submit" },
-        timeoutMs: 300,
-        pollIntervalMs: 10,
+        timeoutMs: 600,
+        pollIntervalMs: 100,
       }
     );
 
@@ -314,8 +314,8 @@ describe("await-ui-element on HarmonyOS", () => {
         udid: HARMONY_ID,
         condition: "visible",
         selector: { text: "Submit" },
-        timeoutMs: 300,
-        pollIntervalMs: 10,
+        timeoutMs: 600,
+        pollIntervalMs: 100,
       }
     );
 

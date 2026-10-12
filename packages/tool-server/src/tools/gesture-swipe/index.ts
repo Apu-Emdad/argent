@@ -140,9 +140,7 @@ Pass momentum:false for a momentum-free swipe that lands where the finger lifts 
   capability,
   services: (params): Record<string, ServiceRef> => {
     const device = resolveDevice(params.udid);
-    // HarmonyOS swipes go over hdc; resolving the iOS/Android-only blueprint
-    // would fail the swipe before it runs — the factory refuses any platform
-    // but those two.
+    // No simulator-server controller exists for HarmonyOS.
     if (device.platform === "harmony") return {};
 
     if (isIosPhysicalDevice(device)) {
@@ -157,28 +155,16 @@ Pass momentum:false for a momentum-free swipe that lands where the finger lifts 
     const timestampMs = Date.now();
     const device = resolveDevice(params.udid);
 
-    // HarmonyOS has no simulator-server controller: the whole gesture is one
-    // `uitest uiInput` call, which owns its own interpolation on-device, so
-    // there is no per-frame Move train to emit here.
+    // HarmonyOS: one `uitest uiInput` call interpolates on-device.
     if (device.platform === "harmony") {
       await ensureDep("hdc");
       const connectKey = harmonyConnectKey(device.id);
-      // One deadline for both display reads and the injection they feed, so the
-      // whole gesture stays under the MCP layer's abort-and-replay cap.
       const deadline = Date.now() + HARMONY_INTERACTION_TIMEOUT_MS;
-      // Fast prefilter, ahead of the queue wait: a panel already suspended or
-      // not yet composited is refused without waiting behind this device's
-      // queued work. It is NOT the check the injection trusts — see inside.
+      // Prefilter without queueing; the trusted check is inside the hold.
       const display = await harmonyDisplay(connectKey);
-      // A swipe against a panel that is suspended, or that the render service
-      // could not size, reports `No Error` and lands nowhere.
       assertHarmonyDisplayReady(display, "swipe");
       await holdUitestQueue(connectKey, deadline, async (ui) => {
-        // The check the injection trusts, read while holding the queue: the
-        // prefilter saw a state that may be a full queue depth stale by the
-        // time this call reaches the device — and on a foldable the geometry
-        // may have changed with it, so the endpoints scale against what is
-        // live now.
+        // Re-read: the geometry of a foldable may have changed while queued.
         const live = await harmonyDisplay(
           connectKey,
           remainingBudget(connectKey, deadline, "the display re-read")

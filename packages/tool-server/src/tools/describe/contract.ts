@@ -79,19 +79,10 @@ export type DescribeSource =
   // Physical iOS: the XCUITest runner accessibility snapshot.
   | "xcuitest-runner";
 
-// Sources whose `hint` questions the tree just read: HarmonyOS keeps dumping the
-// last composited frame while the panel is suspended, so a matched element need
-// not be on the live screen; Chromium's walker stops at its node budget, so the
-// page is only partly there. Every other hint is a standing fact about the target
-// — not booted through argent, a tvOS / Android TV device, an app that cannot be
-// instrumented — as true before a wait as after, so on a success it reads as a
-// verdict on what the wait saw; iOS' ends "You MUST call boot-device with
-// force=true now", i.e. restart the simulator and lose the app state. Those stay
-// on the timeout note. Listing rather than excluding leaves a source added later
-// silent on success until someone judges its hint.
-//
-// Read by both wait tools, which owe the caveat for the same reason: each
-// answers off one describe read and reports what it saw as the current screen.
+// Sources whose `hint` questions the tree just read (a suspended HarmonyOS
+// panel's last frame, a Chromium walk cut at its node budget), so a wait owes
+// it even on success. Other hints are standing facts about the target and stay
+// on the timeout note.
 export const READ_CAVEAT_SOURCES: ReadonlySet<DescribeSource> = new Set([
   "harmony-uitest",
   "cdp-dom",
@@ -106,8 +97,8 @@ export interface DescribeTreeData {
   // "degraded" means boot-state on the simulator path and a truncated snapshot on the device path.
   // Each path writes this hint once.
   hint?: string;
-  // The tree may not be the live screen (a suspended HarmonyOS panel serves its
-  // last frame), so it cannot confirm that a condition is unmet.
+  // Possibly not the live screen (a suspended HarmonyOS panel), so it cannot
+  // confirm a condition is unmet.
   stale?: boolean;
   // Size the frames were normalized against, in the source's native units
   // (Android px, iOS pt), so only the aspect ratio compares across sources —

@@ -181,12 +181,7 @@ export interface ToolCapability {
     vvd?: boolean;
     device?: boolean;
   };
-  /**
-   * HarmonyOS support. `device` is a phone reached over `hdc`; `emulator` is a
-   * DevEco Studio instance, which only `boot-device` addresses — every
-   * interaction tool drives a *connected* target, and a booted emulator presents
-   * as one of those, so interaction tools declare `device` alone.
-   */
+  /** `emulator` is a DevEco instance only `boot-device` addresses; interaction tools drive `device`. */
   harmony?: {
     emulator?: boolean;
     device?: boolean;

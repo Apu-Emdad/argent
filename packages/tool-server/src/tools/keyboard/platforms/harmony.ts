@@ -11,15 +11,7 @@ import {
 } from "../../../utils/harmony-uitest";
 import type { KeyboardParams, KeyboardResult } from "../types";
 
-/**
- * `uitest uiInput text` validates almost nothing (see `harmony-uitest.ts`) and
- * answers `No Error` whether or not anything landed, so an un-typeable
- * character is a silent wrong field while `keys` reports the count asked for.
- * Every sibling backend rejects such input up front with a 400
- * (`assertTypeableAndroidText`, `injectVegaText`, the iOS/chromium keycode
- * tables) — this is the harmony half of that contract. A newline gets its own
- * message pointing at `key: "enter"`, the same advice Android gives.
- */
+/** `uitest` answers `No Error` for un-typeable text, so reject it up front as the other backends do. */
 function assertTypeableHarmonyText(text: string): void {
   if (/[\n\r]/.test(text)) {
     throw new InvalidToolInputError(
@@ -48,29 +40,10 @@ function assertTypeableHarmonyText(text: string): void {
 }
 
 /**
- * Named keys this backend will press, and the `uitest uiInput keyEvent` keyID
- * each maps to.
- *
- * Every entry was confirmed against a physical HarmonyOS 6.0.1 handset by
- * typing into a real text field and reading the value back out of the layout
- * dump: `backspace` turned `abc` into `ab`; `space` turned `ab` into `ab `;
- * `arrow-left` then `X` produced `abX `, and `arrow-right` then `Y` produced
- * `abX Y`, which pins both directions; `enter` submitted the search and
- * replaced the screen.
- *
- * `return` and `delete` are the same two presses under the names the other
- * backends also take (`NAMED_KEYS`, `ANDROID_NAMED_KEYCODES`): a named key means
- * the same thing on every platform, so a step written against iOS or Android
- * must not be refused here for spelling `enter` the other way. `delete` aliases
- * backspace rather than forward-delete, for the reason spelled out beside the
- * Android table.
- *
- * `tab`, `escape` and the vertical arrows are deliberately absent. `uitest`
- * accepts their documented keycodes and reports `No Error`, but nothing
- * observable happened in a text field, so there is no evidence they do the
- * right thing — and a key that silently does nothing while the tool reports
- * `{ keys: 1 }` is worse than one that is refused. They belong here the moment
- * someone can watch them work.
+ * Keys verified by typing into a field on a handset and reading it back.
+ * `return`/`delete` alias enter/backspace as on the other backends. `tab`,
+ * `escape` and the vertical arrows answer `No Error` but did nothing observable,
+ * so they are refused.
  */
 const HARMONY_KEYCODES: Record<string, number> = {
   "enter": 2054,
@@ -84,11 +57,7 @@ const HARMONY_KEYCODES: Record<string, number> = {
 
 function resolveHarmonyKeycode(key: string): number {
   const lower = key.toLowerCase();
-  // Own-property check, and case-folded for parity with the other named-key
-  // backends: `key` is a free string, so a prototype key like "constructor"
-  // would otherwise pass the nullish guard with a garbage value interpolated
-  // into the remote shell line (`uiInput keyEvent ${key}`) instead of
-  // rejecting as an unknown key.
+  // Own-property: a free string like "constructor" must not reach the shell line.
   const code = Object.hasOwn(HARMONY_KEYCODES, lower) ? HARMONY_KEYCODES[lower] : undefined;
   if (code === undefined) {
     throw new InvalidToolInputError(
@@ -105,34 +74,16 @@ function resolveHarmonyKeycode(key: string): number {
 }
 
 async function typeHarmony(connectKey: string, params: KeyboardParams): Promise<KeyboardResult> {
-  // The tool rejects a request carrying both `text` and `key` (see ../index.ts),
-  // so at most one of the two injection branches below runs.
-  //
-  // Both checks are pure and both precede the first device round trip: an
-  // unsupported key or an un-typeable character is the caller's mistake, and
-  // asking the device first lets an unreachable one rewrite that 400 into a
-  // connection error about a key that will never be supported.
+  // Validate before any device round trip, so an unreachable device cannot
+  // mask a 400.
   const keycode = params.key ? resolveHarmonyKeycode(params.key) : null;
   if (params.text) assertTypeableHarmonyText(params.text);
-  // Neither key nor text is schema-valid (both are optional, with no refinement)
-  // and injects nothing, so it costs no device round trip — the contract every
-  // sibling backend follows. Reaching the device first would let a suspended
-  // panel fail a step that was never going to type anything.
   if (keycode === null && !params.text) return { typed: "", keys: 0 };
-  // One deadline for both display reads and the injections they feed, so the
-  // whole call stays under the MCP layer's abort-and-replay cap.
   const deadline = Date.now() + HARMONY_INTERACTION_TIMEOUT_MS;
-  // Fast prefilter, ahead of the queue wait: typing into a panel that is
-  // suspended, or that the render service could not size, reports `No Error`
-  // and lands nowhere, so a dead screen fails the same way a tap does — without
-  // first waiting behind this device's queued work. It is NOT the check the
-  // injection trusts; that one runs inside the hold below.
+  // Prefilter that fails fast without queueing; the check trusted is inside the hold.
   assertHarmonyDisplayReady(await harmonyDisplay(connectKey), "type");
   let keysPressed = 0;
   await holdUitestQueue(connectKey, deadline, async (ui) => {
-    // The check the injection trusts, read while holding the queue: the
-    // prefilter above saw a state that may be a full queue depth stale by the
-    // time this call reaches the device.
     assertHarmonyDisplayReady(
       await harmonyDisplay(
         connectKey,
@@ -141,9 +92,6 @@ async function typeHarmony(connectKey: string, params: KeyboardParams): Promise<
       "type"
     );
     if (params.text) {
-      // `uitest uiInput text` types into whatever holds focus, in one shot — there
-      // is no per-character injection, so `delayMs` has nothing to pace (the tool
-      // description already lists the platforms that ignore it).
       await ui.type(params.text);
       keysPressed += [...params.text].length;
     }
@@ -155,11 +103,6 @@ async function typeHarmony(connectKey: string, params: KeyboardParams): Promise<
   return { typed: params.text ?? params.key ?? "", keys: keysPressed };
 }
 
-/**
- * HarmonyOS has no simulator-server controller; typing goes to the device's own
- * `uitest`, reached over `hdc`. Declaring the dependency here lets
- * `dispatchByPlatform` preflight it and return a clean 424 install hint.
- */
 export const harmonyImpl: PlatformImpl<Record<string, unknown>, KeyboardParams, KeyboardResult> = {
   requires: ["hdc"],
   handler: (_services, params, device) => typeHarmony(harmonyConnectKey(device.id), params),

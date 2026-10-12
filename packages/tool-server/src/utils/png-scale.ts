@@ -3,17 +3,9 @@ import { getScreenshotScale } from "./simulator-client";
 import { resizeDecodedPng } from "../tools/screenshot-diff/resize";
 
 /**
- * Downscale a decoded RGBA PNG by `scale`.
- *
- * Used by the platforms that capture a full-resolution PNG host-side and have
- * to shrink it themselves — Vega over the emulator console, HarmonyOS over
- * `uitest screenCap` — where iOS and Android get the same reduction from
- * simulator-server. Sharing one implementation is what keeps
- * `ARGENT_SCREENSHOT_SCALE` meaning the same thing on every platform: the
- * default and range handling come from `getScreenshotScale()` (which rejects
- * out-of-(0,1] values and falls back to 0.25), and the resample is the lanczos3
- * `resizeDecodedPng()` that screenshot-diff uses, so a HarmonyOS baseline and an
- * Android one are comparable at the same quality.
+ * Downscale a decoded RGBA PNG with `getScreenshotScale()` as the default and
+ * screenshot-diff's lanczos3 resampler, for platforms that capture full-size
+ * PNGs host-side (Vega, HarmonyOS).
  */
 export function scaleDecodedPng(src: PNG, scale?: number): PNG {
   const s = scale ?? getScreenshotScale();

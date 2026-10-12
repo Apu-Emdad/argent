@@ -12,12 +12,9 @@ type PollVerdict<R> = { done: true; result: R } | { done: false };
 
 interface PollDescribeTreeArgs<R> {
   /**
-   * Read the current tree. Called once per poll; must be read-only.
-   *
-   * `budgetMs` is what is left before the wait's deadline. This loop abandons a
-   * read that overruns it but cannot cancel one, so a backend whose read holds
-   * a device-side resource has to bound itself with this to keep the abandoned
-   * read from charging the caller's next call for it.
+   * Called once per poll; must be read-only. `budgetMs` is what is left of the
+   * wait: an overrunning read is abandoned, not cancelled, so a backend holding
+   * a device-side resource must bound itself.
    */
   fetchTree: (budgetMs: number) => Promise<DescribeTreeData>;
   timeoutMs: number;
@@ -42,26 +39,13 @@ export interface PollDescribeTreeResult<R> {
   /** Fetch error or timeout message; cleared by a successful fetch. */
   lastError?: string;
   /**
-   * How the FINAL fetch attempt ended: it returned a `tree`, it threw
-   * (`error`), or it never came back before the loop stopped waiting for it
-   * (`unsettled`).
-   *
-   * `lastError` cannot answer this. It is cleared on every successful fetch,
-   * and left unset for both an abandoned fetch and one that failed with no
-   * budget left, so that the caller can still build a note from an older tree.
-   * An unset `lastError` therefore does NOT mean the last attempt succeeded.
+   * How the final fetch ended: `tree`, `error`, or `unsettled` (abandoned at
+   * the deadline). An unset `lastError` does not mean it succeeded.
    */
   lastAttempt: "tree" | "error" | "unsettled";
 }
 
-/**
- * What the last read said about itself, as clauses for a wait's timeout note:
- * a tree the adapter flagged as degraded or partial, and an app whose native
- * inspection needs a restart before it can be seen at all. A wait that ends
- * without its condition met ends on one of these far more often than on a
- * screen that genuinely kept moving, and neither wait tool can tell them apart
- * from the tree alone.
- */
+/** The last read's own caveats (degraded tree, needed restart), for a wait's note. */
 export function readCaveats(lastData: DescribeTreeData | null): string[] {
   if (!lastData) return [];
   const caveats: string[] = [];
@@ -100,11 +84,8 @@ export async function pollDescribeTree<R>(
     if (signal?.aborted) return outcome(undefined, true);
 
     const remaining = Math.max(0, deadline - Date.now());
-    // The final poll runs AT the deadline (see the sleep clamp below), so it is
-    // handed nothing. A backend that refuses an empty budget outright then fails
-    // for a reason of the loop's own making, which must not displace what the
-    // polls that had time actually found — the same reason the timeout branch
-    // below only speaks up when no tree was ever read.
+    // The final poll runs at the deadline with no budget; its refusal must not
+    // displace what earlier polls found.
     const unbudgeted = remaining === 0;
     const settled = await settleWithin(fetchTree(remaining), remaining, signal);
     polls += 1;

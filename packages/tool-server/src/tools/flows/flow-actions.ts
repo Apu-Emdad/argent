@@ -908,12 +908,8 @@ export async function runDirective(env: ActionEnv, step: DirectiveStep): Promise
           : "rotate is unsupported on chromium — desktop apps have no rotate-gesture idiom; drive the app's rotate controls with tap/keyboard instead",
     };
   }
-  // HarmonyOS: `tap` and `pinch` have backends (`gesture-tap`, `gesture-pinch`),
-  // the hold and the arc do not. Without this arm they resolve their point and
-  // dispatch `gesture-custom` / `gesture-rotate`, neither of which declares
-  // harmony support — and a flow step goes through `invokeTool`, which does not
-  // run the capability gate, so the run stops on the service blueprint's "does
-  // not support platform" line instead of anything an author can act on.
+  // HarmonyOS has no hold or arc backend; flow steps skip the capability gate,
+  // so refuse with a reason the author can act on.
   if (env.device.platform === "harmony" && (step.kind === "long-press" || step.kind === "rotate")) {
     return {
       ok: false,
@@ -933,14 +929,7 @@ export async function runDirective(env: ActionEnv, step: DirectiveStep): Promise
           : "rotate is unsupported on a physical iOS device: XCTest exposes no two-finger coordinate API on hardware; run this flow on a simulator or drive the app's rotate controls with tap steps instead",
     };
   }
-  // `await: { idle }` judges stillness by two signals, and one of them — the
-  // flow tree — does not exist on every platform (`supportsFlowTree`). Where it
-  // is absent every read fails by construction, so the step would spend its
-  // whole timeout polling — each round also re-resolving whatever service its
-  // capture half needs, cycling STARTING → ERROR on a platform whose blueprint
-  // refuses it — before being scored never-judged with a remedy ("check the app
-  // is in the foreground") that no amount of foregrounding can satisfy where
-  // there is no source at all. Refuse up front with the reason that holds.
+  // Without a flow tree source, idle can never be judged.
   if (step.kind === "idle" && !supportsFlowTree(env.device.platform)) {
     return {
       ok: false,
@@ -1004,10 +993,6 @@ type GestureSettle = { aborted?: true; warning?: string };
  * coordinates for exactly that reason), so every step of such a flow arrives
  * here and would otherwise be charged a window for the same verdict.
  *
- * A platform with no tree source at all (`supportsFlowTree`) settles nothing and
- * reports nothing: there is no source to be down, so no degradation to warn
- * about and no remedy a warning could name.
- *
  * The other cost is a screen that never holds still: nothing converges, so every
  * selector-less gesture pays the whole window, and the memo buys no relief
  * because a window that read the tree proves no outage. The fingerprint cannot
@@ -1017,8 +1002,6 @@ type GestureSettle = { aborted?: true; warning?: string };
  */
 async function settleForGesture(env: ActionEnv): Promise<GestureSettle> {
   let warning: string | undefined;
-  // A platform with no tree source settles nothing and is warned about nothing;
-  // the abort checkpoint below is owed to the gesture either way.
   if (supportsFlowTree(env.device.platform)) {
     try {
       await settleTree(env, { skipProvenOutage: true });

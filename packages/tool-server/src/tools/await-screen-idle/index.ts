@@ -73,11 +73,7 @@ interface IdleResult {
   settled: boolean;
   waitedMs: number;
   polls: number;
-  /**
-   * Why a false `settled` is not a screen that stayed busy — e.g. the device
-   * went away — or, on a true one, why the tree it settled on may not be the
-   * live screen.
-   */
+  /** Why the wait did not plainly settle, or why what it settled on may not be live. */
   note?: string;
 }
 
@@ -105,14 +101,8 @@ function treeSignature(root: DescribeNode): string {
   return parts.join("\n");
 }
 
-// Why a wait ended somewhere other than on a screen that plainly settled.
-//
-// A screen that never settles is usually one the reader could not see — a
-// degraded AX tree, a panel that is off, an app whose native inspection needs a
-// restart — and none of that is recoverable from the empty tree left behind. A
-// failed fetch outranks those, since a device that went away and a screen that
-// stayed busy are opposite diagnoses. On a success only
-// {@link READ_CAVEAT_SOURCES} applies, for the reason given there.
+// A failed fetch outranks the read's own caveats; on success only
+// {@link READ_CAVEAT_SOURCES} hints apply.
 function idleNote(poll: PollDescribeTreeResult<true>): string | undefined {
   if (poll.result !== true) {
     if (poll.lastError) return `last tree fetch failed: ${poll.lastError}`;
@@ -228,12 +218,6 @@ Use after a launch/navigation to wait for the UI to render before screenshotting
         },
       });
 
-      // A suspended HarmonyOS panel keeps dumping its last composited frame,
-      // which is maximally still and so settles at once, and a truncated
-      // Chromium tree stops changing because the rest of the page was never
-      // walked. `await-ui-element` reports the same hints, and the same
-      // caveats on its own timeout note, off the same reads; without them the
-      // two wait tools disagree about a screen they both just looked at.
       const note = idleNote(poll);
       return {
         settled: poll.result === true,
