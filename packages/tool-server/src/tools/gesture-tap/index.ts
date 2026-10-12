@@ -114,29 +114,35 @@ async function tapHarmony(
   connectKey: string,
   x: number,
   y: number,
-  clickCount: number
+  clickCount: number,
+  signal?: AbortSignal
 ): Promise<void> {
   // One deadline for the whole multi-tap, under the MCP abort-and-replay cap.
   const deadline = Date.now() + HARMONY_INTERACTION_TIMEOUT_MS;
   // Prefilter without queueing; the trusted check is inside the hold.
   const display = await harmonyDisplay(connectKey);
   assertHarmonyDisplayReady(display, "tap");
-  await holdUitestQueue(connectKey, deadline, async (ui) => {
-    const live = await harmonyDisplay(
-      connectKey,
-      remainingBudget(connectKey, deadline, "the display re-read")
-    );
-    assertHarmonyDisplayReady(live, "tap");
-    const point = toDevicePoint(x, y, live);
-    if (clickCount === 2) {
-      await ui.touch("doubleClick", point);
-      return;
-    }
-    for (let i = 0; i < clickCount; i++) {
-      if (i > 0) await sleep(MULTI_TAP_GAP_MS);
-      await ui.touch("click", point);
-    }
-  });
+  await holdUitestQueue(
+    connectKey,
+    deadline,
+    async (ui) => {
+      const live = await harmonyDisplay(
+        connectKey,
+        remainingBudget(connectKey, deadline, "the display re-read")
+      );
+      assertHarmonyDisplayReady(live, "tap");
+      const point = toDevicePoint(x, y, live);
+      if (clickCount === 2) {
+        await ui.touch("doubleClick", point);
+        return;
+      }
+      for (let i = 0; i < clickCount; i++) {
+        if (i > 0) await sleep(MULTI_TAP_GAP_MS);
+        await ui.touch("click", point);
+      }
+    },
+    signal
+  );
 }
 
 export const gestureTapTool: ToolDefinition<Params, Result> = {
@@ -170,7 +176,7 @@ Before tapping, determine the correct coordinates by using discovery tools — p
     if (device.platform === "harmony") return {};
     return { simulatorServer: simulatorServerRef(device) };
   },
-  async execute(services, params) {
+  async execute(services, params, ctx) {
     const device = resolveDevice(params.udid);
     const timestampMs = Date.now();
     const clickCount = params.clickCount ?? 1;
@@ -196,7 +202,7 @@ Before tapping, determine the correct coordinates by using discovery tools — p
     }
     if (device.platform === "harmony") {
       await ensureDep("hdc");
-      await tapHarmony(harmonyConnectKey(device.id), params.x, params.y, clickCount);
+      await tapHarmony(harmonyConnectKey(device.id), params.x, params.y, clickCount, ctx?.signal);
       return { tapped: true, timestampMs };
     }
     const api = services.simulatorServer as SimulatorServerApi;

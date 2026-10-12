@@ -163,19 +163,24 @@ Pass momentum:false for a momentum-free swipe that lands where the finger lifts 
       // Prefilter without queueing; the trusted check is inside the hold.
       const display = await harmonyDisplay(connectKey);
       assertHarmonyDisplayReady(display, "swipe");
-      await holdUitestQueue(connectKey, deadline, async (ui) => {
-        // Re-read: the geometry of a foldable may have changed while queued.
-        const live = await harmonyDisplay(
-          connectKey,
-          remainingBudget(connectKey, deadline, "the display re-read")
-        );
-        assertHarmonyDisplayReady(live, "swipe");
-        const fromPx = toDevicePoint(params.fromX, params.fromY, live);
-        const toPx = toDevicePoint(params.toX, params.toY, live);
-        const distance = Math.hypot(toPx.x - fromPx.x, toPx.y - fromPx.y);
-        const seconds = Math.max(duration, 1) / 1000;
-        await ui.swipe(momentumFree ? "swipe" : "fling", fromPx, toPx, distance / seconds);
-      });
+      await holdUitestQueue(
+        connectKey,
+        deadline,
+        async (ui) => {
+          // Re-read: the geometry of a foldable may have changed while queued.
+          const live = await harmonyDisplay(
+            connectKey,
+            remainingBudget(connectKey, deadline, "the display re-read")
+          );
+          assertHarmonyDisplayReady(live, "swipe");
+          const fromPx = toDevicePoint(params.fromX, params.fromY, live);
+          const toPx = toDevicePoint(params.toX, params.toY, live);
+          const distance = Math.hypot(toPx.x - fromPx.x, toPx.y - fromPx.y);
+          const seconds = Math.max(duration, 1) / 1000;
+          await ui.swipe(momentumFree ? "swipe" : "fling", fromPx, toPx, distance / seconds);
+        },
+        ctx?.signal
+      );
       return { swiped: true, timestampMs };
     }
 

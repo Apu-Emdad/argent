@@ -129,7 +129,7 @@ Use when you need to zoom in or out on a map, image, or zoomable view. Returns {
     if (device.platform === "harmony") return {};
     return { simulatorServer: simulatorServerRef(device) };
   },
-  async execute(services, params) {
+  async execute(services, params, ctx) {
     const duration = params.durationMs ?? 300;
     const device = resolveDevice(params.udid);
     // `uinput -T -m` moves both contacts in one call; a second call would
@@ -142,30 +142,35 @@ Use when you need to zoom in or out on a map, image, or zoomable view. Returns {
       const display = await harmonyDisplay(connectKey);
       assertHarmonyDisplayReady(display, "pinch");
       let timestampMs = 0;
-      await holdUitestQueue(connectKey, deadline, async (ui) => {
-        // Re-read: the geometry of a foldable may have changed while queued.
-        const live = await harmonyDisplay(
-          connectKey,
-          remainingBudget(connectKey, deadline, "the display re-read")
-        );
-        assertHarmonyDisplayReady(live, "pinch");
-        const start = contactsAt(params, 0);
-        const end = contactsAt(params, 1);
-        timestampMs = Date.now();
-        await ui.multiTouchMove(
-          [
-            {
-              from: toDevicePoint(start.first.x, start.first.y, live),
-              to: toDevicePoint(end.first.x, end.first.y, live),
-            },
-            {
-              from: toDevicePoint(start.second.x, start.second.y, live),
-              to: toDevicePoint(end.second.x, end.second.y, live),
-            },
-          ],
-          duration
-        );
-      });
+      await holdUitestQueue(
+        connectKey,
+        deadline,
+        async (ui) => {
+          // Re-read: the geometry of a foldable may have changed while queued.
+          const live = await harmonyDisplay(
+            connectKey,
+            remainingBudget(connectKey, deadline, "the display re-read")
+          );
+          assertHarmonyDisplayReady(live, "pinch");
+          const start = contactsAt(params, 0);
+          const end = contactsAt(params, 1);
+          timestampMs = Date.now();
+          await ui.multiTouchMove(
+            [
+              {
+                from: toDevicePoint(start.first.x, start.first.y, live),
+                to: toDevicePoint(end.first.x, end.first.y, live),
+              },
+              {
+                from: toDevicePoint(start.second.x, start.second.y, live),
+                to: toDevicePoint(end.second.x, end.second.y, live),
+              },
+            ],
+            duration
+          );
+        },
+        ctx?.signal
+      );
       return { pinched: true, timestampMs };
     }
     const api = services.simulatorServer as SimulatorServerApi;

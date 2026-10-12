@@ -322,30 +322,41 @@ interface UitestSlot {
 
 /**
  * Run one input interaction, display check included, in a single hold of the
- * device's queue, so the panel checked is the panel injected into. A display
- * read made before queueing went stale behind a deep queue. `unit` must not
- * enqueue again.
+ * device's queue, so the panel checked is the panel injected into. `unit` must
+ * not enqueue again. Once `signal` aborts, no further input is injected.
  */
 export async function holdUitestQueue<T>(
   connectKey: string,
   deadline: number,
-  unit: (slot: UitestSlot) => Promise<T>
+  unit: (slot: UitestSlot) => Promise<T>,
+  signal?: AbortSignal
 ): Promise<T> {
+  const assertNotCancelled = (): void => {
+    if (!signal?.aborted) return;
+    const err = new Error(
+      `HarmonyOS input on '${connectKey}' was cancelled before it was injected`
+    );
+    err.name = "AbortError";
+    throw err;
+  };
   const run = async (args: string): Promise<void> => {
+    assertNotCancelled();
     await runUitestDirect(
       connectKey,
       args,
       remainingBudget(connectKey, deadline, uitestStep(args))
     );
   };
-  return enqueueUitest(connectKey, () =>
-    unit({
+  return enqueueUitest(connectKey, () => {
+    assertNotCancelled();
+    return unit({
       touch: (command, point) => run(touchArgs(command, point)),
       swipe: (command, from, to, velocity) => run(swipeArgs(command, from, to, velocity)),
       keyEvent: (key) => run(`uiInput keyEvent ${key}`),
       type: (text) => run(`uiInput text ${shellQuote(text)}`),
       // Not a `uitest` singleton, but interleaved input is as bad on either binary.
       multiTouchMove: async (paths, durationMs) => {
+        assertNotCancelled();
         const args = multiTouchArgs(paths, durationMs);
         await runUinputDirect(
           connectKey,
@@ -353,8 +364,8 @@ export async function holdUitestQueue<T>(
           remainingBudget(connectKey, deadline, "`uinput -T -m`")
         );
       },
-    })
-  );
+    });
+  });
 }
 
 /**

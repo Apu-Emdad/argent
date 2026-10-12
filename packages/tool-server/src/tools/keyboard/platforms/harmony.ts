@@ -73,7 +73,11 @@ function resolveHarmonyKeycode(key: string): number {
   return code;
 }
 
-async function typeHarmony(connectKey: string, params: KeyboardParams): Promise<KeyboardResult> {
+async function typeHarmony(
+  connectKey: string,
+  params: KeyboardParams,
+  signal?: AbortSignal
+): Promise<KeyboardResult> {
   // Validate before any device round trip, so an unreachable device cannot
   // mask a 400.
   const keycode = params.key ? resolveHarmonyKeycode(params.key) : null;
@@ -83,27 +87,33 @@ async function typeHarmony(connectKey: string, params: KeyboardParams): Promise<
   // Prefilter that fails fast without queueing; the check trusted is inside the hold.
   assertHarmonyDisplayReady(await harmonyDisplay(connectKey), "type");
   let keysPressed = 0;
-  await holdUitestQueue(connectKey, deadline, async (ui) => {
-    assertHarmonyDisplayReady(
-      await harmonyDisplay(
-        connectKey,
-        remainingBudget(connectKey, deadline, "the display re-read")
-      ),
-      "type"
-    );
-    if (params.text) {
-      await ui.type(params.text);
-      keysPressed += [...params.text].length;
-    }
-    if (keycode !== null) {
-      await ui.keyEvent(String(keycode));
-      keysPressed++;
-    }
-  });
+  await holdUitestQueue(
+    connectKey,
+    deadline,
+    async (ui) => {
+      assertHarmonyDisplayReady(
+        await harmonyDisplay(
+          connectKey,
+          remainingBudget(connectKey, deadline, "the display re-read")
+        ),
+        "type"
+      );
+      if (params.text) {
+        await ui.type(params.text);
+        keysPressed += [...params.text].length;
+      }
+      if (keycode !== null) {
+        await ui.keyEvent(String(keycode));
+        keysPressed++;
+      }
+    },
+    signal
+  );
   return { typed: params.text ?? params.key ?? "", keys: keysPressed };
 }
 
 export const harmonyImpl: PlatformImpl<Record<string, unknown>, KeyboardParams, KeyboardResult> = {
   requires: ["hdc"],
-  handler: (_services, params, device) => typeHarmony(harmonyConnectKey(device.id), params),
+  handler: (_services, params, device, options) =>
+    typeHarmony(harmonyConnectKey(device.id), params, options?.signal),
 };

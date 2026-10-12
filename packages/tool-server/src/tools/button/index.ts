@@ -113,7 +113,7 @@ Fails if the device backend is not reachable — the simulator-server for iOS, \
     }
     return { simulatorServer: simulatorServerRef(device) };
   },
-  async execute(services, params) {
+  async execute(services, params, ctx) {
     const device = resolveDevice(params.udid);
     const available = BUTTONS_BY_PLATFORM[device.platform];
     if (!available.has(params.button)) {
@@ -172,19 +172,24 @@ Fails if the device backend is not reachable — the simulator-server for iOS, \
       if (params.button !== "power") {
         assertHarmonyDisplayReady(await harmonyDisplay(connectKey), `press ${params.button}`);
       }
-      await holdUitestQueue(connectKey, deadline, async (ui) => {
-        // `power` is exempt: it is the key that wakes a suspended panel.
-        if (params.button !== "power") {
-          assertHarmonyDisplayReady(
-            await harmonyDisplay(
-              connectKey,
-              remainingBudget(connectKey, deadline, "the display re-read")
-            ),
-            `press ${params.button}`
-          );
-        }
-        await ui.keyEvent(HARMONY_BUTTON_KEYS[params.button]!);
-      });
+      await holdUitestQueue(
+        connectKey,
+        deadline,
+        async (ui) => {
+          // `power` is exempt: it is the key that wakes a suspended panel.
+          if (params.button !== "power") {
+            assertHarmonyDisplayReady(
+              await harmonyDisplay(
+                connectKey,
+                remainingBudget(connectKey, deadline, "the display re-read")
+              ),
+              `press ${params.button}`
+            );
+          }
+          await ui.keyEvent(HARMONY_BUTTON_KEYS[params.button]!);
+        },
+        ctx?.signal
+      );
       return { pressed: params.button };
     }
     const api = services.simulatorServer as SimulatorServerApi;

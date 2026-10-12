@@ -1997,8 +1997,8 @@ function bootHarmony(params: {
   bootTimeoutMs: number;
   force?: boolean;
 }): Promise<HarmonyBootResult> {
-  // Same-`force` boots share one run; opposite ones serialize, since a plain and
-  // a forced boot reaching `-start` together started the instance twice.
+  // Same-`force` boots share one run; opposite ones serialize, or both reach
+  // `-start` and the instance starts twice.
   const key = params.instanceName;
   const force = Boolean(params.force);
   const existing = inFlightHarmonyBoots.get(key);
