@@ -1192,7 +1192,13 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
             ]),
             select(true, [kid("option", "only", 165, { offsetPos: { left: 4, top: 164 } })]),
             select(true, [kid("option", "loose", 170, { style: { position: "absolute" } })]),
-            select(false, [kid("option", "closed", 170)]),
+            select(false, [kid("option", "closed", 170, { offsetPos: { left: 4, top: 164 } })]),
+            el({
+              tag: "details",
+              topLayer: ":open",
+              picker,
+              children: [kid("div", "disclosed", 170, { offsetPos: { left: 4, top: 164 } })],
+            }),
           ],
           { style: { position: "relative" } }
         ),
@@ -1208,6 +1214,7 @@ describe("DESCRIBE_DOM_SCRIPT overflow clipping", () => {
       expect(pxFrame(tree, "only"), at).toEqual({ x: 5, y: 165, w: 72, h: 20 });
       expect(pxFrame(tree, "loose"), at).toEqual({ x: 5, y: 170, w: 72, h: 20 });
       expect(pxFrame(tree, "closed").h, at).toBe(0);
+      expect(pxFrame(tree, "disclosed").h, at).toBe(0);
     }
   });
 
