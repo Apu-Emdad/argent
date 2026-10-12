@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Stubbed below the real runAdb, so the handler's choice of adb helper (and
-// which of adb's streams it reads) is what these tests exercise.
+// Stubbed below the real runAdb, so the tests see which of adb's streams the handler reads.
 const execFileMock = vi.fn();
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
