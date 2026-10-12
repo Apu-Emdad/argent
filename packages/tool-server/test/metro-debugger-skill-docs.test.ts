@@ -15,7 +15,6 @@ const SKILL = path.resolve(__dirname, "../../skills/skills/argent-metro-debugger
 
 const registry = new Registry();
 
-/** Every tool the skill's "Tool Overview" tables list. */
 const OVERVIEW_TOOLS: ToolDefinition<any, any>[] = [
   debuggerConnectTool,
   createDebuggerStatusTool(registry),
@@ -51,7 +50,6 @@ const rows = new Map(
   [...overviewSection.matchAll(/^\| `([a-z-]+)` +\|.*$/gm)].map((m) => [m[1]!, m[0]!])
 );
 
-/** The sentence stating which tools take `port` and `device_id`. */
 const targetingClaim = (() => {
   const line = overviewSection.split("\n").find((l) => l.includes("`port` (default 8081)"));
   expect(line, "no sentence in the overview states the targeting parameters").toBeDefined();
