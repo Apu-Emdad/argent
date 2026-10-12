@@ -48,6 +48,7 @@ import {
 import { NAMED_KEYS } from "../src/tools/keyboard/key-codes";
 import { InvalidToolInputError } from "../src/utils/capability";
 import { makeAndroidImpl } from "../src/tools/keyboard/platforms/android";
+import { __resetHelperAvailabilityForTests } from "../src/tools/keyboard/platforms/android-verify";
 import { createKeyboardTool } from "../src/tools/keyboard";
 import { DependencyMissingError } from "../src/utils/check-deps";
 import type { KeyboardParams } from "../src/tools/keyboard/types";
@@ -354,6 +355,7 @@ describe("android keyboard impl — routing, keys count, result shape", () => {
     typeTv.mockClear();
     isAndroidTv.mockReset();
     isAndroidTv.mockResolvedValue(false);
+    __resetHelperAvailabilityForTests();
   });
 
   it("routes a non-TV android target to the adb phone path (not typeTv)", async () => {
