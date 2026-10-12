@@ -166,9 +166,8 @@ export function withClientPaths(prepared: PreparedToolStep, text: string): strin
  * the same paths and the same `ctx.fileInputs` as for a direct call. A file
  * the client does not have fails the step: a server file at the same path is
  * never used in its place. A `flow-execute` gets the flow it names by `name`
- * from those files instead ({@link prepareNestedFlow}). In host mode each file
- * argument resolves in place with this host's stat, as an argent client
- * without a link sends it ({@link prepareHostFileArguments}). An input whose
+ * from those files instead ({@link prepareNestedFlow}). In host mode file
+ * arguments resolve in place ({@link prepareHostFileArguments}). An input whose
  * `unwrapWhenSet` param is set stays the client path, unread, as an HTTP call
  * unwraps it: the tool's own validation diagnoses the second source. The
  * client skips such an input too.
@@ -218,12 +217,10 @@ export async function prepareToolStepInputs(
 }
 
 /**
- * A `tool:` step without a link: each file argument resolves as an argent
- * client without a link sends it (the stat of a regular file, no content), so
- * the tool gets the `ctx.fileInputs` of a direct call, without which
- * `flow-execute` and `flow-read-prerequisite` refuse a `flow_path`. A path
- * that names no regular file fails as such a call fails. Directories, apps,
- * probes and paths a tool builds from several args stay as written.
+ * Wraps each file argument as an unlinked argent client does (stat, no
+ * content), giving the tool a direct call's `ctx.fileInputs`; `flow-execute`
+ * and `flow-read-prerequisite` refuse a `flow_path` without them. Other
+ * inputs (directories, apps, paths built from several args) stay as written.
  */
 async function prepareHostFileArguments(
   files: ToolStepFile[],

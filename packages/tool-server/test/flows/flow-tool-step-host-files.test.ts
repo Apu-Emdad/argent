@@ -6,13 +6,6 @@ import { Registry } from "@argent/registry";
 import { createRunFlowTool, type FlowRunResult } from "../../src/tools/flows/flow-run";
 import { flowReadPrerequisiteTool } from "../../src/tools/flows/flow-read-prerequisite";
 
-/**
- * A `tool:` step of a run without a link names its file arguments as the flow
- * spells them, with no argent client to wrap them. `flow-execute` and
- * `flow-read-prerequisite` run a `flow_path` only with the file-input entry a
- * direct call gets, so the runner gives the step that entry.
- */
-
 const DEVICE = "00000000-0000-0000-0000-0000000000ab";
 const PREREQUISITE = "The QA app is open on its main screen";
 
@@ -36,7 +29,8 @@ async function runOuter(steps: string): Promise<FlowRunResult> {
 }
 
 beforeEach(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), "flow-host-files-"));
+  // realpath: the tool reports a resolved path, and macOS tmpdir is a symlink.
+  root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "flow-host-files-")));
   flowsDir = path.join(root, ".argent", "flows");
   await fs.mkdir(path.join(flowsDir, "elsewhere"), { recursive: true });
   await fs.writeFile(
