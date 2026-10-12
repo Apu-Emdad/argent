@@ -23,6 +23,7 @@ import { listDevicesTool } from "../tools/devices/list-devices";
 import { createBootDeviceTool } from "../tools/devices/boot-device";
 import { createLaunchAppTool } from "../tools/launch-app";
 import { createRestartAppTool } from "../tools/restart-app";
+import { terminateAppTool } from "../tools/terminate-app";
 import { reinstallAppTool } from "../tools/reinstall-app";
 import { settingsPermissionsTool } from "../tools/settings-permissions";
 import { openUrlTool } from "../tools/open-url";
@@ -52,6 +53,7 @@ import { createDebuggerLogRegistryTool } from "../tools/debugger/debugger-log-re
 import { networkLogsTool } from "../tools/network/network-logs";
 import { networkRequestTool } from "../tools/network/network-request";
 import { createDescribeTool } from "../tools/describe";
+import { createUiTreeTool } from "../tools/ui-tree";
 import { createAwaitUiElementTool } from "../tools/await-ui-element";
 import { createAwaitScreenIdleTool } from "../tools/await-screen-idle";
 import { createReactProfilerStartTool } from "../tools/profiler/react/react-profiler-start";
@@ -129,6 +131,7 @@ export function createRegistry(): Registry {
   registry.registerTool(createBootDeviceTool(registry));
   registry.registerTool(createLaunchAppTool(registry));
   registry.registerTool(createRestartAppTool(registry));
+  registry.registerTool(terminateAppTool);
   registry.registerTool(reinstallAppTool);
   registry.registerTool(settingsPermissionsTool);
   registry.registerTool(openUrlTool);
@@ -164,6 +167,7 @@ export function createRegistry(): Registry {
   registry.registerTool(networkLogsTool);
   registry.registerTool(networkRequestTool);
   registry.registerTool(createDescribeTool(registry));
+  registry.registerTool(createUiTreeTool(registry));
   registry.registerTool(createAwaitUiElementTool(registry));
   registry.registerTool(createAwaitScreenIdleTool(registry));
   registry.registerTool(createReactProfilerStartTool(registry));
