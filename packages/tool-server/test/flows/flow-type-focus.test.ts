@@ -187,7 +187,7 @@ describe("type directive — the keyboard tool's read-back verdict", () => {
             typed: String(args.text),
             keys: 7,
             verified: false,
-            note: "The text did not land: 7 characters were typed and the field holds 3 in total.",
+            note: "7 characters were typed and the field holds 3 in total.",
           }
     );
 
@@ -206,7 +206,7 @@ describe("type directive — the keyboard tool's read-back verdict", () => {
     expect(result.ok).toBe(false);
     expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual(["type:fail"]);
     expect(result.steps[0]!.reason).toBe(
-      "typed text did not land: The text did not land: 7 characters were typed and the field holds 3 in total."
+      "typed text did not land: 7 characters were typed and the field holds 3 in total."
     );
     // No Enter: it would submit the wrong value.
     expect(calls.filter((c) => c.id === "keyboard").map((c) => c.args.key ?? c.args.text)).toEqual([

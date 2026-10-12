@@ -6,14 +6,12 @@ import {
   parseUiAutomatorXml,
 } from "../../describe/platforms/android/uiautomator-parser";
 import { injectAndroidText } from "../../../utils/android-input";
+import { FLOW_MAX_NODES } from "../../flows/flow-android-tree";
 import type { KeyboardVerification } from "../types";
 
 // `EditText` also matches React Native `TextInput`, Compose `TextField` and WebView
 // inputs; `AutoComplete` matches `SearchView$SearchAutoComplete`.
 const EDITABLE_CLASS_RE = /EditText|AutoComplete/;
-
-// The helper's default cap can truncate a dense screen before the focused field.
-const READ_MAX_NODES = 12_000;
 
 // A helper that never signals ready costs the blueprint's 30 s READY timeout on
 // every resolve, and the registry does not remember the failure.
@@ -162,7 +160,7 @@ async function resolveDevtools(
 async function readFocusedField(devtools: AndroidDevtoolsApi): Promise<FocusedField | string> {
   try {
     // `clearCache`: the helper's node cache otherwise serves the pre-typing text.
-    const { xml } = await devtools.getHierarchy({ clearCache: true, maxNodes: READ_MAX_NODES });
+    const { xml } = await devtools.getHierarchy({ clearCache: true, maxNodes: FLOW_MAX_NODES });
     return findFocusedTextField(xml);
   } catch {
     return "reading the field back failed.";
@@ -199,7 +197,7 @@ export async function typeAndroidTextVerified(
   return {
     verified: false,
     note:
-      `The text did not land: ${text.length} characters were typed and the field holds ` +
+      `${text.length} characters were typed and the field holds ` +
       `${after.text.length} in total, counting any earlier content or hint. The field dropped ` +
       "part of the key-event burst, or it rejected or reformatted the input.",
   };

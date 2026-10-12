@@ -71,7 +71,7 @@ async function runGated(
 
 describe("a raw tool: keyboard step the read-back failed", () => {
   it("fails the step and stops the run", async () => {
-    const note = "The text did not land: 11 characters were typed and the field holds 3 in total.";
+    const note = "11 characters were typed and the field holds 3 in total.";
     const { run, registry } = await runGated("unlanded", {
       typed: "hello world",
       keys: 11,

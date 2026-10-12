@@ -14,7 +14,7 @@ export interface KeyboardResult {
   keys: number;
   /**
    * Android phone / tablet only: whether the focused field was read back holding
-   * the text. Absent means not checked, never checked and fine.
+   * the text. Absent when the check did not run or could not conclude.
    */
   verified?: boolean;
   /** Why `verified` is false or absent. Never quotes the field's contents. */

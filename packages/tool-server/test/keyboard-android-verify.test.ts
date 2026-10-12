@@ -221,7 +221,7 @@ describe("android keyboard read-back", () => {
     const res = await type(registry, "display");
     expect(res.verified).toBe(false);
     expect(res.note).toBe(
-      "The text did not land: 7 characters were typed and the field holds 5 in total, counting " +
+      "7 characters were typed and the field holds 5 in total, counting " +
         "any earlier content or hint. The field dropped part of the key-event burst, or it " +
         "rejected or reformatted the input."
     );
