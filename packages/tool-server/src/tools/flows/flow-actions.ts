@@ -24,8 +24,8 @@ import {
   type TextMatchMode,
 } from "../../utils/ui-tree-match";
 import { settleWithin, sleepOrAbort } from "../../utils/timing";
-import { isUnlandedKeyboardTextResult, keyboardResultNote } from "../keyboard";
 import { invokeSubTool } from "../../utils/sub-invoke";
+import { isUnlandedKeyboardTextResult } from "../keyboard";
 import { isIosPhysicalDevice, isIosSimulator } from "../../utils/device-info";
 import { bindDeviceArgs } from "./flow-device";
 import { fetchFlowTree } from "./flow-tree";
@@ -1599,7 +1599,6 @@ async function runSwipe(
  * keyboard tool. Unless `submit` is explicitly `false`, a trailing Enter commits
  * the value and dismisses the keyboard so it can't obscure later steps (chained
  * form fields ending in an explicit submit `tap` should pass `submit: false`).
- * A read-back that proves the text did not land fails the step before that Enter.
  */
 async function runType(
   env: ActionEnv,
@@ -1618,29 +1617,13 @@ async function runType(
   }
   await waitForFocus(env, step.into, frame);
   // waitForFocus returns void on abort as well as on focus/timeout — re-check
-  // before every keyboard dispatch, so a cancelled run can never type into
-  // whatever the app has focused after the caller gave up. The tool checks the
-  // signal too and rejects, which the catch below turns into the same skip.
+  // before every keyboard dispatch (the keyboard tool has no abort handling of
+  // its own), so a cancelled run can never type into whatever the app has
+  // focused after the caller gave up.
   if (env.signal?.aborted) return ABORTED_OUTCOME;
-  let typed: unknown;
-  try {
-    typed = await invokeOnDevice(env, "keyboard", { text: step.text });
-  } catch (err) {
-    // The Android read-back rejects when cancelled mid-call, and a repair can
-    // hold the call for tens of seconds; per ABORTED_OUTCOME that reads as an
-    // aborted skip, as it does for the gesture directives, never a step failure
-    // blaming the app for the cancellation.
-    if (env.signal?.aborted) return ABORTED_OUTCOME;
-    throw err;
-  }
-  // `input text` exits 0 having dropped characters, so whether the tool returned
-  // says nothing about what reached the field: only the read-back can gate a step
-  // that types. See `isUnlandedKeyboardTextResult` for why an absent `verified`
-  // is not evidence of failure.
+  const typed = await invokeOnDevice(env, "keyboard", { text: step.text });
+  // Fails before the Enter, which would submit the wrong value.
   if (isUnlandedKeyboardTextResult("keyboard", typed)) {
-    // Verdict first, as the raw `tool:` and `run-sequence` gates write it: the
-    // note can open with the secret warning, which would bury the finding in the
-    // one line the CLI prints for a failed step.
     return { ok: false, reason: `typed text did not land${typed.note ? `: ${typed.note}` : ""}` };
   }
   if (step.submit !== false) {
@@ -1652,19 +1635,9 @@ async function runType(
     // the TV kind that reaches here at all — an Apple TV stops at the focus tap
     // above, whose `gesture-tap` resolves simulator-server, which rejects a tvOS
     // UDID.)
-    try {
-      await invokeOnDevice(env, "keyboard", { key: "enter" });
-    } catch (err) {
-      // The tool rejects a cancel that lands after the check above, and this
-      // call reads as an aborted skip for the same reason the text call does.
-      if (env.signal?.aborted) return ABORTED_OUTCOME;
-      throw err;
-    }
+    await invokeOnDevice(env, "keyboard", { key: "enter" });
   }
-  // A directive step carries no `result`, so the note travels as the warning —
-  // otherwise an unverified type step and a verified one are indistinguishable in
-  // the report. `flow-run.ts` does the same for the raw `tool:` spellings.
-  return { ok: true, ...warnedBy(toolWarning(focusTap), keyboardResultNote(typed)) };
+  return { ok: true, ...warnedBy(toolWarning(focusTap)) };
 }
 
 /**

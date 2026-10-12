@@ -1,4 +1,4 @@
-import type { DeviceInfo, InvokeToolOptions, Registry } from "@argent/registry";
+import type { DeviceInfo, Registry } from "@argent/registry";
 import type { PlatformImpl } from "../../../utils/cross-platform-tool";
 import { isAndroidTv } from "../../../utils/adb";
 import { assertTypeableAndroidText, injectAndroidNamedKey } from "../../../utils/android-input";
@@ -10,45 +10,24 @@ import { typeTv } from "./tv";
 // transport: the guest silently drops HID key events on `hw.keyboard = no` AVDs
 // (routine for CI / headless), so the tool reported success while typing nothing
 // (#449). `device.id` is the adb serial.
-//
-// A clean adb exit is not proof the characters arrived, though: `input text`
-// injects them as one uninterrupted KeyEvent burst that a field re-rendering per
-// keystroke drops parts of. So `text` goes through `typeAndroidTextVerified`,
-// which reads the focused field back and reports what actually landed — see
-// android-verify.ts. Named keys are single events and need no read-back.
 async function typeAndroidPhone(
   registry: Registry,
   device: DeviceInfo,
-  params: KeyboardParams,
-  options?: InvokeToolOptions
+  params: KeyboardParams
 ): Promise<KeyboardResult> {
   let keysPressed = 0;
   let verification: KeyboardVerification = {};
   // `text` and `key` are at-most-one (rejected in ../index.ts), so at most one
   // branch runs and there is no ordering to get right.
   if (params.text) {
-    // `typeAndroidTextVerified` resolves the android-devtools helper — up to an
-    // `adb install -t` of its APK — before it injects, so text this backend
-    // cannot type has to be rejected ahead of that. `injectAndroidText` re-runs
-    // the same pure check harmlessly.
+    // Before the read-back, which may `adb install` its helper.
     assertTypeableAndroidText(params.text);
-    // The signal, not just the text: the read-back waits on the helper and on a
-    // hierarchy read before it types anything, and its repair deletes before it
-    // retypes. Neither may run on once the caller has gone away.
-    verification = await typeAndroidTextVerified(registry, device, params.text, options?.signal);
-    // `assertTypeableAndroidText` above has already rejected any non-ASCII, so
-    // every character here is a single codepoint and a single UTF-16 unit —
-    // `.length` is the codepoint count (matching the tv / simulator-server
-    // backends) without a spread. It counts the characters the call asked to
-    // type, not the presses a repair re-sent.
+    verification = await typeAndroidTextVerified(registry, device, params.text);
+    // Non-ASCII is rejected above, so `.length` is the codepoint count
+    // (matching the tv / simulator-server backends).
     keysPressed += params.text.length;
   }
   if (params.key) {
-    // The `isAndroidTv` probe (up to the 5 s adb timeout) stands between the
-    // `execute` abort check and this injection, so re-check: a named key is a
-    // single event the text path already guards against, and the submit half of
-    // the prescribed type-then-Enter sequence is what would fire here otherwise.
-    options?.signal?.throwIfAborted();
     await injectAndroidNamedKey(device.id, params.key);
     keysPressed++;
   }
@@ -66,9 +45,9 @@ export function makeAndroidImpl(
     // either way), so declaring it makes a missing binary fail with
     // `dispatchByPlatform`'s 424 install hint instead of from inside the probe.
     requires: ["adb"],
-    handler: async (_services, params, device, options) =>
+    handler: async (_services, params, device) =>
       (await isAndroidTv(device.id))
-        ? typeTv(registry, device, params, options?.signal)
-        : typeAndroidPhone(registry, device, params, options),
+        ? typeTv(registry, device, params)
+        : typeAndroidPhone(registry, device, params),
   };
 }
