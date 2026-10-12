@@ -97,7 +97,6 @@ function printToolHelp(meta: ToolMeta): void {
   console.log("  --help, -h             Show this help");
 }
 
-/** Drops the schema properties that `--json`/`--out` already list under Global flags. */
 function withoutGlobalFlags(schema: JsonSchema | undefined): JsonSchema | undefined {
   if (!schema?.properties) return schema;
   const { json: _json, out: _out, ...properties } = schema.properties;

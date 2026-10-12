@@ -345,8 +345,7 @@ export async function flowRunToMcpContent(
     }
 
     if (step.result !== undefined) {
-      // A step's args come from the flow file, so only the render toggle crosses: an
-      // `out` there would write a path the flow's author picked on this machine.
+      // Step args come from the flow file, whose `out` must not write on this machine.
       const renderArgs = isRecord(step.args)
         ? { includeImageInContext: step.args.includeImageInContext }
         : undefined;
