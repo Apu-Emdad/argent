@@ -277,6 +277,40 @@ describe("await-ui-element on HarmonyOS", () => {
     expect(result.cause).toBe("unreadable");
   });
 
+  it("times out `unreadable` when a suspended-panel read lands at the deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now();
+      vi.mocked(harmonyDisplay)
+        .mockResolvedValueOnce(DISPLAY)
+        .mockResolvedValue({ ...DISPLAY, screenOn: false });
+      vi.mocked(harmonyDumpLayout)
+        .mockResolvedValueOnce(dumpWith("Loading"))
+        .mockImplementation(async () => {
+          vi.setSystemTime(start + 1500);
+          return dumpWith("Loading");
+        });
+      const tool = createAwaitUiElementTool(harmonyRegistry());
+
+      const result = await tool.execute(
+        {},
+        {
+          udid: HARMONY_ID,
+          condition: "visible",
+          selector: { text: "Submit" },
+          timeoutMs: 1500,
+          pollIntervalMs: 100,
+        }
+      );
+
+      expect(vi.mocked(harmonyDumpLayout)).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.cause).toBe("unreadable");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times out `unmet` when the panel was on for the final read", async () => {
     vi.mocked(harmonyDisplay)
       .mockResolvedValueOnce({ ...DISPLAY, screenOn: false })

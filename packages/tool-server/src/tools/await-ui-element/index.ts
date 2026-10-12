@@ -208,7 +208,7 @@ const DARK_TAIL_TOLERANCE_MAX_MS = 2000;
  *
  * - `trusted` — it settled, returned a tree, and the tree could be judged on.
  * - `untrusted` — it settled, and what came back cannot be judged: the fetch
- *   threw, or the tree was blind.
+ *   threw, or the tree was blind or stale.
  * - `unsettled` — it never came back. The newest data is then the read BEFORE
  *   it, whose age is the only evidence there is.
  */
@@ -476,6 +476,7 @@ after a tap/navigation to wait for the next screen, or before tapping an element
           ? "unsettled"
           : poll.lastAttempt === "tree" &&
               poll.lastData !== null &&
+              !poll.lastData.stale &&
               !isBlindRead(poll.lastData, everMatched)
             ? "trusted"
             : "untrusted";
