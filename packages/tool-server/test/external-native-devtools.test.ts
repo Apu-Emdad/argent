@@ -235,13 +235,7 @@ describe("a provider that lends its native-devtools agent", () => {
     await expect(
       nativeNetworkLogsTool.execute(
         { nativeDevtools: instance.api },
-        {
-          bundleId: "com.example.gone",
-          clear: false,
-          limit: 50,
-          format: "requests",
-          udid: DEVICE_ID,
-        }
+        { bundleId: "com.example.gone", clear: false, limit: 50, udid: DEVICE_ID }
       )
     ).rejects.toThrow(/not connected/);
 

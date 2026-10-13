@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { FAILURE_CODES, FailureError, type ToolDefinition } from "@argent/registry";
 import {
+  MAX_NETWORK_LOG_ENTRIES,
   nativeDevtoolsRef,
   precheckNativeDevtools,
   type NativeDevtoolsApi,
@@ -23,9 +24,8 @@ const zodSchema = z.object({
   format: z
     .enum(["requests", "events"])
     .optional()
-    .default("requests")
     .describe(
-      "'requests' (default): one compact row per request — method, url, status, mimeType, bytes, durationMs, error. 'events': the raw CDP Network.* events (large: response bodies arrive as many dataReceived chunks)."
+      "'requests' (default): one compact row per request — method, url, finalUrl, status, mimeType, bytes, durationMs, error. 'events': the raw CDP Network.* events, several per request, with request and response headers and the request body (request.postData). Neither format carries response bodies: dataReceived events hold only chunk sizes."
     ),
   clear: z.boolean().optional().default(false).describe("Clear the log after reading"),
 });
@@ -35,6 +35,7 @@ interface NativeRequestRow {
   requestId: string;
   method?: string;
   url?: string;
+  finalUrl?: string;
   status?: number;
   mimeType?: string;
   bytes?: number;
@@ -45,14 +46,15 @@ interface NativeRequestRow {
 type Result =
   | NativeDevtoolsPrecheckBlock
   | { status: "ok"; count: number; events: NetworkEvent[] }
-  | { status: "ok"; count: number; totalRequests: number; requests: NativeRequestRow[] };
+  | {
+      status: "ok";
+      count: number;
+      totalRequests: number;
+      requests: NativeRequestRow[];
+      truncated?: true;
+    };
 
-/**
- * Fold CDP Network.* events into one row per requestId. The raw stream is
- * mostly `dataReceived` chunks (a video or bundle download is hundreds), so an
- * agent asking for 400 events got ~98K chars and overflowed the tool-output
- * limit while still not seeing all requests.
- */
+/** Fold CDP Network.* events into one row per requestId, in first-seen order. */
 function summarizeRequests(events: NetworkEvent[]): NativeRequestRow[] {
   const rows = new Map<string, NativeRequestRow & { start?: number }>();
   for (const e of events) {
@@ -62,6 +64,11 @@ function summarizeRequests(events: NetworkEvent[]): NativeRequestRow[] {
     let row = rows.get(id);
     if (!row) rows.set(id, (row = { requestId: id }));
     const t = typeof p.timestamp === "number" ? p.timestamp : undefined;
+    const finish = () => {
+      if (typeof p.encodedDataLength === "number") row.bytes = p.encodedDataLength;
+      if (t !== undefined && row.start !== undefined)
+        row.durationMs = Math.round((t - row.start) * 1000);
+    };
     switch (e.method) {
       case "Network.requestWillBeSent":
         row.method = p.request?.method;
@@ -71,15 +78,14 @@ function summarizeRequests(events: NetworkEvent[]): NativeRequestRow[] {
       case "Network.responseReceived":
         row.status = p.response?.status;
         row.mimeType = p.response?.mimeType;
-        row.url ??= p.response?.url;
+        if (p.response?.url && p.response.url !== row.url) row.finalUrl = p.response.url;
         break;
       case "Network.loadingFinished":
-        if (typeof p.encodedDataLength === "number") row.bytes = p.encodedDataLength;
-        if (t !== undefined && row.start !== undefined)
-          row.durationMs = Math.round((t - row.start) * 1000);
+        finish();
         break;
       case "Network.loadingFailed":
         row.error = p.errorText ?? "failed";
+        finish();
         break;
     }
   }
@@ -100,7 +106,7 @@ export const nativeNetworkLogsTool: ToolDefinition<Params, Result> = {
   description: `Retrieve network requests captured at the native NSURLProtocol level. 
 Unlike the JS-level network inspector (view-network-logs), this captures ALL network traffic from the app including native modules, Swift/Objective-C networking, and background transfers that bypass JS fetch. 
 Use when you need to inspect native-level HTTP traffic that is invisible to JS fetch interception. 
-Returns { status, count, totalRequests, requests } with one row per request (method, url, status, mimeType, bytes, durationMs, error); pass format: "events" for the raw CDP events with headers.
+Returns { status, count, totalRequests, requests } with one row per request (method, url, status, mimeType, bytes, durationMs, error). finalUrl is set when a redirect ended elsewhere; status and mimeType are then those of finalUrl. A row with no bytes, durationMs or error has not finished: it is still running, or the app cancelled it. truncated: true means the log reached its last-${MAX_NETWORK_LOG_ENTRIES}-events limit, so older requests are missing, totalRequests counts only what is left, and a row without method and url lost its first events. Pass format: "events" for the raw CDP events with headers and request bodies.
 If status is restart_required: follow the message (usually restart-app), then retry. If status is service_stale: the app is already injected, so restarting it cannot help — restart the tool-server (\`argent server stop && argent server start --detach\`) and retry. If the same status comes back after that restart, stop restarting: follow the message, which names the terminal fallback. If status is connect_pending: the app is injected and still connecting — do not restart it, wait a few seconds and retry. If status is init_failed: the simulator's native-devtools environment could not be initialised — follow the message (re-boot the simulator) rather than retrying this tool.
 A not-running app comes back as one of those statuses rather than a failure. An app that is not connected does too, except on a device whose devtools agent argent attached to rather than armed itself — there it fails with \`NATIVE_DEVTOOLS_NOT_CONNECTED\`, since no restart of ours can complete a handshake we do not own. Failures are separate: an Apple system app is rejected outright (terminal — never retry it), while a missing host dependency or a udid that is not an Apple device is not.`,
   zodSchema,
@@ -143,6 +149,12 @@ A not-running app comes back as one of those statuses rather than a failure. An 
     }
     const all = summarizeRequests(log);
     const requests = all.slice(-params.limit);
-    return { status: "ok", count: requests.length, totalRequests: all.length, requests };
+    return {
+      status: "ok",
+      count: requests.length,
+      totalRequests: all.length,
+      requests,
+      ...(log.length >= MAX_NETWORK_LOG_ENTRIES && { truncated: true as const }),
+    };
   },
 };
