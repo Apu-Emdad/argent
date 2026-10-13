@@ -52,9 +52,6 @@ A not-running app comes back as one of those statuses rather than a failure. An 
 
     const api = services.nativeDevtools as NativeDevtoolsApi;
 
-    // The precheck throws for an Apple system app, so a refused call never
-    // arms capture. Activation still comes before the blocked answer: a
-    // restart_required app is armed at its next handshake, launch included.
     const blocked = await precheckNativeDevtools(api, params.udid, params.bundleId);
     const startedNow = api.activateNetworkInspection(params.bundleId);
     if (blocked) return blocked;
@@ -78,8 +75,6 @@ A not-running app comes back as one of those statuses rather than a failure. An 
 
     const events = api.getNetworkLog(params.bundleId).slice(-params.limit);
     if (params.clear) api.clearNetworkLog(params.bundleId);
-    // Same reason as above: an empty log from capture armed a moment ago is
-    // not "the app made no requests".
     return {
       status: "ok",
       count: events.length,
