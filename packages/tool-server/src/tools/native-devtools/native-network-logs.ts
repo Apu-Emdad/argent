@@ -49,9 +49,6 @@ A not-running app comes back as one of those statuses rather than a failure. An 
 
     const api = services.nativeDevtools as NativeDevtoolsApi;
 
-    // Register the intent before the precheck: when it answers restart_required,
-    // the relaunched app then starts capturing at its handshake, so its launch
-    // requests are recorded instead of everything before this tool's next call.
     api.activateNetworkInspection(params.bundleId);
 
     const blocked = await precheckNativeDevtools(api, params.udid, params.bundleId);
