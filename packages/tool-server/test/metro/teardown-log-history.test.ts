@@ -13,7 +13,7 @@
  * Drives the real Registry → JsRuntimeDebugger → debugger-log-registry path
  * against a mock Metro, disposing the service exactly as the teardown does.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
 import * as http from "node:http";
 import { Registry } from "@argent/registry";
@@ -25,6 +25,11 @@ import { debuggerConnectTool } from "../../src/tools/debugger/debugger-connect";
 import { createDebuggerLogRegistryTool } from "../../src/tools/debugger/debugger-log-registry";
 import { __resetReapedSessionsForTesting } from "../../src/utils/reaped-sessions";
 import { scopeTempHome } from "../helpers/temp-home";
+
+// A UUID-shaped device_id would otherwise run the host's `xcrun simctl`.
+vi.mock("../../src/utils/debugger/metro-device-name", () => ({
+  metroDeviceNamesFor: async () => undefined,
+}));
 
 // The JS-runtime-debugger / network blueprints build a real LogFileWriter,
 // whose constructor mkdir -p's os.homedir()/.argent/tmp. Keep that out of the

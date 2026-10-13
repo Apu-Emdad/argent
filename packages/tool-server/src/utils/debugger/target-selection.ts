@@ -1,4 +1,4 @@
-import { FAILURE_CODES, FailureError } from "@argent/registry";
+import { FAILURE_CODES, FailureError, type FailureCode } from "@argent/registry";
 import type { CDPTarget } from "./discovery";
 import type { MetroDeviceNames } from "./metro-device-name";
 
@@ -62,30 +62,12 @@ export function selectTarget(
       // Count via deviceKey, not logicalDeviceId alone: a legacy device has
       // none, so a Vega device_id would count zero devices, look like "nothing
       // to disambiguate" and fall through into another device's runtime.
-      const distinctDevices = new Map<string, { name?: string; logicalId?: string }>();
-      for (const t of pool) {
-        const key = deviceKey(t);
-        if (key && !distinctDevices.has(key)) {
-          distinctDevices.set(key, {
-            name: t.deviceName,
-            logicalId: t.reactNative?.logicalDeviceId,
-          });
-        }
-      }
-      if (distinctDevices.size > 1) {
-        // Only a logicalDeviceId is a usable device_id; a legacy device's
-        // internal key would read like one without being one.
-        const listed = [...distinctDevices.values()]
-          .map((d) =>
-            d.logicalId
-              ? `${d.name ?? "unknown"} (${d.logicalId})`
-              : `${d.name ?? "unknown"} (legacy inspector — no logicalDeviceId)`
-          )
-          .join(", ");
+      const devices = describeDevices(pool);
+      if (devices.count > 1) {
         throw new FailureError(
           `No debugger target matches device_id "${deviceId}". ` +
-            `${distinctDevices.size} devices are connected to Metro on port ${port}: ` +
-            `${listed}. Re-target with the logicalDeviceId in parentheses — that is what ` +
+            `${devices.count} devices are connected to Metro on port ${port}: ` +
+            `${devices.listed}. Re-target with the logicalDeviceId in parentheses — that is what ` +
             `debugger-connect returns and what subsequent debugger-* calls must pass. ` +
             `A legacy-inspector device (RN 0.72 / Vega) reports none and cannot be singled ` +
             `out of a shared Metro: give it its own Metro port.`,
@@ -118,29 +100,34 @@ export function selectTarget(
   return makeResult(candidates[0]!, port, false);
 }
 
-function describeDevices(pool: CDPTarget[]): { count: number; listed: string } {
-  const distinct = new Map<string, { name?: string; logicalId?: string }>();
+/**
+ * One entry per device (or, with `perApp`, per app connection) in `pool`.
+ * Only a logicalDeviceId is a usable device_id; a legacy device's internal key
+ * would read like one without being one, so those are flagged instead.
+ */
+function describeDevices(pool: CDPTarget[], perApp = false): { count: number; listed: string } {
+  const distinct = new Map<string, CDPTarget>();
   for (const t of pool) {
     const key = deviceKey(t);
-    if (key && !distinct.has(key)) {
-      distinct.set(key, { name: t.deviceName, logicalId: t.reactNative?.logicalDeviceId });
-    }
+    if (key && !distinct.has(key)) distinct.set(key, t);
   }
   const listed = [...distinct.values()]
-    .map((d) => `${d.name ?? "unknown"}${d.logicalId ? ` (${d.logicalId})` : ""}`)
+    .map((t) => {
+      const label = perApp && t.appId ? t.appId : (t.deviceName ?? "unknown");
+      const id = t.reactNative?.logicalDeviceId;
+      return id ? `${label} (${id})` : `${label} (legacy inspector — no logicalDeviceId)`;
+    })
     .join(", ");
   return { count: distinct.size, listed };
 }
 
 /**
- * Resolve a `list-devices` id (UDID / serial) to its target by the device name
- * the app reported to Metro. Metro never sees the UDID, so without this every
- * caller sharing a Metro with a second device had to look up the
- * logicalDeviceId by hand — and with a single device on Metro, any id silently
- * attached to whichever device that was.
+ * Resolve an iOS simulator UDID to its target by the device name the app
+ * reported to Metro, which never sees the UDID.
  *
  * Returns the matching targets, or [] to fall back to the id-only rules.
- * Throws when the name proves the device is not (uniquely) on this Metro.
+ * Throws when the name proves the simulator's app is not on this Metro, or
+ * cannot single out one target.
  */
 function matchByDeviceName(
   pool: CDPTarget[],
@@ -148,40 +135,44 @@ function matchByDeviceName(
   port: number,
   hint: MetroDeviceNames | undefined
 ): CDPTarget[] {
-  if (!hint?.names.length) return [];
-  for (const name of hint.names) {
-    const matched = pool.filter((t) => t.deviceName === name);
-    const keys = new Set(matched.map(deviceKey));
-    if (keys.size === 1) return matched;
-    if (keys.size > 1) {
-      throw new FailureError(
-        `device_id "${deviceId}" is "${name}", but ${keys.size} devices with that same name are ` +
-          `connected to Metro on port ${port}: ${describeDevices(matched).listed}. ` +
-          `Pass the logicalDeviceId in parentheses of the one you mean, or give the devices distinct names.`,
-        {
-          error_code: FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH,
-          failure_stage: "debugger_select_target",
-          failure_area: "tool_server",
-          error_kind: "not_found",
-        }
-      );
-    }
-  }
-  const connected = describeDevices(pool);
-  if (hint.exact && connected.count > 0) {
-    throw new FailureError(
-      `device_id "${deviceId}" is the simulator "${hint.names[0]}", but no app on that simulator ` +
-        `is connected to Metro on port ${port}. Connected: ${connected.listed}. ` +
-        `Launch or reload the app on "${hint.names[0]}" (or pass the device_id of a connected device).`,
-      {
-        error_code: FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH,
-        failure_stage: "debugger_select_target",
-        failure_area: "tool_server",
-        error_kind: "not_found",
-      }
+  // Older inspector-proxies list no deviceName at all.
+  if (!hint || !pool.length || !pool.every((t) => t.deviceName)) return [];
+  const matched = pool.filter((t) => hint.forms.includes(t.deviceName!));
+  const failure = (message: string, code: FailureCode) =>
+    new FailureError(message, {
+      error_code: code,
+      failure_stage: "debugger_select_target",
+      failure_area: "tool_server",
+      error_kind: "not_found",
+    });
+
+  if (!matched.length) {
+    throw failure(
+      `device_id "${deviceId}" is the simulator "${hint.name}", but no app on that simulator ` +
+        `is connected to Metro on port ${port}. Connected: ${describeDevices(pool).listed}. ` +
+        `Launch or reload the app on "${hint.name}", then retry.`,
+      FAILURE_CODES.DEBUGGER_METRO_NO_TARGETS
     );
   }
-  return [];
+  if (hint.bootedTwins > 0) {
+    throw failure(
+      `device_id "${deviceId}" is the simulator "${hint.name}", and ${hint.bootedTwins} other ` +
+        `booted simulator(s) have the same name, so Metro on port ${port} cannot tell them apart. ` +
+        `Rename the simulators so each name is unique ` +
+        `(xcrun simctl rename <udid> <name>), relaunch the app, then retry.`,
+      FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH
+    );
+  }
+  const apps = describeDevices(matched, true);
+  if (apps.count > 1) {
+    throw failure(
+      `device_id "${deviceId}" is the simulator "${hint.name}", which has ${apps.count} apps ` +
+        `connected to Metro on port ${port}: ${apps.listed}. Pass the logicalDeviceId in ` +
+        `parentheses of the app you mean.`,
+      FAILURE_CODES.DEBUGGER_TARGET_DEVICE_MISMATCH
+    );
+  }
+  return matched;
 }
 
 function makeResult(target: CDPTarget, port: number, isNewDebugger: boolean): SelectedTarget {
