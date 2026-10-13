@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { FAILURE_CODES, FailureError, TypedEventEmitter } from "@argent/registry";
+import { FAILURE_CODES, FailureError, TypedEventEmitter, getFailureSignal } from "@argent/registry";
 import * as crypto from "node:crypto";
 
 export interface ScriptInfo {
@@ -122,6 +122,17 @@ interface RemoteObjectLike {
   value?: unknown;
   description?: string;
 }
+
+interface RemoteResult {
+  result?: RemoteObjectLike;
+  exceptionDetails?: CDPExceptionDetails;
+}
+
+const REJECTION_REASON =
+  `function(){var e=this.e;` +
+  `try{if(e&&typeof e.stack==="string")return e.stack}catch(_){}` +
+  `try{var j=JSON.stringify(e);if(j!==undefined)return j}catch(_){}` +
+  `try{return String(e)}catch(_){return Object.prototype.toString.call(e)}}`;
 
 function runtimeException(details: CDPExceptionDetails): FailureError {
   return new FailureError(formatExceptionDetails(details), {
@@ -410,56 +421,104 @@ export class CDPClient {
   /**
    * Evaluate and return the value, settling a Promise result first.
    *
-   * Hermes acknowledges `awaitPromise` but answers a Promise with its raw
-   * internals (`{_A,_x,_y,_z}`), so agents stashed results on globalThis and
-   * polled by hand. Here the expression runs exactly once, unserialized; a
-   * Promise handle then gets settle callbacks attached in the runtime
-   * (`Runtime.callFunctionOn`) that park the outcome on a global slot, which is
-   * polled. A non-Promise object is serialized from its handle the same way
-   * `returnByValue` would.
+   * Hermes ignores `awaitPromise` and answers with the Promise object itself.
+   * So the expression runs once without serializing; if the result has a
+   * `then` method, its settle callbacks write the outcome into a box object
+   * that is polled with `Runtime.getProperties`, which compiles no script.
+   * Every handle belongs to one object group, released when the call ends, so
+   * nothing the expression returned stays pinned in the app's heap.
    */
   async evaluateAwaited(expression: string, options?: { timeout?: number }): Promise<unknown> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const objectGroup = `argent-await-${crypto.randomUUID()}`;
     const first = (await this.send(
       "Runtime.evaluate",
-      { expression, returnByValue: false, awaitPromise: true },
+      { expression, objectGroup, returnByValue: false, awaitPromise: true },
       timeout
-    )) as { result?: RemoteObjectLike; exceptionDetails?: CDPExceptionDetails };
+    )) as RemoteResult;
     if (first.exceptionDetails) throw runtimeException(first.exceptionDetails);
-    const remote = first.result;
-    if (!remote?.objectId) return remote?.value;
+    const objectId = first.result?.objectId;
+    if (!objectId) return first.result?.value;
 
-    // React Native's global Promise is a polyfill (plain objects with
-    // `_x/_y/_z` fields), so detect a thenable in the runtime, not by
-    // className. One round-trip either serializes the value or, for a
-    // thenable, attaches the settle callbacks.
-    const slot = `__argentAwait_${crypto.randomUUID().replace(/-/g, "")}`;
-    const res = (await this.send(
-      "Runtime.callFunctionOn",
-      {
-        objectId: remote.objectId,
-        functionDeclaration:
-          `function(){if(!this||typeof this.then!=="function")return {v:this};` +
-          `var g=globalThis;g.${slot}={s:0};this.then(` +
-          `function(v){g.${slot}={s:1,v:v}},` +
-          `function(e){g.${slot}={s:2,e:(e&&e.stack)||String(e)}});return {pending:true};}`,
-        returnByValue: true,
-      },
-      timeout
-    )) as { result?: RemoteObjectLike; exceptionDetails?: CDPExceptionDetails };
-    if (res.exceptionDetails) throw runtimeException(res.exceptionDetails);
-    const verdict = res.result?.value as { v?: unknown; pending?: true } | undefined;
+    try {
+      return await this.settleRemote(objectId, objectGroup, timeout);
+    } finally {
+      await this.send("Runtime.releaseObjectGroup", { objectGroup }, timeout).catch(
+        () => undefined
+      );
+    }
+  }
+
+  private async settleRemote(
+    objectId: string,
+    objectGroup: string,
+    timeout: number
+  ): Promise<unknown> {
+    const verdict = (
+      await this.callOn(
+        objectId,
+        objectGroup,
+        `function(){try{if(!this||typeof this.then!=="function")return {v:this}}catch(_){}return {pending:true}}`,
+        true,
+        timeout
+      )
+    ).value as { v?: unknown; pending?: true } | undefined;
     if (!verdict?.pending) return verdict?.v;
+
+    const box = (
+      await this.callOn(
+        objectId,
+        objectGroup,
+        `function(){var b={s:0};try{this.then(function(v){b.v=v;b.s=1},function(e){b.e=e;b.s=2})}` +
+          `catch(e){b.e=e;b.s=2}return b}`,
+        false,
+        timeout
+      )
+    ).objectId;
+    if (!box) {
+      throw new FailureError("The runtime returned no handle to wait on the Promise with.", {
+        error_code: FAILURE_CODES.DEBUGGER_CDP_PROTOCOL_ERROR,
+        failure_stage: "debugger_cdp_evaluate",
+        failure_area: "tool_server",
+        error_kind: "unknown",
+      });
+    }
 
     const deadline = Date.now() + timeout;
     for (;;) {
-      const state = (await this.evaluate(
-        `(function(){var r=globalThis.${slot};if(r&&r.s)delete globalThis.${slot};return r;})()`,
-        { timeout }
-      )) as { s: number; v?: unknown; e?: string } | undefined;
-      if (state?.s === 1) return state.v;
-      if (state?.s === 2) {
-        throw new FailureError(`Promise rejected: ${state.e}`, {
+      let props: { result?: { name: string; value?: RemoteObjectLike }[] };
+      try {
+        props = (await this.send(
+          "Runtime.getProperties",
+          { objectId: box, ownProperties: true },
+          timeout
+        )) as typeof props;
+      } catch (err) {
+        if (
+          !(err instanceof Error) ||
+          getFailureSignal(err)?.error_code !== FAILURE_CODES.DEBUGGER_CDP_PROTOCOL_ERROR
+        ) {
+          throw err;
+        }
+        throw new FailureError(
+          "Lost the Promise while waiting for it: the JS context was reloaded or replaced.",
+          {
+            error_code: FAILURE_CODES.DEBUGGER_CDP_PROTOCOL_ERROR,
+            failure_stage: "debugger_cdp_evaluate",
+            failure_area: "tool_server",
+            error_kind: "unknown",
+          },
+          { cause: err }
+        );
+      }
+      const state = props.result?.find((p) => p.name === "s")?.value?.value;
+      if (state === 1) {
+        return (await this.callOn(box, objectGroup, "function(){return this.v}", true, timeout))
+          .value;
+      }
+      if (state === 2) {
+        const reason = (await this.callOn(box, objectGroup, REJECTION_REASON, true, timeout)).value;
+        throw new FailureError(`Promise rejected: ${String(reason)}`, {
           error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
           failure_stage: "debugger_cdp_evaluate",
           failure_area: "tool_server",
@@ -470,7 +529,7 @@ export class CDPClient {
         throw new FailureError(
           `The expression returned a Promise that did not settle within ${timeout}ms.`,
           {
-            error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
+            error_code: FAILURE_CODES.DEBUGGER_CDP_REQUEST_TIMEOUT,
             failure_stage: "debugger_cdp_evaluate",
             failure_area: "tool_server",
             error_kind: "timeout",
@@ -479,6 +538,22 @@ export class CDPClient {
       }
       await new Promise((r) => setTimeout(r, 50));
     }
+  }
+
+  private async callOn(
+    objectId: string,
+    objectGroup: string,
+    functionDeclaration: string,
+    returnByValue: boolean,
+    timeout: number
+  ): Promise<RemoteObjectLike> {
+    const res = (await this.send(
+      "Runtime.callFunctionOn",
+      { objectId, objectGroup, functionDeclaration, returnByValue },
+      timeout
+    )) as RemoteResult;
+    if (res.exceptionDetails) throw runtimeException(res.exceptionDetails);
+    return res.result ?? {};
   }
 
   async addBinding(name: string): Promise<void> {

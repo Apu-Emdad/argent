@@ -1,60 +1,183 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { Session } from "node:inspector/promises";
+import { FAILURE_CODES, FailureError, getFailureSignal } from "@argent/registry";
 import { CDPClient } from "../../src/utils/debugger/cdp-client";
+import { debuggerEvaluateTool } from "../../src/tools/debugger/debugger-evaluate";
+import type { JsRuntimeDebuggerApi } from "../../src/blueprints/js-runtime-debugger";
 
 /**
- * evaluateAwaited without a socket: `send` is stubbed with a tiny fake runtime
- * that mimics Hermes — a Promise result comes back as an object handle (RN's
- * polyfill, no subtype), and settle callbacks park the outcome on a slot that
- * `evaluate` then polls.
+ * evaluateAwaited against this process's own V8 through `node:inspector`.
+ * `awaitPromise` is stripped from every request, because Hermes ignores it:
+ * that forces the same path a Hermes app takes, with a real runtime behind it.
  */
-function fakeRuntime(
-  outcome: { kind: "value"; v: unknown } | { kind: "promise"; v?: unknown; err?: string }
-) {
+const sessions: Session[] = [];
+
+afterEach(() => {
+  for (const s of sessions.splice(0)) s.disconnect();
+  delete (globalThis as Record<string, unknown>).__wrs;
+});
+
+function v8Client(hooks?: { beforeSend?: (method: string, params: any) => Promise<void> }) {
+  const session = new Session();
+  session.connect();
+  sessions.push(session);
   const client = new CDPClient("ws://localhost:1");
   const calls: string[] = [];
-  let slotValue: unknown;
-  (client as any).send = async (method: string, params: any) => {
+  (client as any).send = async (method: string, params: any = {}) => {
     calls.push(method);
-    if (method === "Runtime.evaluate" && params.returnByValue === false) {
-      if (outcome.kind === "value" && (typeof outcome.v !== "object" || outcome.v === null)) {
-        return { result: { type: typeof outcome.v, value: outcome.v } };
-      }
-      return { result: { type: "object", className: "Object", objectId: "obj-1" } };
+    await hooks?.beforeSend?.(method, params);
+    try {
+      return await session.post(method as any, { ...params, awaitPromise: undefined });
+    } catch (err) {
+      throw new FailureError((err as Error).message, {
+        error_code: FAILURE_CODES.DEBUGGER_CDP_PROTOCOL_ERROR,
+        failure_stage: "debugger_cdp_protocol",
+        failure_area: "tool_server",
+        error_kind: "unknown",
+      });
     }
-    if (method === "Runtime.callFunctionOn") {
-      if (outcome.kind === "value") return { result: { value: { v: outcome.v } } };
-      slotValue = outcome.err !== undefined ? { s: 2, e: outcome.err } : { s: 1, v: outcome.v };
-      return { result: { value: { pending: true } } };
-    }
-    if (method === "Runtime.evaluate") return { result: { value: slotValue } };
-    throw new Error(`unexpected ${method}`);
   };
-  return { client, calls };
+  return { client, calls, session };
+}
+
+const TRACK = "(globalThis.__wrs||(globalThis.__wrs=[])).push(new WeakRef(o));";
+
+async function collected(session: Session): Promise<boolean[]> {
+  await new Promise((r) => setTimeout(r, 0));
+  await session.post("HeapProfiler.collectGarbage");
+  const refs = (globalThis as unknown as { __wrs: WeakRef<object>[] }).__wrs;
+  return refs.map((w) => w.deref() === undefined);
+}
+
+function signalOf(fn: () => Promise<unknown>) {
+  return fn().then(
+    () => {
+      throw new Error("expected a rejection");
+    },
+    (err: unknown) => ({ err: err as Error, signal: getFailureSignal(err) })
+  );
 }
 
 describe("CDPClient.evaluateAwaited", () => {
-  it("returns a primitive directly, in one round-trip", async () => {
-    const { client, calls } = fakeRuntime({ kind: "value", v: 2 });
+  it("returns a primitive in one round-trip", async () => {
+    const { client, calls } = v8Client();
     expect(await client.evaluateAwaited("1+1")).toBe(2);
     expect(calls).toEqual(["Runtime.evaluate"]);
   });
 
-  it("serializes a plain object from its handle", async () => {
-    const { client } = fakeRuntime({ kind: "value", v: { a: 1, b: [2, 3] } });
-    expect(await client.evaluateAwaited("({a:1,b:[2,3]})")).toEqual({ a: 1, b: [2, 3] });
+  it("serializes an object and leaves nothing pinned", async () => {
+    const { client, session } = v8Client();
+    expect(
+      await client.evaluateAwaited(`(()=>{const o={a:1,b:[2,3]};${TRACK}return o})()`)
+    ).toEqual({ a: 1, b: [2, 3] });
+    expect(await collected(session)).toEqual([true]);
   });
 
-  it("settles a polyfill Promise and returns what it resolved to", async () => {
-    const { client, calls } = fakeRuntime({ kind: "promise", v: { x: 42 } });
-    expect(await client.evaluateAwaited("new Promise(r => r({x:42}))")).toEqual({ x: 42 });
-    // The expression itself ran once; the rest is callback install + poll.
-    expect(calls.filter((c) => c === "Runtime.callFunctionOn")).toHaveLength(1);
+  it("returns what a Promise resolves to and leaves nothing pinned", async () => {
+    const { client, session } = v8Client();
+    const expr = `(()=>{const o={x:42};${TRACK}return new Promise(r=>setTimeout(()=>r(o),100))})()`;
+    expect(await client.evaluateAwaited(expr)).toEqual({ x: 42 });
+    expect(await collected(session)).toEqual([true]);
   });
 
-  it("surfaces a rejection as a runtime exception", async () => {
-    const { client } = fakeRuntime({ kind: "promise", err: "Error: boom" });
-    await expect(client.evaluateAwaited("Promise.reject(new Error('boom'))")).rejects.toThrow(
-      /Promise rejected: Error: boom/
+  it("polls without compiling a script per poll", async () => {
+    const { client, session } = v8Client();
+    let parsed = 0;
+    await session.post("Debugger.enable");
+    session.on("Debugger.scriptParsed", () => parsed++);
+    expect(await client.evaluateAwaited("new Promise(r=>setTimeout(()=>r(1),1000))")).toBe(1);
+    await session.post("Debugger.disable");
+    expect(parsed).toBeLessThan(6);
+  });
+
+  it("reports an Error rejection with its stack", async () => {
+    const { client } = v8Client();
+    const { err, signal } = await signalOf(() =>
+      client.evaluateAwaited("Promise.reject(new Error('boom'))")
     );
+    expect(err.message).toMatch(/^Promise rejected: Error: boom\n\s+at /);
+    expect(signal?.error_code).toBe(FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION);
+  });
+
+  it("keeps a non-Error rejection reason readable", async () => {
+    const { client } = v8Client();
+    await expect(client.evaluateAwaited("Promise.reject({code:42})")).rejects.toThrow(
+      'Promise rejected: {"code":42}'
+    );
+  });
+
+  it("reports a null-prototype rejection at once instead of timing out", async () => {
+    const { client } = v8Client();
+    const t0 = Date.now();
+    await expect(
+      client.evaluateAwaited("Promise.reject(Object.create(null))", { timeout: 2000 })
+    ).rejects.toThrow("Promise rejected: {}");
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("treats a then() that throws as a rejection and leaves no global behind", async () => {
+    const { client } = v8Client();
+    const before = Object.keys(globalThis);
+    await expect(client.evaluateAwaited("({then(){throw new Error('sync')}})")).rejects.toThrow(
+      /Promise rejected: Error: sync/
+    );
+    expect(Object.keys(globalThis)).toEqual(before);
+  });
+
+  it("keeps nothing alive when a Promise settles after the timeout", async () => {
+    const { client, session } = v8Client();
+    const before = Object.keys(globalThis);
+    const expr = `(()=>{const o={big:new Array(1e5).fill(1)};${TRACK}return new Promise(r=>setTimeout(()=>r(o),300))})()`;
+    const { signal } = await signalOf(() => client.evaluateAwaited(expr, { timeout: 100 }));
+    expect(signal?.error_kind).toBe("timeout");
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await collected(session)).toEqual([true]);
+    expect(Object.keys(globalThis).filter((k) => !before.includes(k))).toEqual(["__wrs"]);
+  });
+
+  it("fails fast when the Promise's handle goes away mid-wait", async () => {
+    let group: string | undefined;
+    const ref: { session?: Session } = {};
+    const { client, session: s } = v8Client({
+      beforeSend: async (method, params) => {
+        if (method === "Runtime.evaluate") group ??= params.objectGroup;
+        if (method === "Runtime.getProperties" && group) {
+          await ref.session!.post("Runtime.releaseObjectGroup", { objectGroup: group });
+        }
+      },
+    });
+    ref.session = s;
+    const t0 = Date.now();
+    await expect(
+      client.evaluateAwaited("new Promise(r=>setTimeout(r,5000))", { timeout: 3000 })
+    ).rejects.toThrow(/Lost the Promise while waiting for it/);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
+describe("debugger-evaluate with a Promise that never settles", () => {
+  it("reports a timeout, not an expression that threw", async () => {
+    const { client } = v8Client();
+    const services = {
+      debugger: {
+        cdp: {
+          evaluateAwaited: (e: string) => client.evaluateAwaited(e, { timeout: 100 }),
+        },
+        deviceName: "MockDevice",
+        appName: "MockApp",
+        logicalDeviceId: "aaa",
+      } as unknown as JsRuntimeDebuggerApi,
+    };
+    const { signal } = await signalOf(() =>
+      debuggerEvaluateTool.execute(services, {
+        port: 8081,
+        device_id: "dev",
+        expression: "new Promise(()=>{})",
+      })
+    );
+    expect(signal).toMatchObject({
+      error_code: FAILURE_CODES.DEBUGGER_CDP_REQUEST_TIMEOUT,
+      error_kind: "timeout",
+    });
   });
 });
