@@ -240,9 +240,11 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
         // returns well under the cap. If the call fails (e.g. a tool-server
         // without that tool), fall back to sleeping the full budget.
         const maxWaitMs = getAutoScreenshotDelayMs(params.name);
+        let screenSettled = maxWaitMs === 0;
         if (maxWaitMs > 0) {
           try {
             const idle = await callTool("await-screen-idle", { udid, timeoutMs: maxWaitMs });
+            screenSettled = (idle.result as { settled?: unknown } | null)?.settled === true;
             await spyLog({
               ts: new Date().toISOString(),
               event: "auto_screenshot_readiness",
@@ -255,9 +257,6 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
           }
         }
 
-        // Screenshot and tree are independent reads of the settled screen:
-        // fetch them concurrently (one round-trip of latency instead of two,
-        // and the two captures land closer together in time).
         const screenshotTask = wantScreenshot
           ? (async (): Promise<ContentBlock[]> => {
               try {
@@ -278,6 +277,9 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<vo
               }
             })()
           : Promise.resolve<ContentBlock[]>([]);
+        // A wait that hit its cap can leave a tree read in flight, and a
+        // concurrent describe would reuse that older read (physical iPhone).
+        if (!screenSettled) await screenshotTask;
 
         // Append the element tree the agent would otherwise have to fetch with
         // a `describe` round-trip before its next tap. Measured on Sonnet over
