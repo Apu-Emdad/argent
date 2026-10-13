@@ -78,7 +78,7 @@ On Android and Chromium, an id absent from `describe` can still resolve in a flo
 
 The recorder rechecks each successful `await-ui-element` against the flow tree. Follow any `message` warning and replay each conversion. On iOS and Vega, a mismatch usually means the screen changed. A `text` check can also select different elements from the same source. See [Live waits and checks](live-authoring.md#live-waits-and-checks).
 
-On iOS, each tree read after a `launch:` expects the launched app in the foreground. If another app is in front, the step fails and names it. When the switch is intended, add a `launch:` or `tool: launch-app` step before that step.
+On an iOS simulator, each tree read after a `launch:` expects the launched app in the foreground. If another app is in front, the step fails and names it. When the switch is intended, add a `tool: launch-app` step before that step. A `launch:` step restarts the app.
 
 When several nodes match, the directive decides:
 
@@ -116,7 +116,7 @@ Directives stop the flow on failure and skip later steps. The available directiv
 - Unfolded, the UI is landscape. `swipe` and `scroll-to` directions and the reading order stay as the user sees the UI. Coordinates stay in the space of the `describe` frames.
 - A fold between two angles that are not `closed` or `open` can keep the current panel. The step passes, and the report names the panel. To change panels, fold to `closed` or `open`.
 
-Use the launch map for cross-platform flows. A bare launch applies everywhere and becomes an app path on Chromium. The map takes `native:`, `ios:`, `android:`, `vega:`, and `chromium:`. `native:` is one id shared by iOS, Android, and Vega, and a per-platform key overrides it for that platform. `chromium:` accepts a relative or absolute app path. `ios:` also accepts `{ app, args }`; a simulator passes `args` to the app at launch. A launch that declares no id for the run's platform is an error, not a cue to switch platforms. A run on a remote simulator uses the `ios:` id, or the `native:` id when the map has no `ios:` key, so no flow needs a key for a remote run. On iOS, `launch:` waits up to 15 s until the app is in the foreground. A permission prompt at launch does not fail it. On timeout, the step fails and names the app that was in front. See [The flow tree and `describe`](#the-flow-tree-and-describe).
+Use the launch map for cross-platform flows. A bare launch applies everywhere and becomes an app path on Chromium. The map takes `native:`, `ios:`, `android:`, `vega:`, and `chromium:`. `native:` is one id shared by iOS, Android, and Vega, and a per-platform key overrides it for that platform. `chromium:` accepts a relative or absolute app path. `ios:` also accepts `{ app, args }`; a simulator passes `args` to the app at launch. A launch that declares no id for the run's platform is an error, not a cue to switch platforms. A run on a remote simulator uses the `ios:` id, or the `native:` id when the map has no `ios:` key, so no flow needs a key for a remote run. On an iOS simulator, `launch:` waits up to 15 s until the app is in the foreground. A permission prompt at launch does not fail it. On timeout, the step fails and names the app that was in front. See [The flow tree and `describe`](#the-flow-tree-and-describe).
 
 ```yaml
 - launch: { native: com.acme.app, chromium: ../../app }

@@ -225,6 +225,50 @@ describe("iOS simulator flow tree projection", () => {
     });
   });
 
+  it("keeps an empty secure field's placeholder as its text, never a typed secret", () => {
+    const tree = adaptIosUiTreeForFlows(
+      adaptAxTree(
+        reply([
+          app,
+          {
+            index: 1,
+            parentIndex: 0,
+            value: "Email",
+            placeholder: "Email",
+            hintShowing: true,
+            traits: ["textEntry"],
+            elementType: 49,
+            frame: frame(0.1, 0.3, 0.8, 0.05),
+          },
+          {
+            index: 2,
+            parentIndex: 0,
+            value: "Password",
+            placeholder: "Password",
+            hintShowing: true,
+            traits: ["textEntry", "secureTextEntry"],
+            elementType: 50,
+            frame: frame(0.1, 0.4, 0.8, 0.05),
+          },
+          {
+            index: 3,
+            parentIndex: 0,
+            value: "••••",
+            placeholder: "PIN",
+            traits: ["textEntry", "secureTextEntry"],
+            elementType: 50,
+            frame: frame(0.1, 0.5, 0.8, 0.05),
+          },
+        ])
+      )
+    );
+    expect(selectorToFrame(tree, { text: "Email" })).toEqual(frame(0.1, 0.3, 0.8, 0.05));
+    expect(selectorToFrame(tree, { text: "Password" })).toEqual(frame(0.1, 0.4, 0.8, 0.05));
+    const filled = tree.children[2]!;
+    expect(filled.password).toBe(true);
+    expect(filled.value).toBeUndefined();
+  });
+
   it("drops a scroll indicator from the leaves and the hoisted text, but keeps sliders", () => {
     const tree = adaptIosUiTreeForFlows(
       adaptAxTree(
@@ -281,6 +325,17 @@ describe("iOS simulator flow tree projection", () => {
             elementType: 0,
             frame: frame(0.1, 0.5, 0.8, 0.04),
           },
+          // An app's own adjustable view with an id, of the indicator's shape.
+          {
+            index: 9,
+            parentIndex: 1,
+            identifier: "rating",
+            label: "Rating",
+            value: "3 stars",
+            traits: ["adjustable"],
+            elementType: 0,
+            frame: frame(0.1, 0.6, 0.8, 0.04),
+          },
         ])
       )
     );
@@ -289,14 +344,17 @@ describe("iOS simulator flow tree projection", () => {
       "Volume",
       "Brightness",
       "Contrast",
+      "Rating",
       "AXGroup",
     ]);
     expect(tree.children.filter((c) => c.role === "AXAdjustable").map((c) => c.label)).toEqual([
       "Volume",
       "Brightness",
       "Contrast",
+      "Rating",
     ]);
     const list = tree.children.find((c) => c.scrollable)!;
+    // The rating's id shields its text from the scroller.
     expect(list.subtreeText).toBe("Haptic Feedback Volume 50% Brightness 20% Contrast 70%");
   });
   it("reads a switch row's text without the switch's 0/1 state", () => {
@@ -475,6 +533,13 @@ describe("queryIosSimulatorFlowTree", () => {
     ).rejects.toThrow(
       /com\.example\.app is not the foreground app .*com\.apple\.springboard is.*crashed/
     );
+    // A read that names no foreground app cannot show the pinned app is in front.
+    await expect(
+      queryIosSimulatorFlowTree(registryWith(screen({ foregroundApp: undefined })), device, {
+        bundleId: "com.example.app",
+        pinned: true,
+      })
+    ).rejects.toThrow(/com\.example\.app is not the foreground app .*\(no app is\)/);
     // Unpinned, the id is only a hint.
     await expect(
       queryIosSimulatorFlowTree(

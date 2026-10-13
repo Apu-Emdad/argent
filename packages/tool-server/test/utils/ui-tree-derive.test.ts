@@ -180,6 +180,32 @@ describe("deriveUniqueSelector", () => {
     });
   });
 
+  it("never keeps a scope whose match is a larger element over the tap, not the tapped one", () => {
+    // Two cards, each a full-width photo with a small favourite icon on top.
+    const icon = leaf("AXImage", [0.85, 0.12, 0.1, 0.05]);
+    const root = screen([
+      leaf("AXStaticText", [0.05, 0.02, 0.3, 0.05], { label: "Photos" }),
+      leaf("AXImage", [0, 0.1, 1, 0.35]),
+      icon,
+      leaf("AXImage", [0, 0.5, 1, 0.35]),
+      leaf("AXImage", [0.85, 0.52, 0.1, 0.05]),
+    ]);
+    const selector = derive(root, 0.9, 0.145);
+    if (selector) expect(selectorToFrame(root, selector)).toEqual(icon.frame);
+  });
+
+  it("never names an anchor by the value typed into a field", () => {
+    const root = screen([
+      leaf("AXStaticText", [0.1, 0.1, 0.8, 0.05], { label: "Sign in" }),
+      leaf("AXTextField", [0.1, 0.3, 0.8, 0.05], { value: "jane.doe@acme.com" }),
+      leaf("AXTextField", [0.1, 0.4, 0.8, 0.05], { password: true }),
+      leaf("AXButton", [0.1, 0.5, 0.8, 0.05], { label: "Log in" }),
+    ]);
+    const selector = derive(root, 0.5, 0.42);
+    expect(JSON.stringify(selector)).not.toContain("jane.doe");
+    if (selector) expect(selectorToFrame(root, selector)).toEqual(root.children[2]!.frame);
+  });
+
   it("returns null when no form singles the tapped element out", () => {
     const root = screen([
       leaf("AXButton", [0.1, 0.1, 0.2, 0.05], { label: "Add" }),

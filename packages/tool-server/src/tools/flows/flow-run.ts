@@ -61,7 +61,7 @@ import {
 import { RECORDING_TOOL_IDS } from "./flow-add-step";
 import { runFlowScriptStep } from "./flow-script-step";
 import { describeWhenCondition, stepTarget } from "./flow-step-definitions";
-import { sleepOrAbort } from "../../utils/timing";
+import { settleWithin, sleepOrAbort } from "../../utils/timing";
 import { invokeSubTool, describeNestedParamError } from "../../utils/sub-invoke";
 import { iosDeviceRunnerRef } from "../../blueprints/ios-device-runner";
 import { isUnmetUiWaitResult } from "../await-ui-element";
@@ -393,23 +393,35 @@ async function waitForForegroundApp(
 ): Promise<string | null> {
   const deadline = Date.now() + NATIVE_READY_TIMEOUT_MS;
   let last: string;
+  let readFailed: boolean;
   for (;;) {
     if (signal?.aborted) return null;
-    try {
-      const tree = await readIosSimulatorUiTree(registry, device);
+    // Bounded by the abort, as the reads in flow-actions are.
+    const read = await settleWithin(readIosSimulatorUiTree(registry, device), undefined, signal);
+    if (read.type === "aborted") return null;
+    if (read.type === "value") {
+      const tree = read.value;
       if (tree.foregroundApp === bundleId) return null;
+      readFailed = false;
       last = tree.foregroundApp
         ? `${tree.foregroundApp} is in the foreground`
         : "no app is in the foreground";
-    } catch (err) {
-      if (getFailureSignal(err)?.error_code === FAILURE_CODES.AX_TREE_UNSUPPORTED) {
-        return errMsg(err);
+    } else if (read.type === "error") {
+      if (getFailureSignal(read.cause)?.error_code === FAILURE_CODES.AX_TREE_UNSUPPORTED) {
+        return read.error;
       }
-      last = errMsg(err);
+      readFailed = true;
+      last = read.error;
+    } else {
+      // Unreachable: no time budget was given.
+      readFailed = true;
+      last = "the read timed out";
     }
     if (Date.now() >= deadline) break;
     if (!(await sleepOrAbort(NATIVE_READY_POLL_MS, signal))) return null;
   }
+  // The app was never observed: the read's own reason ends with its remedy.
+  if (readFailed) return `the launch of ${bundleId} could not be checked: ${last}`;
   return (
     `${bundleId} did not become the foreground app within ${NATIVE_READY_TIMEOUT_MS} ms of its ` +
     `launch: ${last}. Launch it by hand (launch-app, then screenshot) to see whether it crashes ` +

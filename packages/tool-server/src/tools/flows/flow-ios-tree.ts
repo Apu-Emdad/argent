@@ -42,11 +42,17 @@ const SCROLLING_TYPES = new Set(["ScrollView", "Table", "CollectionView", "WebVi
 
 /**
  * UIKit's scroll indicator ("Vertical scroll bar, 3 pages"): an adjustable
- * element of no type of its own, in a scrolling container. Nobody taps it or
- * reads it as content, so it is neither a leaf nor hoisted text.
+ * element of no type of its own and no id, in a scrolling container. Nobody
+ * taps it or reads it as content, so it is neither a leaf nor hoisted text.
+ * An app's own adjustable view with an id (a rating control) stays.
  */
 function isScrollIndicator(node: UiTreeNode): boolean {
-  return node.type === "Other" && node.traits?.length === 1 && node.traits[0] === "adjustable";
+  return (
+    node.type === "Other" &&
+    node.traits?.length === 1 &&
+    node.traits[0] === "adjustable" &&
+    !node.identifier
+  );
 }
 
 /**
@@ -126,7 +132,8 @@ function projectAxNode(node: UiTreeNode, keys: Set<UiTreeNode>): FlatNode<UiTree
       frame,
       children: [],
       ...(node.label !== undefined && !key ? { label: node.label } : {}),
-      ...(value !== undefined && !node.password && !key ? { value } : {}),
+      // A secure field's placeholder is not its secret.
+      ...(value !== undefined && (!node.password || node.hintShowing) && !key ? { value } : {}),
       ...(node.identifier !== undefined ? { identifier: node.identifier } : {}),
       ...(node.focused ? { focused: true } : {}),
       ...(node.disabled ? { disabled: true } : {}),
@@ -261,11 +268,12 @@ export async function queryIosSimulatorFlowTree(
   target?: FlowTreeTarget
 ): Promise<DescribeTreeData> {
   const tree = await readIosSimulatorUiTree(registry, device);
-  if (target?.pinned && tree.foregroundApp && tree.foregroundApp !== target.bundleId) {
+  if (target?.pinned && tree.foregroundApp !== target.bundleId) {
     throw new Error(
-      `${target.bundleId} is not the foreground app on ${device.id} (${tree.foregroundApp} is). ` +
+      `${target.bundleId} is not the foreground app on ${device.id} ` +
+        `(${tree.foregroundApp ? `${tree.foregroundApp} is` : "no app is"}). ` +
         `It may have crashed or opened another app. If the flow meant to leave it, switch apps ` +
-        `with a \`launch:\` or a \`tool: launch-app\` step first.`
+        `with a \`tool: launch-app\` step first (a \`launch:\` step restarts the app).`
     );
   }
   // A walk the service cut short (node, depth or time cap) lacks what lies past

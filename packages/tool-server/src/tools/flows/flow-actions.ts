@@ -928,19 +928,31 @@ async function staleSelectorReason(
   // A cut-short walk cannot show the id is nowhere.
   if (read.type !== "value" || read.value.truncated) return undefined;
   const carriers: UiTreeNode[] = [];
-  const collect = (nodes: UiTreeNode[]): void => {
+  let uncovered = false;
+  const collect = (nodes: UiTreeNode[], covered: boolean): void => {
     for (const n of nodes) {
-      if (ids.some((id) => identifierMatches(n.identifier, id))) carriers.push(n);
-      collect(n.children);
+      const under = covered || n.covered === true;
+      if (ids.some((id) => identifierMatches(n.identifier, id))) {
+        carriers.push(n);
+        if (!under) uncovered = true;
+      }
+      collect(n.children, under);
     }
   };
-  collect(read.value.roots);
+  collect(read.value.roots, false);
   if (carriers.length === 0) {
     return (
       `${missed}, and no element with this id is in the accessibility tree right now, on ` +
       `screen or off. Either the element is not there at this moment (a banner or sheet that ` +
       `already closed, a list row not loaded yet): add an await or scroll-to step before this ` +
       `one. Or ${OLDER_FLOW}; ${RE_RECORD}`
+    );
+  }
+  // The flow tree drops what an alert, sheet or popover covers.
+  if (!uncovered) {
+    return (
+      `${missed}: the element with this id is covered by an alert, sheet or popover. Dismiss ` +
+      `it first, or add an await step for it to close.`
     );
   }
   const wanted = sel.role?.toLowerCase();

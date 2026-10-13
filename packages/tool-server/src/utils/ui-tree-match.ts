@@ -804,20 +804,23 @@ function ownSelectors(node: DescribeNode): Selector[] {
 }
 
 /**
- * Every visible match of `selector` sits over `point`: the matches are one
- * nested stack around the tapped element (a labelled container and the leaf
- * inside it rendering the same text), so whichever of them `selectorToFrame`
- * ranks first at replay, the tap lands on the element recorded. A match
- * elsewhere on the screen — the same label on another row — fails it.
+ * The tapped node is a visible match of `selector`, and every visible match
+ * sits over `point`: the matches are one nested stack around the tapped
+ * element (a labelled container and the leaf inside it rendering the same
+ * text), so whichever of them `selectorToFrame` ranks first at replay, the tap
+ * lands on the element recorded. A match elsewhere on the screen — the same
+ * label on another row — fails it, and so does a scope that keeps only a
+ * larger element overlapping the tap.
  */
 function resolvesAt(
   root: DescribeNode,
   selector: Selector,
+  node: DescribeNode,
   point: { x: number; y: number },
   orientation: UiOrientation | undefined
 ): boolean {
   const visible = findAll(root, selector, orientation).filter(isVisible);
-  return visible.length > 0 && visible.every((n) => frameContains(n.frame, point.x, point.y));
+  return visible.includes(node) && visible.every((n) => frameContains(n.frame, point.x, point.y));
 }
 
 // How many preceding elements the recorder tries as `next` anchors.
@@ -847,7 +850,7 @@ export function deriveUniqueSelector(
 ): Selector | null {
   const own = ownSelectors(node);
   if (own.length === 0) return null;
-  const unique = (s: Selector): boolean => resolvesAt(root, s, point, orientation);
+  const unique = (s: Selector): boolean => resolvesAt(root, s, node, point, orientation);
   for (const s of own) if (unique(s)) return s;
 
   const others: DescribeNode[] = [];
@@ -856,9 +859,10 @@ export function deriveUniqueSelector(
     for (const child of n.children) collect(child);
   };
   for (const child of root.children) collect(child);
-  // An anchor or container is named by its id or text, never by role alone.
+  // An anchor or container is named by its id or label, never by role alone,
+  // and never by its value: a field's value is what was typed into it.
   const nameOf = (n: DescribeNode): Selector | undefined =>
-    ownSelectors(n).find((s) => s.role === undefined);
+    ownSelectors({ ...n, value: undefined }).find((s) => s.role === undefined);
 
   // Containers, tightest first; a container with the node's own frame is the
   // node again, not a scope.

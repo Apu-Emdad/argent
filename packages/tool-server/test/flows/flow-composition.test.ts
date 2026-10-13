@@ -2741,6 +2741,66 @@ describe("flow composition (run:)", () => {
       expect(tree).toHaveBeenCalledTimes(1);
     });
 
+    it("reports a launch whose every read fails as unchecked, not as an app that never came up", async () => {
+      await writeFlow("main", launchThenEcho);
+      const registry = axRegistry(async () => {
+        throw new Error("ax-service daemon disconnected");
+      });
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const pending = createRunFlowTool(registry).execute(
+          {},
+          { name: "main", project_root: tmpDir, device: DEVICE }
+        );
+        let settled = false;
+        void pending.then(() => (settled = true));
+        for (let i = 0; i < PUMP_LIMIT && !settled; i++) {
+          await new Promise((resolve) => setImmediate(resolve));
+          await vi.advanceTimersByTimeAsync(250);
+        }
+        const result = asRun(await pending);
+
+        expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual([
+          "launch:error",
+          "echo:skip",
+        ]);
+        const reason = result.steps[0].reason ?? "";
+        expect(reason).toContain("the launch of com.acme.app could not be checked");
+        expect(reason).toContain("ax-service daemon disconnected");
+        expect(reason).not.toContain("did not become the foreground app");
+        expect(reason).not.toContain("..");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("returns a run cancelled during a hung gate read as aborted, without waiting the read out", async () => {
+      await writeFlow("main", launchThenEcho);
+      const controller = new AbortController();
+      const tree = vi.fn(() => {
+        controller.abort();
+        return new Promise<never>(() => {});
+      });
+
+      const started = Date.now();
+      const result = asRun(
+        await createRunFlowTool(axRegistry(tree)).execute(
+          {},
+          { name: "main", project_root: tmpDir, device: DEVICE },
+          { signal: controller.signal } as never
+        )
+      );
+
+      expect(tree).toHaveBeenCalledTimes(1);
+      expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual([
+        "launch:skip",
+        "echo:skip",
+      ]);
+      expect(result.steps[0].reason).toBe("run aborted");
+      expect(Date.now() - started).toBeLessThan(5_000);
+    });
+
     // The app is in front for the gate, then gone: it crashed, or a tap opened
     // another app. The other app's tree also shows "Hi", so only the pin can
     // fail the step.

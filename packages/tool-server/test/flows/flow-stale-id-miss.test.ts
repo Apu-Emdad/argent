@@ -236,6 +236,30 @@ describe.concurrent("a selector miss on an id", () => {
     expect(extraReads(sim)).toBe(0);
   }, 20_000);
 
+  it("names a cover when the id is only on a node an alert or sheet covers", async ({ expect }) => {
+    const sim = device([
+      {
+        index: 2,
+        parentIndex: 0,
+        covered: true,
+        traits: [],
+        frame: { x: 0, y: 0.1, width: 1, height: 0.5 },
+      },
+      {
+        index: 3,
+        parentIndex: 2,
+        identifier: "house.fill",
+        traits: ["image"],
+        frame: { x: 0.1, y: 0.2, width: 0.1, height: 0.05 },
+      },
+    ]);
+    const reason = await stepFails(sim, "00000000-0000-0000-0000-0000000000a3", tap(ID));
+
+    expect(reason).toContain("is covered by an alert, sheet or popover");
+    expect(reason).not.toContain("if it is off-screen");
+    expect(extraReads(sim)).toBe(1);
+  }, 20_000);
+
   it("keeps the scroll-to hint when the id is on a node off the screen", async ({ expect }) => {
     const sim = device([
       {

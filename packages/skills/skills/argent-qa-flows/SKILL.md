@@ -11,10 +11,11 @@ Load `argent-create-flow` as the authoring engine. Follow its required reference
 
 **Apple TV and Android TV are out of scope.** The runner does not reject touch directives there, so they fail at the gesture layer instead of with authoring guidance. Use `argent-tv-interact` and report the limitation.
 
-**Physical iPhones** run QA flows, with two hardware limits:
+**Physical iPhones** run QA flows, with these limits:
 
 - Replay never selects a phone automatically. Pass its udid as `device` (CLI `--device`) and keep it `connected`.
 - `pinch` and `rotate` steps fail there, as the live tools do. Drive the app's own zoom UI instead.
+- A selector recorded on a simulator can miss there. For example, a toggle is `AXSwitch` on a simulator and `AXAdjustable` on a phone.
 
 Read `argent-ios-device-interact` for the app-scoped contract before you record.
 
