@@ -95,9 +95,8 @@ describe("native-network-logs arms capture through the blueprint", () => {
       const app = await connectApp(api.socketPath, BUNDLE);
 
       const first = await callTool(api);
-      await settle();
 
-      expect(app.received).toContain(ACTIVATE);
+      await vi.waitFor(() => expect(app.received).toContain(ACTIVATE));
       expect(first).toMatchObject({ status: "ok", count: 0 });
       expect((first as { note?: string }).note).toMatch(/were not recorded.*restart-app/);
 
@@ -116,7 +115,7 @@ describe("native-network-logs arms capture through the blueprint", () => {
 
       // The relaunch: capture must be on before the app sends its first request.
       const app = await connectApp(api.socketPath, BUNDLE);
-      expect(app.received).toContain(ACTIVATE);
+      await vi.waitFor(() => expect(app.received).toContain(ACTIVATE));
 
       // That launch was captured, so the next answer carries no note.
       const next = await callTool(api);
@@ -134,7 +133,7 @@ describe("native-network-logs arms capture through the blueprint", () => {
       await settle();
 
       const after = await connectApp(api.socketPath, BUNDLE);
-      expect(after.received).toContain(ACTIVATE);
+      await vi.waitFor(() => expect(after.received).toContain(ACTIVATE));
       after.close();
     });
   });
