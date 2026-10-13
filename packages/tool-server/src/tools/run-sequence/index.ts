@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-import type { Registry, ToolCapability, ToolContext, ToolDefinition } from "@argent/registry";
+import type {
+  DeviceInfo,
+  Registry,
+  ToolCapability,
+  ToolContext,
+  ToolDefinition,
+} from "@argent/registry";
 import { resolveDevice } from "../../utils/device-info";
 import { assertSupported, UnsupportedOperationError } from "../../utils/capability";
 import { sleepOrAbort, DEFAULT_INTER_STEP_DELAY_MS } from "../../utils/timing";
@@ -56,7 +62,7 @@ const zodSchema = z.object({
           .number()
           .optional()
           .describe(
-            `Wait time in ms after this step before the next (default ${DEFAULT_INTER_STEP_DELAY_MS})`
+            `Wait time in ms after this step before the next (default ${DEFAULT_INTER_STEP_DELAY_MS}). Added after the settle wait, so 0 means no extra wait, not back-to-back dispatch; pass settle:false for that.`
           ),
       })
     )
@@ -66,15 +72,10 @@ const zodSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      "Default true: after a step that can start a transition (tap, swipe, button, rotate…) wait for the screen to go still (max 1s) before the next step, so taps and typing are not swallowed by an animation. Set false only for timing-critical input (games, double-taps split across steps)."
+      "Default true: after a step that can start a transition (tap, swipe, button, rotate, enter/escape, a met await-ui-element) wait until two reads of the element tree match (max 1s) before the next step. This catches sheets and screens whose elements move, but not animations that leave the tree unchanged, such as a native iOS push, so keep await-ui-element gates for those. Set false for timing-critical input (games, double-taps split across steps)."
     ),
 });
 
-/**
- * Steps after which the UI may animate (navigation, sheet, keyboard). Input that
- * lands mid-animation can be lost: a tap on a sheet that is still sliding in
- * does nothing, and typing right after a focus tap can drop or reorder characters.
- */
 const SETTLE_AFTER = new Set([
   "gesture-tap",
   "gesture-swipe",
@@ -84,15 +85,34 @@ const SETTLE_AFTER = new Set([
   "gesture-pinch",
   "gesture-rotate",
   "button",
-  // Named keys only (enter submits, escape dismisses); plain text never moves the UI.
   "keyboard",
   "paste",
   "rotate",
   "fold",
+  // `visible` holds as soon as an element has a frame, which can be mid slide-in.
+  AWAIT_UI_ELEMENT_TOOL_ID,
 ]);
+const SETTLE_KEYS = new Set(["enter", "return", "escape", "esc"]);
+const SETTLE_IDLE_TOOL_ID = "await-screen-idle";
 const SETTLE_TIMEOUT_MS = 1000;
 
 type Params = z.infer<typeof zodSchema>;
+
+function keyMayMoveUi(args: Record<string, unknown> | undefined): boolean {
+  const key = args?.key;
+  if (typeof key === "string" && SETTLE_KEYS.has(key.toLowerCase())) return true;
+  const text = args?.text;
+  return typeof text === "string" && /[\r\n]/.test(text);
+}
+
+function canSettle(registry: Registry, device: DeviceInfo): boolean {
+  try {
+    assertSupported(SETTLE_IDLE_TOOL_ID, registry.getTool(SETTLE_IDLE_TOOL_ID)?.capability, device);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type StepResult = { tool: string; result: unknown } | { tool: string; error: string };
 
@@ -268,20 +288,18 @@ Stops on the first error (or unmet await-ui-element condition) and returns parti
           params.settle !== false &&
           next &&
           next.tool !== AWAIT_UI_ELEMENT_TOOL_ID &&
+          next.tool !== "shake" &&
           SETTLE_AFTER.has(step.tool) &&
-          (step.tool !== "keyboard" || step.args?.key !== undefined)
+          (step.tool !== "keyboard" || keyMayMoveUi(step.args)) &&
+          canSettle(registry, device)
         ) {
           // Best effort: a device without a readable tree just times out.
-          // Two identical reads ~100ms apart: a running animation (keyboard
-          // slide-in, sheet, navigation) moves elements between reads, so this
-          // waits it out, while a static screen costs ~100ms per step.
-          await invokeSubTool(registry, ctx, "await-screen-idle", {
+          await invokeSubTool(registry, ctx, SETTLE_IDLE_TOOL_ID, {
             udid,
             timeoutMs: SETTLE_TIMEOUT_MS,
             pollIntervalMs: 50,
             minStableMs: 100,
           }).catch(() => undefined);
-          if (signal?.aborted) break;
         }
 
         const delay = step.delayMs ?? DEFAULT_INTER_STEP_DELAY_MS;
