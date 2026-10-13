@@ -80,17 +80,16 @@ A not-running app comes back as one of those statuses rather than a failure. An 
     if (params.clear) api.clearNetworkLog(params.bundleId);
     // Same reason as above: an empty log from capture armed a moment ago is
     // not "the app made no requests".
-    if (startedNow) {
-      return {
-        status: "ok",
-        count: events.length,
-        events,
+    return {
+      status: "ok",
+      count: events.length,
+      events,
+      ...(startedNow && {
         note:
           `Network capture for ${params.bundleId} started with this call. ` +
           `Requests made before it, including the app's launch, were not recorded. ` +
           `To capture the launch, restart-app and call again.`,
-      };
-    }
-    return { status: "ok", count: events.length, events };
+      }),
+    };
   },
 };
