@@ -206,6 +206,19 @@ describe("deriveUniqueSelector", () => {
     if (selector) expect(selectorToFrame(root, selector)).toEqual(root.children[2]!.frame);
   });
 
+  it("anchors on a Chromium text element that carries its text only as value", () => {
+    const root = screen([
+      leaf("span", [0.05, 0.12, 0.3, 0.05], { value: "Row A" }),
+      leaf("button", [0.8, 0.12, 0.15, 0.05], { label: "Edit" }),
+      leaf("span", [0.05, 0.22, 0.3, 0.05], { value: "Row B" }),
+      leaf("button", [0.8, 0.22, 0.15, 0.05], { label: "Edit" }),
+    ]);
+    const selector = derive(root, 0.85, 0.24);
+    expect(selector).not.toBeNull();
+    expect(JSON.stringify(selector)).toContain("Row B");
+    expect(selectorToFrame(root, selector!)).toEqual(root.children[3]!.frame);
+  });
+
   it("returns null when no form singles the tapped element out", () => {
     const root = screen([
       leaf("AXButton", [0.1, 0.1, 0.2, 0.05], { label: "Add" }),

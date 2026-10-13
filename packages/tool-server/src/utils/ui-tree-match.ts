@@ -823,6 +823,11 @@ function resolvesAt(
   return visible.includes(node) && visible.every((n) => frameContains(n.frame, point.x, point.y));
 }
 
+// Roles of an editable text field on any platform: iOS AXTextField /
+// AXSearchField / AXTextArea, Android EditText / TextField, Chromium input,
+// textarea, textbox and searchbox.
+const EDITABLE_ROLE = /text.?field|text.?area|textbox|search.?(field|box)|edittext|^input$/i;
+
 // How many preceding elements the recorder tries as `next` anchors.
 const MAX_ANCHORS = 12;
 
@@ -859,10 +864,13 @@ export function deriveUniqueSelector(
     for (const child of n.children) collect(child);
   };
   for (const child of root.children) collect(child);
-  // An anchor or container is named by its id or label, never by role alone,
-  // and never by its value: a field's value is what was typed into it.
+  // An anchor or container is named by its id or text, never by role alone,
+  // and never by an editable field's value: that is what was typed into it.
+  // Other values stay: a Chromium text element carries its text only as value.
   const nameOf = (n: DescribeNode): Selector | undefined =>
-    ownSelectors({ ...n, value: undefined }).find((s) => s.role === undefined);
+    ownSelectors(EDITABLE_ROLE.test(n.role) ? { ...n, value: undefined } : n).find(
+      (s) => s.role === undefined
+    );
 
   // Containers, tightest first; a container with the node's own frame is the
   // node again, not a scope.
