@@ -251,9 +251,6 @@ export const jsRuntimeDebuggerBlueprint: ServiceBlueprint<JsRuntimeDebuggerApi, 
     const cdp = new CDPClient(proxied ?? selected.webSocketUrl);
     await cdp.connect();
 
-    // Capture console output from the moment the socket is up: the setup below
-    // (enables, binding, source maps) takes seconds on a cold app start, and
-    // logs printed before the listener exists are never replayed.
     const logWriter = new LogFileWriter(port);
     const consoleEvents = new TypedEventEmitter<ConsoleLogEvents>();
     let nextLogId = 0;
@@ -403,7 +400,6 @@ export const jsRuntimeDebuggerBlueprint: ServiceBlueprint<JsRuntimeDebuggerApi, 
         events,
       };
     } catch (err) {
-      // Capture began before setup; a setup failure must not leave the file behind.
       logWriter.close();
       await cdp.disconnect().catch(() => {});
       throw err;
