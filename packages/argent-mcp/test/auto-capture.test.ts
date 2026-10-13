@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -350,11 +350,15 @@ describe("compactAutoDescribe", () => {
   ].join("\n");
 
   it("replaces the coordinate preamble with a one-line legend and keeps the tree", () => {
-    const out = compactAutoDescribe(full);
-    expect(out.startsWith("(frames: normalized")).toBe(true);
-    expect(out).toContain('AXButton "Continue"');
-    expect(out).not.toContain("Coordinates are normalized");
-    expect(out.length).toBeLessThan(full.length - 250);
+    expect(compactAutoDescribe(full)).toBe(
+      [
+        "(frames: normalized x, y, width, height; tap the centre)",
+        "",
+        "ROOT  AXGroup (0.000, 0.000, 1.000, 1.000)",
+        "",
+        '  AXButton "Continue"  (0.055, 0.860, 0.891, 0.088)',
+      ].join("\n")
+    );
   });
 
   it("leaves the Vega and physical iOS preambles untouched", () => {
@@ -373,5 +377,53 @@ describe("compactAutoDescribe", () => {
   it("leaves output without that preamble untouched (hints, TV text)", () => {
     const hint = "Hint: the tree is empty\n\nROOT  AXGroup (0, 0, 1, 1)";
     expect(compactAutoDescribe(hint)).toBe(hint);
+  });
+});
+
+// Real formatDescribeTree output, so a reworded header fails here instead of
+// silently disabling compaction. Imported by URL: the file is outside rootDir.
+describe("compactAutoDescribe on formatDescribeTree output", () => {
+  type FormatDescribeTree = (root: unknown, opts: { source: string }) => string;
+  const FORMAT_TREE = new URL(
+    "../../tool-server/src/tools/describe/format-tree.ts",
+    import.meta.url
+  ).href;
+  let formatDescribeTree: FormatDescribeTree;
+
+  beforeAll(async () => {
+    ({ formatDescribeTree } = (await import(FORMAT_TREE)) as {
+      formatDescribeTree: FormatDescribeTree;
+    });
+  });
+
+  const root = {
+    role: "AXGroup",
+    frame: { x: 0, y: 0, width: 1, height: 1 },
+    children: [
+      {
+        role: "AXButton",
+        label: "Continue",
+        frame: { x: 0.055, y: 0.86, width: 0.891, height: 0.088 },
+        children: [],
+      },
+    ],
+  };
+
+  it.each(["ax-service", "native-devtools", "uiautomator", "android-devtools", "cdp-dom"])(
+    "compacts %s to the legend followed by the unchanged tree",
+    (source) => {
+      const full = formatDescribeTree(root, { source });
+      const tree = full.slice(full.indexOf("\n\nROOT  ") + 1);
+      expect(tree.startsWith("\nROOT  AXGroup")).toBe(true);
+      expect(tree).toContain("Continue");
+      expect(compactAutoDescribe(full)).toBe(
+        `(frames: normalized x, y, width, height; tap the centre)\n${tree}`
+      );
+    }
+  );
+
+  it.each(["vega-automation", "xcuitest-runner"])("leaves %s unchanged", (source) => {
+    const full = formatDescribeTree(root, { source });
+    expect(compactAutoDescribe(full)).toBe(full);
   });
 });

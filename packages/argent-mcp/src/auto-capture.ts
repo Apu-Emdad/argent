@@ -97,9 +97,9 @@ export const AUTO_DESCRIBE_HEADER = "--- Elements after action (describe) ---";
 /**
  * describe's preamble on touch screens: five lines that restate the
  * coordinate contract. An agent sees the tree after nearly every action, and
- * these lines were ~23% of each one; the explicit `describe` call, its tool
- * description and the argent rule carry them in full, so the appended tree
- * gets a one-line legend instead.
+ * these lines are about a tenth of a typical one; the explicit `describe`
+ * call, its tool description and the argent rule carry them in full, so the
+ * appended tree gets a one-line legend instead.
  */
 const DESCRIBE_PREAMBLE = [
   /^Source: \S+$/,
