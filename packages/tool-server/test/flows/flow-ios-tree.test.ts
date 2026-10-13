@@ -366,8 +366,9 @@ describe("iOS simulator flow tree projection", () => {
           {
             index: 2,
             parentIndex: 0,
+            // The system keyboard (XCUIElementTypeKeyboard), as iOS 26 reports it.
             identifier: "UIKeyboardLayoutStar Preview",
-            elementType: 0,
+            elementType: 19,
             frame: frame(0, 0.65, 1, 0.35),
           },
           {
@@ -376,7 +377,7 @@ describe("iOS simulator flow tree projection", () => {
             label: "next",
             identifier: "Next:",
             traits: ["button", "keyboardKey"],
-            elementType: 21,
+            elementType: 20,
             frame: frame(0.75, 0.9, 0.24, 0.05),
           },
           {
@@ -384,7 +385,7 @@ describe("iOS simulator flow tree projection", () => {
             parentIndex: 2,
             label: "q",
             traits: ["keyboardKey"],
-            elementType: 21,
+            elementType: 20,
             frame: frame(0.01, 0.7, 0.1, 0.05),
           },
         ])
@@ -398,6 +399,33 @@ describe("iOS simulator flow tree projection", () => {
     expect(
       tree.children.find((c) => c.identifier === "UIKeyboardLayoutStar Preview")?.subtreeText
     ).toBeUndefined();
+  });
+  it("keeps the text of an app's own keyboardKey buttons", () => {
+    // React Native maps accessibilityRole="keyboardkey" to the keyboardKey trait.
+    const tree = adaptIosUiTreeForFlows(
+      adaptAxTree(
+        reply([
+          app,
+          {
+            index: 1,
+            parentIndex: 0,
+            identifier: "pinPad",
+            elementType: 0,
+            frame: frame(0.1, 0.5, 0.8, 0.4),
+          },
+          {
+            index: 2,
+            parentIndex: 1,
+            label: "5",
+            traits: ["button", "keyboardKey"],
+            elementType: 9,
+            frame: frame(0.4, 0.6, 0.2, 0.1),
+          },
+        ])
+      )
+    );
+    expect(selectorToFrame(tree, { text: "5" })).toEqual(frame(0.4, 0.6, 0.2, 0.1));
+    expect(evaluateCondition("hidden", undefined, findAll(tree, { text: "5" }))).toBe(false);
   });
 });
 
