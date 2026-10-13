@@ -49,9 +49,11 @@ A not-running app comes back as one of those statuses rather than a failure. An 
 
     const api = services.nativeDevtools as NativeDevtoolsApi;
 
-    api.activateNetworkInspection(params.bundleId);
-
+    // The precheck throws for an Apple system app, so a refused call never
+    // arms capture. Activation still comes before the blocked answer: a
+    // restart_required app is armed at its next handshake, launch included.
     const blocked = await precheckNativeDevtools(api, params.udid, params.bundleId);
+    api.activateNetworkInspection(params.bundleId);
     if (blocked) return blocked;
 
     /**
