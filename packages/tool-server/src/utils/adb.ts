@@ -402,9 +402,8 @@ async function readAvdName(serial: string): Promise<string | null> {
  * still-booting TV re-probes instead of being pinned to "mobile".
  */
 async function readRuntimeKind(serial: string): Promise<"mobile" | "tv" | undefined> {
-  // Both probes run concurrently: sequentially, a wedged device cost two full
-  // ENRICH_TIMEOUT_MS here on top of the getprops, and list-devices took 15s
-  // for every agent on the machine whenever one emulator hung.
+  // Both run concurrently so a device that answers neither costs one
+  // ENRICH_TIMEOUT_MS, not two.
   const [features, characteristics] = await Promise.all([
     adbShell(serial, "pm list features", { timeoutMs: ENRICH_TIMEOUT_MS }).catch(() => ""),
     adbShell(serial, "getprop ro.build.characteristics", { timeoutMs: ENRICH_TIMEOUT_MS }).catch(
@@ -478,10 +477,10 @@ async function resolveRuntimeKindAlongside(
   const probe = cached ? undefined : readRuntimeKind(serial);
   const avdName = await avdPromise;
   if (cached && cached.avdName === avdName) return cached.kind;
-  // A null avd on a cached serial is an unanswered read (wedged device), not
-  // proof of a different AVD on the slot: keep the verdict instead of paying
-  // a second probe window on a device that is not answering anyway.
-  if (cached && avdName === null) return cached.kind;
+  // An emulator that doesn't answer the avd read may be a new AVD on a reused
+  // slot, so the cached verdict can't be trusted, and a fresh probe would cost
+  // a second window on a device that isn't answering.
+  if (cached && avdName === null) return undefined;
   const kind = await (probe ?? readRuntimeKind(serial));
   if (kind === undefined) return undefined;
   androidRuntimeKindCache.set(serial, { avdName, kind });
@@ -545,7 +544,7 @@ export function getCachedAndroidRuntimeKind(serial: string): "mobile" | "tv" | u
  * the serial list — it avoids the extra round-trips.
  *
  * `runtimeKind` (TV vs mobile) is resolved only when `opts.runtimeKind` is set:
- * it costs an extra `pm list features` (+ a characteristics fallback) per device,
+ * it costs an extra `pm list features` + characteristics getprop per uncached device,
  * and `pm` often doesn't answer mid-boot, so each probe can block up to
  * ENRICH_TIMEOUT_MS. `list-devices` is the only caller that opts in, because it
  * surfaces the kind to the agent; the tv-* tools go through
@@ -582,8 +581,7 @@ export async function listAndroidDevices(
         avdPromise,
         // Through the shared cache (serial+avdName) so a re-list of a known
         // device skips the feature probe and a reclaimed emulator slot
-        // re-probes; the probe runs alongside the getprops, so a wedged device
-        // costs one probe window, not several in a row.
+        // re-probes.
         opts.runtimeKind
           ? resolveRuntimeKindAlongside(d.serial, avdPromise)
           : Promise.resolve(undefined),
