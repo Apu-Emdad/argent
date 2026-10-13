@@ -236,7 +236,7 @@ describe("screenshotDiffTool", () => {
       "- diff_images: see diffPath (compared size) and contextDiffPath in this result"
     );
     expect(lines).toContain(
-      "  - capture both images at the same screenshot scale to compare without resampling"
+      "  - capture both images on the same device model at the same screenshot scale to compare without resampling"
     );
     expect(summary).not.toContain("scale: 1.0");
   });
