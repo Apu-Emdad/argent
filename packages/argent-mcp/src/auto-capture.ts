@@ -42,13 +42,10 @@ export const AUTO_SCREENSHOT_DELAY_MS_BY_TOOL: Record<string, number> = {
   "gesture-tap": 1500,
   "gesture-pinch": 1500,
   "gesture-rotate": 1500,
-  // This bounds only the settle after the final step; whatever run-sequence
-  // waits between steps happens inside the call, before this cap starts. Its
-  // allowed steps are in-app interactions only (gestures, button, keyboard,
-  // paste, rotate, shake, fold, tv-remote, await-ui-element; no launch-app or
-  // open-url), which settle within the ~1.5 s their standalone tools get, so 3 s
-  // covers them with margin. The old 15 s only added dead wait on a screen that
-  // never settles (a spinner/video), blurred at any cap.
+  // Bounds only the settle after the last step. Steps are in-app actions whose
+  // standalone tools cap at 1.5 s or less, so 3 s leaves margin. The full cap is
+  // spent only when the element tree keeps changing (a ticker, a carousel) or
+  // the screen can't be polled (Vega), where it is a plain sleep.
   "run-sequence": 3000,
   "button": 1500,
   "rotate": 1000,
