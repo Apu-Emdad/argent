@@ -142,13 +142,23 @@ const buildDescribeDomScript = ({ maxDepth, maxNodes }: ChromiumWalkLimits) => `
     return s.replace(/\\s+/g, " ").trim();
   }
 
-  // An aria-labelledby target's textContent, reading a rendered <br> as a space like ownText.
-  function labelText(node) {
+  // An aria-labelledby target's textContent (text and CDATA), reading a rendered <br>
+  // as a space like ownText. Iterative: the target's depth has no MAX_DEPTH bound, so
+  // recursion could overflow the stack.
+  function labelText(root) {
     let s = "";
-    for (const child of getChildNodes.call(node)) {
-      const type = getNodeType.call(child);
-      if (type === 3) s += getNodeValue.call(child);
-      else if (type === 1) s += isRenderedBr(child) ? " " : labelText(child);
+    const stack = [];
+    const pushChildren = (node) => {
+      const kids = getChildNodes.call(node);
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    };
+    pushChildren(root);
+    while (stack.length) {
+      const node = stack.pop();
+      const type = getNodeType.call(node);
+      if (type === 3 || type === 4) s += getNodeValue.call(node);
+      else if (isRenderedBr(node)) s += " ";
+      else if (type === 1) pushChildren(node);
     }
     return s;
   }

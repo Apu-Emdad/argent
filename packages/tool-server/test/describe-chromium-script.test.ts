@@ -523,6 +523,42 @@ describe("DESCRIBE_DOM_SCRIPT visibility rules", () => {
     expect(findById(result!.tree, "labelled")!.label).toBe("Real Label");
   });
 
+  it("reads a deeply nested aria-labelledby target without overflowing the stack", () => {
+    let inner = el({ tag: "span", text: "deep", rect: BOX }) as MockElement &
+      Record<string, unknown>;
+    for (let i = 0; i < 50000; i++) {
+      const wrap = el({ tag: "span", rect: BOX }) as MockElement & Record<string, unknown>;
+      wrap.childNodes = [Object.assign(inner, { nodeType: 1 })];
+      inner = wrap;
+    }
+    (inner.__attrs as Record<string, string>).id = "lbl";
+    // Reachable only through getElementById: walk() would stop at MAX_DEPTH anyway.
+    const button = el({
+      tag: "button",
+      rect: BOX,
+      attrs: { "id": "btn", "aria-labelledby": "lbl" },
+    });
+    const { tree } = run([button, el({ rect: BOX, children: [inner] })]);
+    expect(findById(tree, "btn")!.label).toBe("deep");
+  });
+
+  it("keeps CDATA text in an aria-labelledby target, as textContent does", () => {
+    const label = el({ tag: "span", rect: BOX, attrs: { id: "lbl" } }) as MockElement &
+      Record<string, unknown>;
+    label.childNodes = [
+      { nodeType: 3, nodeValue: "Save " },
+      { nodeType: 4, nodeValue: "my" },
+      { nodeType: 3, nodeValue: " draft" },
+    ];
+    const button = el({
+      tag: "button",
+      rect: BOX,
+      attrs: { "id": "btn", "aria-labelledby": "lbl" },
+    });
+    const { tree } = run([button, label]);
+    expect(findById(tree, "btn")!.label).toBe("Save my draft");
+  });
+
   it("reads a <br> in an aria-labelledby target as a space", () => {
     const label = el({ tag: "span", rect: BOX, attrs: { id: "lbl" } }) as MockElement &
       Record<string, unknown>;
