@@ -138,7 +138,7 @@ async function main(): Promise<void> {
     case "remove":
       return (await loadInstaller()).uninstall(rest);
     case "doctor":
-      return (await loadInstaller()).doctor(rest, { paths: BUNDLED_RUNTIME_PATHS });
+      return (await loadCli()).doctor(rest, { paths: BUNDLED_RUNTIME_PATHS });
     case "tools":
       return (await loadCli()).tools(rest, { paths: BUNDLED_RUNTIME_PATHS });
     case "run":

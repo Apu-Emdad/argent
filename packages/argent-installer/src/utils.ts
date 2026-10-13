@@ -446,6 +446,16 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   return semver.gt(candidate, current);
 }
 
+/**
+ * Whether `nodeVersion` meets a package.json `engines.node` range. Null when
+ * the range can't be parsed. Prereleases (a Node RC or nightly) count, which
+ * plain `semver.satisfies` would reject.
+ */
+export function nodeSatisfiesEngines(nodeVersion: string, range: string): boolean | null {
+  if (!semver.validRange(range)) return null;
+  return semver.satisfies(nodeVersion, range, { includePrerelease: true });
+}
+
 // Every `npx` call is `npm exec`, which evaluates the host project's
 // package.json `engines` / `devEngines` gate first: a project pinning a runtime
 // the user's machine doesn't match aborts with EBADDEVENGINES before the skills

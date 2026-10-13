@@ -1,7 +1,31 @@
 export { init } from "./init.js";
-export { healCliRecord } from "./cli-record.js";
+export { healCliRecord, readCliRecord } from "./cli-record.js";
 export { update } from "./update.js";
 export { uninstall } from "./uninstall.js";
-export { doctor } from "./doctor.js";
-export { PACKAGE_NAME, MCP_BINARY_NAME, MCP_SERVER_KEY } from "./constants.js";
-export { getInstalledVersion, getGloballyInstalledVersion } from "./utils.js";
+export { PACKAGE_NAME, MCP_BINARY_NAME, MCP_SERVER_KEY, NPM_REGISTRY } from "./constants.js";
+export {
+  getInstalledVersion,
+  getGloballyInstalledVersion,
+  getGlobalSkillLockPath,
+  getGloballyInstalledPackageRoot,
+  getProjectSkillLockPath,
+  isNewerVersion,
+  listArgentSkillsInLock,
+  listBundledSkills,
+  nodeSatisfiesEngines,
+  probeLocalInstall,
+  readInstallRecord,
+  resolveInstallMode,
+  resolveProjectRoot,
+  ARGENT_SKILL_PREFIX,
+  RULES_DIR,
+} from "./utils.js";
+// Read-only probes `argent doctor` (in @argent/cli) reports from.
+export {
+  ALL_ADAPTERS,
+  detectAdapters,
+  findConfiguredAdapterScopes,
+  getManagedContentTargets,
+  hasCustomizingEnv,
+  type McpServerEntry,
+} from "./mcp-configs.js";

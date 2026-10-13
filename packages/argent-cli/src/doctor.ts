@@ -4,7 +4,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import pc from "picocolors";
-import semver from "semver";
 import { getConsentState } from "@argent/telemetry";
 import {
   getResolvedToolsUrl,
@@ -15,33 +14,33 @@ import {
   formatToolsServerUrl,
   type ToolsServerPaths,
 } from "@argent/tools-client";
-import { MCP_BINARY_NAME, NPM_REGISTRY, PACKAGE_NAME } from "./constants.js";
 import {
   ALL_ADAPTERS,
   detectAdapters,
   findConfiguredAdapterScopes,
-  getManagedContentTargets,
-  hasCustomizingEnv,
-  type McpServerEntry,
-} from "./mcp-configs.js";
-import { readCliRecord } from "./cli-record.js";
-import { readInstallRecord } from "./install-record.js";
-import {
   getGlobalSkillLockPath,
   getGloballyInstalledPackageRoot,
   getGloballyInstalledVersion,
   getInstalledVersion,
+  getManagedContentTargets,
   getProjectSkillLockPath,
+  hasCustomizingEnv,
   isNewerVersion,
   listArgentSkillsInLock,
   listBundledSkills,
+  nodeSatisfiesEngines,
   probeLocalInstall,
+  readCliRecord,
+  readInstallRecord,
   resolveInstallMode,
-  resolvePackageRoot,
   resolveProjectRoot,
   ARGENT_SKILL_PREFIX,
+  MCP_BINARY_NAME,
+  NPM_REGISTRY,
+  PACKAGE_NAME,
   RULES_DIR,
-} from "./utils.js";
+  type McpServerEntry,
+} from "@argent/installer";
 
 const execFileAsync = promisify(execFile);
 
@@ -116,21 +115,21 @@ function readEnginesNode(packageRoot: string): string | null {
 function installSection(
   projectRoot: string,
   running: string,
-  paths?: ToolsServerPaths
+  paths: ToolsServerPaths
 ): DoctorSection {
   const checks: DoctorCheck[] = [];
-  const packageRoot = paths
-    ? path.dirname(path.dirname(paths.bundlePath))
-    : resolvePackageRoot(import.meta.dirname);
-  const kind = paths?.installKind ?? "global";
+  const packageRoot = path.dirname(path.dirname(paths.bundlePath));
   checks.push(
-    check("info", `Running v${running} (${kind} install)`, { detail: home(packageRoot) })
+    check("info", `Running v${running} (${paths.installKind ?? "global"} install)`, {
+      detail: home(packageRoot),
+    })
   );
 
   const engines = readEnginesNode(packageRoot);
-  if (engines && semver.validRange(engines)) {
+  const satisfied = engines ? nodeSatisfiesEngines(process.versions.node, engines) : null;
+  if (engines && satisfied !== null) {
     checks.push(
-      semver.satisfies(process.versions.node, engines)
+      satisfied
         ? check("ok", `Node v${process.versions.node} satisfies ${engines}`)
         : check("error", `Node v${process.versions.node} does not satisfy ${engines}`, {
             fix: "Install a newer Node.js (nvm install --lts)",
@@ -400,10 +399,7 @@ async function isRemoteHealthy(url: string, token?: string): Promise<boolean> {
   }
 }
 
-async function toolServerSection(
-  running: string,
-  paths?: ToolsServerPaths
-): Promise<DoctorSection> {
+async function toolServerSection(running: string, paths: ToolsServerPaths): Promise<DoctorSection> {
   const checks: DoctorCheck[] = [];
 
   const resolved = await getResolvedToolsUrl();
@@ -419,7 +415,7 @@ async function toolServerSection(
     return { title: "Tool-server", checks };
   }
 
-  const state = await readToolsServerState(paths?.bundlePath);
+  const state = await readToolsServerState(paths.bundlePath);
   if (!state) {
     checks.push(check("info", "Not running (starts on the first tool call)"));
   } else {
@@ -446,7 +442,7 @@ async function toolServerSection(
   }
 
   const foreign = (await readAllToolsServerStates()).filter(
-    ({ state: s }) => s.bundlePath !== paths?.bundlePath && isToolsServerProcessAlive(s.pid)
+    ({ state: s }) => s.bundlePath !== paths.bundlePath && isToolsServerProcessAlive(s.pid)
   );
   if (foreign.length > 0) {
     checks.push(
@@ -579,10 +575,7 @@ export function platformChecks(report: HostDepsReport): DoctorCheck[] {
   return checks;
 }
 
-async function platformsSection(paths?: ToolsServerPaths): Promise<DoctorSection> {
-  if (!paths) {
-    return { title: "Platforms", checks: [check("info", "Skipped (no bundled tool-server)")] };
-  }
+async function platformsSection(paths: ToolsServerPaths): Promise<DoctorSection> {
   const report = await probeHostDeps(paths);
   if (typeof report === "string") {
     return {
@@ -660,14 +653,14 @@ export function stripPackageBinDirs(pathValue: string): string {
 }
 
 async function collectDoctorReport(options: {
-  paths?: ToolsServerPaths;
+  paths: ToolsServerPaths;
   offline: boolean;
   cwd?: string;
 }): Promise<DoctorReport> {
   const projectRoot = resolveProjectRoot(options.cwd ?? process.cwd());
   // The global-install probe shells out to `which` with process.env.
   if (process.env.PATH) process.env.PATH = stripPackageBinDirs(process.env.PATH);
-  const running = options.paths?.version ?? getInstalledVersion() ?? "unknown";
+  const running = options.paths.version ?? getInstalledVersion() ?? "unknown";
 
   // Sections that touch the network or spawn a process run concurrently.
   const [toolServer, platforms, other] = await Promise.all([
@@ -743,10 +736,7 @@ Options:
 
 Exits 1 when any check fails (✗); warnings (!) don't affect the exit code.`;
 
-export async function doctor(
-  argv: string[],
-  options: { paths?: ToolsServerPaths } = {}
-): Promise<void> {
+export async function doctor(argv: string[], options: { paths: ToolsServerPaths }): Promise<void> {
   const known = new Set(["--json", "--offline", "--help", "-h"]);
   const unknown = argv.filter((a) => !known.has(a));
   if (argv.includes("--help") || argv.includes("-h")) {
