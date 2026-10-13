@@ -36,7 +36,7 @@ Use `list-devices` to get a target id. Results are tagged with `platform` (`ios`
 { "udid": "<UDID>", "bundleId": "com.apple.MobileSMS" }
 ```
 
-Common IDs: `com.apple.MobileSMS` (Messages), `com.apple.mobilesafari` (Safari), `com.apple.Preferences` (Settings), `com.apple.Maps`, `com.apple.mobileslideshow` (Photos), `com.apple.mobilemail`, `com.apple.mobilenotes`, `com.apple.MobileAddressBook` (Contacts)
+Common IDs: `com.apple.MobileSMS` (Messages), `com.apple.mobilesafari` (Safari), `com.apple.Preferences` (Settings), `com.apple.Maps`, `com.apple.mobileslideshow` (Photos), `com.apple.MobileAddressBook` (Contacts)
 
 ### open-url — by URL scheme
 
