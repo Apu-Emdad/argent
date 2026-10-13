@@ -361,14 +361,12 @@ const NATIVE_READY_POLL_MS = 250;
 
 /**
  * `tool:` steps that can change or relaunch the foreground app — running one
- * drops {@link ActionEnv.treeTarget} outright instead of keeping it as an
- * unpinned hint, since the launched app may no longer be on screen at all, and
- * spends {@link ActionEnv.treeOutage}. `button` is included for its `home` case;
- * distinguishing button kinds would couple this list to that tool's arg schema.
- *
- * `launch-app` and `restart-app` re-set the id from their own `bundleId` once
- * they return, as an unpinned hint — they name the app they switched to, where
- * the rest leave it unknown.
+ * spends {@link ActionEnv.treeOutage}. `button` is included for its `home`
+ * case; distinguishing button kinds would couple this list to that tool's arg
+ * schema. None of them moves {@link ActionEnv.treeTarget}: the pin stays on the
+ * launched app, so a read after the app left the foreground fails instead of
+ * reading another app's tree. Only `launch-app` and `restart-app` re-pin, to
+ * the app their own `bundleId` names, once they return.
  */
 const FOREGROUND_CHANGING_TOOLS = new Set([
   "launch-app",
@@ -2753,21 +2751,13 @@ async function execLeafStep(
       if (step.delayMs && !(await sleepOrAbort(step.delayMs, signal))) {
         return { ...base, status: "skip", tool: step.name, reason: "run aborted during delay" };
       }
-      // A raw tool step's effect on the device is opaque to the runner, so it
-      // stops vouching for the foreground app: the launched app stays an
-      // unpinned hint, unless the tool could change the foreground app
-      // outright. Applied BEFORE invoking, since a tool that throws mid-way may
-      // still have switched apps. The next `launch` step re-pins.
-      if (FOREGROUND_CHANGING_TOOLS.has(step.name)) {
-        state.treeTarget = undefined;
-        // A relaunch is also the repair a proven tree outage asks for by name -
-        // the same clear `runLaunch` makes for the directive spelling.
-        if (state.treeOutage) state.treeOutage.proven = undefined;
-      } else if (state.treeTarget?.pinned) {
-        state.treeTarget = { ...state.treeTarget, pinned: false };
-        // A verdict proven while pinned (the app left the foreground) says
-        // nothing about reads that no longer expect it there.
-        if (state.treeOutage) state.treeOutage.proven = undefined;
+      // A raw tool step keeps the launch pin: its effect on the device is
+      // opaque, and a read that no longer checks the foreground would let a
+      // `hidden` check pass on whichever app is in front. A relaunch is the
+      // repair a proven tree outage asks for by name - the same clear
+      // `runLaunch` makes for the directive spelling.
+      if (FOREGROUND_CHANGING_TOOLS.has(step.name) && state.treeOutage) {
+        state.treeOutage.proven = undefined;
       }
       // A nested orchestrator runs its tools outside this run's holder -
       // `flow-execute` on an ExecState of its own, `run-sequence` on none - so
@@ -2856,15 +2846,14 @@ async function execLeafStep(
             args,
           };
         }
-        // The target the clear above dropped, restored for the two tools whose
-        // args name the app they just started: they change WHICH app is in
-        // front, not whether the run has one. UNPINNED, like any other raw tool
-        // step. After the invoke, like `runLaunch`: a tool that threw started
-        // nothing.
+        // The two tools whose args name the app they just started re-pin to
+        // it: they change WHICH app is in front, which is how a flow switches
+        // apps on purpose. After the invoke, like `runLaunch`: a tool that
+        // threw started nothing.
         if (step.name === "launch-app" || step.name === "restart-app") {
           const launched = (args as { bundleId?: unknown }).bundleId;
           if (typeof launched === "string") {
-            state.treeTarget = { bundleId: launched, pinned: false };
+            state.treeTarget = { bundleId: launched, pinned: true };
           }
         }
         return { ...base, status: "pass", tool: step.name, result, outputHint, args };

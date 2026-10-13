@@ -401,6 +401,12 @@ describe("queryIosSimulatorFlowTree", () => {
     );
   });
 
+  it("refuses a walk the service cut short, where elements past the cut would read as absent", async () => {
+    await expect(
+      queryIosSimulatorFlowTree(registryWith(screen({ truncated: true })), device)
+    ).rejects.toThrow(/was cut short.*would read as absent.*scroll a long list/);
+  });
+
   it("refuses a blind read, naming the boot remedy on a simulator argent did not boot", async () => {
     const empty = reply([{ index: 0, label: "App", bundleId: "com.example.app" }]);
     await expect(queryIosSimulatorFlowTree(registryWith(empty, true), device)).rejects.toThrow(

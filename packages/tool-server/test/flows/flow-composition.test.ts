@@ -2775,10 +2775,9 @@ describe("flow composition (run:)", () => {
       );
     });
 
-    // The control: a raw `tool:` step's effect is opaque to the runner, so it
-    // stops vouching for the launched app and later reads take whatever is in
-    // front.
-    it("reads whichever app is in front once a tool step releases the pin", async () => {
+    // A raw `tool:` step keeps the pin: were later reads to take whatever is in
+    // front, a `hidden` check would pass on another app's tree.
+    it("still fails the read after a tool step: the pin survives it", async () => {
       await writeFlow("main", {
         executionPrerequisite: "",
         steps: [
@@ -2798,8 +2797,11 @@ describe("flow composition (run:)", () => {
       expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual([
         "launch:pass",
         "tool:pass",
-        "assert:pass",
+        "assert:fail",
       ]);
+      expect(result.steps[2].reason).toContain(
+        "com.acme.app is not the foreground app on " + `${DEVICE} (com.apple.springboard is)`
+      );
     });
   });
 

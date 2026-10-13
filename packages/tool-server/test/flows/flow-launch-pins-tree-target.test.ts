@@ -9,8 +9,8 @@ import type { PixelFrame } from "../../src/tools/flows/flow-pixels";
 
 // A launch step pins every later tree read to the launched app: a pinned read
 // fails when the accessibility tree names another foreground app. A raw
-// `tool:` step demotes that pin to an unpinned hint, or drops it outright when
-// the tool can change the foreground app.
+// `tool:` step keeps that pin; a `launch-app`/`restart-app` one moves it to the
+// app it started.
 //
 // The mock sits at the iOS simulator tree SOURCE (queryIosSimulatorFlowTree),
 // not at fetchFlowTree, so the real fetchFlowTree dispatches every read and
@@ -194,21 +194,24 @@ describe("launch pins the flow tree target", () => {
     expect(labels().every((l) => l === `pinned:${APP}`)).toBe(true);
   });
 
-  it("a foreground-neutral tool step demotes the pin to a hint", async () => {
-    // The tool step's effect on the screen is opaque to the runner, so the pin
-    // must not survive it. screenshot cannot change the foreground app though,
-    // so the launched app stays behind as an unpinned hint.
-    await writeFlow("escaped", {
+  it.each([
+    ["a foreground-neutral", "screenshot", {}],
+    ["a foreground-changing", "button", { name: "home" }],
+  ])("%s tool step keeps the pin (%s)", async (_kind, name, args) => {
+    // A raw tool step's effect is opaque to the runner. Dropping the pin there
+    // would let later reads take whatever app is in front, and a `hidden`
+    // check pass on another app's tree.
+    await writeFlow("kept", {
       executionPrerequisite: "",
       steps: [
         { kind: "launch", app: APP },
         { kind: "assert", condition: "visible", selector: { identifier: "ready" } },
-        { kind: "tool", name: "screenshot", args: {} },
+        { kind: "tool", name, args },
         { kind: "assert", condition: "visible", selector: { identifier: "ready" } },
       ],
     });
 
-    const result = await run("escaped", mockRegistry());
+    const result = await run("kept", mockRegistry());
 
     expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual([
       "launch:pass",
@@ -216,57 +219,10 @@ describe("launch pins the flow tree target", () => {
       "tool:pass",
       "assert:pass",
     ]);
-    const firstUnpinned = labels().indexOf(`hint:${APP}`);
-    expect(firstUnpinned).toBeGreaterThan(0);
-    expect(
-      labels()
-        .slice(0, firstUnpinned)
-        .every((l) => l === `pinned:${APP}`)
-    ).toBe(true);
-    expect(
-      labels()
-        .slice(firstUnpinned)
-        .every((l) => l === `hint:${APP}`)
-    ).toBe(true);
+    expect(labels()).toEqual([`pinned:${APP}`, `pinned:${APP}`]);
   });
 
-  it("a foreground-changing tool step that names no app drops the target outright", async () => {
-    // `button` home can put anything on screen and names nothing, so the
-    // launched app is not even a hint afterwards. `launch-app` / `restart-app`
-    // are the exception - their args name the app they just started.
-    await writeFlow("switched", {
-      executionPrerequisite: "",
-      steps: [
-        { kind: "launch", app: APP },
-        { kind: "assert", condition: "visible", selector: { identifier: "ready" } },
-        { kind: "tool", name: "button", args: { name: "home" } },
-        { kind: "assert", condition: "visible", selector: { identifier: "ready" } },
-      ],
-    });
-
-    const result = await run("switched", mockRegistry());
-
-    expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual([
-      "launch:pass",
-      "assert:pass",
-      "tool:pass",
-      "assert:pass",
-    ]);
-    const firstDropped = labels().indexOf("none");
-    expect(firstDropped).toBeGreaterThan(0);
-    expect(
-      labels()
-        .slice(0, firstDropped)
-        .every((l) => l === `pinned:${APP}`)
-    ).toBe(true);
-    expect(
-      labels()
-        .slice(firstDropped)
-        .every((l) => l === "none")
-    ).toBe(true);
-  });
-
-  it("a launch-app tool step re-sets the target to the app it started, unpinned", async () => {
+  it("a launch-app tool step re-pins to the app it started", async () => {
     const OTHER = "com.acme.other";
     await writeFlow("toollaunched", {
       executionPrerequisite: "",
@@ -286,10 +242,10 @@ describe("launch pins the flow tree target", () => {
       "tool:pass",
       "assert:pass",
     ]);
-    expect(labels()).toEqual([`pinned:${APP}`, `hint:${OTHER}`]);
+    expect(labels()).toEqual([`pinned:${APP}`, `pinned:${OTHER}`]);
   });
 
-  it("a later launch re-pins after a tool step demoted the pin", async () => {
+  it("a later launch moves the pin after a tool step", async () => {
     const OTHER = "com.acme.other";
     await writeFlow("repinned", {
       executionPrerequisite: "",
@@ -311,15 +267,13 @@ describe("launch pins the flow tree target", () => {
       "launch:pass",
       "assert:pass",
     ]);
-    // First reads carry the first app, final reads the second: the second
-    // launch must replace the demoted target and hand it back pinned, rather
-    // than inherit the demoted one's unpinned level.
+    // First reads carry the first app, final reads the second.
     const firstOther = labels().indexOf(`pinned:${OTHER}`);
     expect(firstOther).toBeGreaterThan(0);
     expect(
       labels()
         .slice(0, firstOther)
-        .every((l) => l.endsWith(`:${APP}`))
+        .every((l) => l === `pinned:${APP}`)
     ).toBe(true);
     expect(
       labels()

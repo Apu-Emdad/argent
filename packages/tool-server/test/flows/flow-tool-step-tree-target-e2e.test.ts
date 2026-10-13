@@ -115,44 +115,52 @@ describe("the launch pin across tool steps (end-to-end)", () => {
     );
   });
 
-  it("a tool step demotes the pin: the read passes, and the outage proved while pinned is retired", async () => {
-    // The second tap's settle fails every pinned read, so it dispatches warned
-    // and the run remembers the outage. The tool step must spend that memo, or
-    // the tap after it would skip its settle and warn again.
+  it("a tool step keeps the pin: a read after the app left still fails", async () => {
     const result = await runFlow([
       { kind: "launch", app: APP },
-      TAP,
       TAP,
       { kind: "tool", name: "screenshot", args: {} },
-      TAP,
       ASSERT_READY,
     ]);
 
-    expect(statuses(result)).toEqual([
-      "launch:pass",
-      "tap:pass",
-      "tap:pass",
-      "tool:pass",
-      "tap:pass",
-      "assert:pass",
-    ]);
-    expect(result.steps[2].warning).toMatch(/is not the foreground app/);
-    expect(result.steps[4].warning).toBeUndefined();
-  }, 20_000);
-
-  it("drops the pin across a foreground-changing tool step", async () => {
-    const result = await runFlow([
-      { kind: "launch", app: APP },
-      { kind: "tool", name: "button", args: { name: "home" } },
-      ASSERT_READY,
-    ]);
-
-    expect(statuses(result)).toEqual(["launch:pass", "tool:pass", "assert:pass"]);
+    expect(statuses(result)).toEqual(["launch:pass", "tap:pass", "tool:pass", "assert:fail"]);
+    expect(result.steps[3].reason).toContain(
+      `${APP} is not the foreground app on ${DEVICE} (${OTHER} is)`
+    );
   });
 
-  it("leaves the app a launch-app tool step started as an unpinned hint", async () => {
-    // The first assert fails if the APP pin survived the tool step, the second
-    // if launch-app re-pinned to OTHER: the tap brings a third app forward.
+  it.each(["assert", "when"] as const)(
+    "a hidden %s does not pass on the home screen after a button step",
+    async (kind) => {
+      // No app serves `gone`, so only the pin keeps this from passing on
+      // SpringBoard's tree.
+      const gone = { identifier: "gone" };
+      const check =
+        kind === "assert"
+          ? { kind: "assert", condition: "hidden", selector: gone }
+          : {
+              kind: "when",
+              condition: { kind: "ui", condition: "hidden", selector: gone },
+              steps: [{ kind: "echo", message: "entered" }],
+            };
+      const result = await runFlow([
+        { kind: "launch", app: APP },
+        { kind: "tool", name: "button", args: { button: "home" } },
+        check as never,
+      ]);
+
+      expect(statuses(result).slice(0, 2)).toEqual(["launch:pass", "tool:pass"]);
+      expect(result.steps[2].status).not.toBe("pass");
+      expect(result.steps[2].reason).toContain(
+        `${APP} is not the foreground app on ${DEVICE} (${SPRINGBOARD} is)`
+      );
+      expect(result.steps.some((s) => s.kind === "echo" && s.status === "pass")).toBe(false);
+    }
+  );
+
+  it("re-pins to the app a launch-app tool step started", async () => {
+    // The first assert fails if the APP pin survived launch-app, the second
+    // passes only if launch-app left no pin: the tap brings a third app forward.
     const result = await runFlow(
       [
         { kind: "launch", app: APP },
@@ -169,7 +177,10 @@ describe("the launch pin across tool steps (end-to-end)", () => {
       "tool:pass",
       "assert:pass",
       "tap:pass",
-      "assert:pass",
+      "assert:fail",
     ]);
+    expect(result.steps[4].reason).toContain(
+      `${OTHER} is not the foreground app on ${DEVICE} (${THIRD} is)`
+    );
   });
 });

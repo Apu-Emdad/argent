@@ -206,3 +206,60 @@ describe.concurrent("a selector miss on an id", () => {
     expect(extraReads(sim)).toBe(0);
   }, 20_000);
 });
+
+// Each case swaps the miss read's implementation, so they run one at a time.
+describe("the miss read on an id", () => {
+  it("keeps the plain hint when the extra read was cut short", async ({ expect }) => {
+    // The flow's own reads are whole; only the miss path's read is truncated,
+    // so it cannot show the id is nowhere.
+    const sim = device();
+    vi.mocked(readIosSimulatorUiTree).mockImplementation(async (registry, dev) => {
+      const actual = await vi.importActual<typeof import("../../src/tools/flows/flow-ios-tree")>(
+        "../../src/tools/flows/flow-ios-tree"
+      );
+      const tree = await actual.readIosSimulatorUiTree(registry, dev);
+      return registry === sim.registry ? { ...tree, truncated: true } : tree;
+    });
+    const reason = await stepFails(sim, "00000000-0000-0000-0000-0000000000a6", tap(ID));
+
+    expect(reason).toBe(PLAIN);
+    expect(extraReads(sim)).toBe(1);
+  }, 20_000);
+
+  it("skips the step as aborted when the run is cancelled during the extra read", async ({
+    expect,
+  }) => {
+    const sim = device();
+    const controller = new AbortController();
+    vi.mocked(readIosSimulatorUiTree).mockImplementation(async (registry, dev) => {
+      if (registry === sim.registry) {
+        controller.abort();
+        return new Promise(() => {});
+      }
+      const actual = await vi.importActual<typeof import("../../src/tools/flows/flow-ios-tree")>(
+        "../../src/tools/flows/flow-ios-tree"
+      );
+      return actual.readIosSimulatorUiTree(registry, dev);
+    });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "flow-stale-id-"));
+    try {
+      const dir = path.join(root, ".argent", "flows");
+      await fs.mkdir(dir, { recursive: true });
+      const flow = serializeFlow({ executionPrerequisite: "", steps: [tap(ID)] });
+      await fs.writeFile(path.join(dir, "flow.yaml"), flow, "utf8");
+      const r = await createRunFlowTool(sim.registry).execute(
+        {},
+        { name: "flow", project_root: root, device: "00000000-0000-0000-0000-0000000000a7" },
+        { signal: controller.signal } as never
+      );
+      if (!("steps" in r)) throw new Error(`expected a run result, got notice: ${r.notice}`);
+
+      expect(r.steps.map((st) => `${st.kind}:${st.status}`)).toEqual(["tap:skip"]);
+      expect(r.steps[0].reason).toBe("run aborted");
+      expect(r.aborted).toBe(true);
+      expect(extraReads(sim)).toBe(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+});

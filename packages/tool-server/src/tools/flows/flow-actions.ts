@@ -95,10 +95,8 @@ export interface ActionEnv {
    * The app the run's most recent successful `launch` step started - or, after
    * a `tool:` `launch-app`/`restart-app` step, the app that step's own args
    * named - and whether the runner still vouches for it being on screen.
-   * Demoted to an unpinned hint by a raw `tool:` step (its effect on the
-   * foreground is opaque to the runner), dropped outright by a `tool:` step
-   * that can change the foreground app and by a launch attempt until it
-   * succeeds (see `FOREGROUND_CHANGING_TOOLS` in flow-run). Shared with nested
+   * Other raw `tool:` steps keep it; a launch attempt drops it until it
+   * succeeds (see `runLaunch` in flow-run). Shared with nested
    * `run:` flows, since ExecState is per-run. Only iOS tree reads consume it
    * (see `fetchFlowTree`).
    */
@@ -107,9 +105,8 @@ export interface ActionEnv {
    * Run-scoped memo of a tree source that answered nothing: written by a
    * {@link settleTree} that failed every read attempt, cleared by any directive
    * read that comes back — they all go through {@link readFlowTree} — by a
-   * relaunch (`launch:` or one of flow-run's `FOREGROUND_CHANGING_TOOLS`), by a
-   * raw `tool:` step that demotes a pinned {@link ActionEnv.treeTarget}, and by
-   * a nested orchestrator step, which can do either out of this holder's sight.
+   * relaunch (`launch:` or one of flow-run's `FOREGROUND_CHANGING_TOOLS`), and
+   * by a nested orchestrator step, which can do either out of this holder's sight.
    * One holder per run, built in flow-run's ExecState and shared by every
    * `deviceEnv`. A `tool:` step's own read clears nothing: it goes through
    * `invokeSubTool` and never reaches {@link readFlowTree}. Nor is the clear
@@ -874,14 +871,17 @@ function offscreenHint(sel: FlowSelector): string {
  * both. The read only words the reason, never decides a match, and any
  * failure of it leaves the plain hint.
  */
-export async function selectorMissReason(env: ActionEnv, sel: FlowSelector): Promise<string> {
+export async function selectorMissReason(
+  env: ActionEnv,
+  sel: FlowSelector
+): Promise<DirectiveOutcome> {
   const { platform, kind } = env.device;
   const simulator = platform === "ios-remote" || (platform === "ios" && kind !== "device");
   // Every alternative must be an id: a bare string also tries its text, which
   // this check does not look for.
   const ids = selectorAlternatives(sel).map((alt) => alt.identifier);
   if (!simulator || !ids.every((id): id is string => id !== undefined)) {
-    return offscreenHint(sel);
+    return { ok: false, reason: offscreenHint(sel) };
   }
   const read = await settleWithin(
     readIosSimulatorUiTree(env.registry, env.device),
@@ -892,16 +892,22 @@ export async function selectorMissReason(env: ActionEnv, sel: FlowSelector): Pro
     nodes.some(
       (n) => ids.some((id) => identifierMatches(n.identifier, id)) || carriesId(n.children)
     );
-  if (read.type !== "value" || carriesId(read.value.roots)) return offscreenHint(sel);
-  return (
+  // Cancelled while this read was in flight: the uniform aborted skip, not a
+  // failure carrying a hint the read never got to word.
+  if (read.type === "aborted") return ABORTED_OUTCOME;
+  // A cut-short walk cannot show the id is nowhere.
+  if (read.type !== "value" || read.value.truncated || carriesId(read.value.roots)) {
+    return { ok: false, reason: offscreenHint(sel) };
+  }
+  const reason =
     `no visible element matched selector ${describeSelector(sel)}, and no element with this id ` +
     `is in the accessibility tree right now, on screen or off. Either the element is not there ` +
     `at this moment (a banner or sheet that already closed, a list row not loaded yet): add an ` +
     `await or scroll-to step before this one. Or the id never reaches the accessibility tree: a ` +
     `flow recorded with Argent 0.27.0 or earlier on an iOS simulator can carry an id from the ` +
     `view hierarchy, such as an SF Symbol name on an icon inside a button; re-record the step, ` +
-    `or target the control \`describe\` shows there.`
-  );
+    `or target the control \`describe\` shows there.`;
+  return { ok: false, reason };
 }
 
 /**
@@ -1086,7 +1092,7 @@ async function resolveTargetPoint(
     const frame = await waitForFrame(env, target.selector);
     if (frame === "aborted") return { fail: ABORTED_OUTCOME };
     if (!frame) {
-      return { fail: { ok: false, reason: await selectorMissReason(env, target.selector) } };
+      return { fail: await selectorMissReason(env, target.selector) };
     }
     return { point: getDescribeTapPoint(frame) };
   }
@@ -1205,7 +1211,7 @@ async function runPinch(
   if (step.selector) {
     const resolved = await waitForFrame(env, step.selector);
     if (resolved === "aborted") return ABORTED_OUTCOME;
-    if (!resolved) return { ok: false, reason: await selectorMissReason(env, step.selector) };
+    if (!resolved) return await selectorMissReason(env, step.selector);
     frame = resolved;
     center = getDescribeTapPoint(resolved);
   } else {
@@ -1306,7 +1312,7 @@ async function runRotate(
   if (step.selector) {
     const resolved = await waitForFrame(env, step.selector);
     if (resolved === "aborted") return ABORTED_OUTCOME;
-    if (!resolved) return { ok: false, reason: await selectorMissReason(env, step.selector) };
+    if (!resolved) return await selectorMissReason(env, step.selector);
     frame = resolved;
     center = getDescribeTapPoint(resolved);
   } else {
@@ -1420,7 +1426,7 @@ async function runSwipe(
   const frames = await waitForFrames(env, selectors);
   if (frames === "aborted") return ABORTED_OUTCOME;
   if (!Array.isArray(frames)) {
-    return { ok: false, reason: await selectorMissReason(env, frames.unresolved) };
+    return await selectorMissReason(env, frames.unresolved);
   }
   const [fromFrame, toFrame] = frames;
 
@@ -1639,7 +1645,7 @@ async function runType(
   const frame = await waitForFrame(env, step.into);
   if (frame === "aborted") return ABORTED_OUTCOME;
   if (!frame) {
-    return { ok: false, reason: await selectorMissReason(env, step.into) };
+    return await selectorMissReason(env, step.into);
   }
   const focusTap = await invokeOnDevice(env, "gesture-tap", getDescribeTapPoint(frame));
   // Keys are injected at the HID level and go to whatever holds focus, so the
