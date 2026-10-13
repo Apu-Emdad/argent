@@ -112,7 +112,7 @@ No platform named → `list-devices` first and pick the booted target (do not de
 - `argent-react-native-app-workflow` — RN project: starting Metro, running/building the iOS or Android app, build failures, pods, lost Metro connection, reading logs, reloading the JS bundle, reinstalling
 - `argent-metro-debugger` — JS evaluation, inspecting the React component tree at source level, element placement via `debugger-component-tree`
 - `argent-react-native-profiler` — measuring specific components or app-wide bottlenecks, re-renders, CPU hotspots, ranked perf reports
-- `argent-native-profiler` — native CPU hotspots, UI hangs, memory leaks (iOS via xctrace; Android via Perfetto); also the native half of dual profiling with `argent-react-native-profiler`
+- `argent-native-profiler` — native CPU hotspots and UI hangs (iOS via xctrace; Android via Perfetto), memory leaks (iOS only); also the native half of dual profiling with `argent-react-native-profiler`
 - `argent-react-native-optimization` — app feels slow, optimize, bundle size, startup time, re-renders, lists/images/navigation, any perf task. Entry point for all perf work; delegates measurement to `argent-react-native-profiler`
 - `argent-test-ui-flow` — one-off interact → screenshot → verify check, nothing saved
 - `argent-create-flow` — save or replay a repeatable path ("flow", repeat, test X times) for profiling, A/B comparison, retry or reuse
