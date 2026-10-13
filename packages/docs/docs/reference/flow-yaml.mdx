@@ -63,7 +63,7 @@ A selector finds an element on the screen. Write a selector as an explicit map:
 | `role` | Case-insensitive substring of the element role                  |
 | `any`  | Any element. Takes only `true`. Pair it with a relational scope |
 
-All fields in a selector must match. A run of whitespace in a label, including a no-break space, matches one space in `text`. An unqualified Android id also matches its qualified resource id. `identifier` is an alias of `id`. Use single quotes for a regex with a backslash. `any: true` is the only selector without its own `id`, `text` or `role`, so it needs a relational scope, for example `{ any: true, after: { text: Danger zone } }`.
+All fields in a selector must match. A run of whitespace, including a no-break space, matches one space in `id` and `text`. An unqualified Android id also matches its qualified resource id. `identifier` is an alias of `id`. Use single quotes for a regex with a backslash. `any: true` is the only selector without its own `id`, `text` or `role`, so it needs a relational scope, for example `{ any: true, after: { text: Danger zone } }`.
 
 A bare string, for example `tap: Save`, is a loose selector. It tries `id` first, then `text`. Prefer the map form.
 
@@ -106,7 +106,7 @@ The runner resolves a selector against the runner tree. On some platforms, the r
 | Chromium        | DOM nodes with an id, label, value or handler                | Shorter DOM walk           |
 | Vega            | Toolkit page source                                          | Same source                |
 
-On an iOS simulator and on a physical iPhone, the runner and `describe` read one tree. Copy ids, text and roles from `describe`. On an iOS simulator, the runner tree has these differences:
+On an iOS simulator and on a physical iPhone, the runner and `describe` read one tree. Copy ids, text and roles from `describe`. On an iOS simulator, a toggle has the role `AXSwitch` in flows, `describe`, `await-ui-element` and `ui-tree`. The runner tree on an iOS simulator has these differences:
 
 - The runner removes the elements that are scrolled or clipped out of view.
 - The runner removes the elements under a system alert.

@@ -30,6 +30,7 @@ import { isIosPhysicalDevice, isIosSimulator } from "../../utils/device-info";
 import { bindDeviceArgs } from "./flow-device";
 import { fetchFlowTree } from "./flow-tree";
 import { readIosSimulatorUiTree } from "./flow-ios-tree";
+import { NATIVE_DESCRIBE_ROLES } from "../describe/platforms/ios/ios-native-adapter";
 import type { UiTreeNode } from "../ui-tree";
 import {
   capturePixelsWithin,
@@ -791,6 +792,12 @@ async function scrollToVisible(
 ): Promise<ScrollResolve> {
   let prevFp: string | undefined;
   let warning: string | undefined;
+  // The target never showed: say so when it looks stale.
+  const missed = async (reason: string): Promise<ScrollResolve> => {
+    const stale = await staleSelectorReason(env, target, reason);
+    if (stale === "aborted") return { aborted: true };
+    return { reason: stale ?? reason, ...warnedBy(warning) };
+  };
   for (let i = 0; i < MAX_SCROLL_ITERATIONS; i++) {
     if (env.signal?.aborted) return { aborted: true };
 
@@ -837,19 +844,15 @@ async function scrollToVisible(
     if (prevFp !== undefined && fp === prevFp) {
       // End of the scroll — accept the target wherever it landed (best effort).
       if (frame) return { frame, ...warnedBy(warning) };
-      return {
-        reason: `reached the end of the scroll without finding ${describeSelector(target)}`,
-        ...warnedBy(warning),
-      };
+      return missed(`reached the end of the scroll without finding ${describeSelector(target)}`);
     }
     prevFp = fp;
 
     warning ??= await scrollIncrement(env, axisDirection, region);
   }
-  return {
-    reason: `${describeSelector(target)} not found after ${MAX_SCROLL_ITERATIONS} scroll attempts`,
-    ...warnedBy(warning),
-  };
+  return missed(
+    `${describeSelector(target)} not found after ${MAX_SCROLL_ITERATIONS} scroll attempts`
+  );
 }
 
 // `tap`/`type` auto-wait but deliberately do NOT auto-scroll: an implicit
@@ -860,54 +863,101 @@ function offscreenHint(sel: FlowSelector): string {
   return `no visible element matched selector ${describeSelector(sel)} — if it is off-screen, add a scroll-to step before this one`;
 }
 
-/**
- * Why a selector step found no element. On an iOS simulator a miss on an `id`
- * pays one more read of the accessibility tree, hidden nodes included: the flow
- * tree drops off-screen nodes, so only this read can tell an id that is off
- * the screen from one that is nowhere right now. That still has two causes
- * the read cannot tell apart, a transient element that already left and a
- * flow recorded on the injected view hierarchy, whose ids this tree never
- * has (an SF Symbol name on an icon inside a button), so the reason names
- * both. The read only words the reason, never decides a match, and any
- * failure of it leaves the plain hint.
- */
-export async function selectorMissReason(
-  env: ActionEnv,
-  sel: FlowSelector
-): Promise<DirectiveOutcome> {
+const OLDER_FLOW =
+  "a flow recorded on an iOS simulator by an older Argent can carry an id or role from the " +
+  "view hierarchy, such as an SF Symbol name on an icon inside a button";
+
+const RE_RECORD = "re-record the step, or target the control `describe` shows there.";
+
+function isIosSimulatorEnv(env: ActionEnv): boolean {
   const { platform, kind } = env.device;
-  const simulator = platform === "ios-remote" || (platform === "ios" && kind !== "device");
+  return platform === "ios-remote" || (platform === "ios" && kind !== "device");
+}
+
+/** A role anywhere in the selector that the iOS simulator tree never gives a node. */
+function unknownIosRole(sel: FlowSelector | undefined): string | undefined {
+  if (sel === undefined) return undefined;
+  const role = sel.role?.toLowerCase();
+  if (role !== undefined && !NATIVE_DESCRIBE_ROLES.some((r) => r.toLowerCase().includes(role))) {
+    return sel.role;
+  }
+  return unknownIosRole(sel.within) ?? unknownIosRole(sel.after) ?? unknownIosRole(sel.next);
+}
+
+/** On an iOS simulator, why a selector naming a role no element has can never match. */
+function unknownRoleReason(
+  env: ActionEnv,
+  sel: FlowSelector,
+  missed = `no visible element matched selector ${describeSelector(sel)}`
+): string | undefined {
+  const role = isIosSimulatorEnv(env) ? unknownIosRole(sel) : undefined;
+  if (role === undefined) return undefined;
+  return `${missed}, and no element on an iOS simulator has the role "${role}": ${OLDER_FLOW}; ${RE_RECORD}`;
+}
+
+/**
+ * Why a selector that matched nothing may be stale, on an iOS simulator only;
+ * undefined when nothing shows it. A role the simulator tree never gives needs
+ * no read. A miss on an `id` pays one more read of the accessibility tree,
+ * hidden nodes included: the flow tree drops off-screen nodes, so only this
+ * read can tell an id that is off the screen from one that is nowhere right
+ * now. That still has two causes the read cannot tell apart, a transient
+ * element that already left and a flow recorded on the injected view
+ * hierarchy, so the reason names both. The read only words the reason, never
+ * decides a match, and any failure of it gives undefined.
+ */
+async function staleSelectorReason(
+  env: ActionEnv,
+  sel: FlowSelector,
+  missed = `no visible element matched selector ${describeSelector(sel)}`
+): Promise<string | "aborted" | undefined> {
+  if (!isIosSimulatorEnv(env)) return undefined;
+  const role = unknownRoleReason(env, sel, missed);
+  if (role !== undefined) return role;
   // Every alternative must be an id: a bare string also tries its text, which
   // this check does not look for.
   const ids = selectorAlternatives(sel).map((alt) => alt.identifier);
-  if (!simulator || !ids.every((id): id is string => id !== undefined)) {
-    return { ok: false, reason: offscreenHint(sel) };
-  }
+  if (!ids.every((id): id is string => id !== undefined)) return undefined;
   const read = await settleWithin(
     readIosSimulatorUiTree(env.registry, env.device),
     undefined,
     env.signal
   );
-  const carriesId = (nodes: UiTreeNode[]): boolean =>
-    nodes.some(
-      (n) => ids.some((id) => identifierMatches(n.identifier, id)) || carriesId(n.children)
-    );
-  // Cancelled while this read was in flight: the uniform aborted skip, not a
-  // failure carrying a hint the read never got to word.
-  if (read.type === "aborted") return ABORTED_OUTCOME;
+  // Cancelled while this read was in flight.
+  if (read.type === "aborted") return "aborted";
   // A cut-short walk cannot show the id is nowhere.
-  if (read.type !== "value" || read.value.truncated || carriesId(read.value.roots)) {
-    return { ok: false, reason: offscreenHint(sel) };
+  if (read.type !== "value" || read.value.truncated) return undefined;
+  const carriers: UiTreeNode[] = [];
+  const collect = (nodes: UiTreeNode[]): void => {
+    for (const n of nodes) {
+      if (ids.some((id) => identifierMatches(n.identifier, id))) carriers.push(n);
+      collect(n.children);
+    }
+  };
+  collect(read.value.roots);
+  if (carriers.length === 0) {
+    return (
+      `${missed}, and no element with this id is in the accessibility tree right now, on ` +
+      `screen or off. Either the element is not there at this moment (a banner or sheet that ` +
+      `already closed, a list row not loaded yet): add an await or scroll-to step before this ` +
+      `one. Or ${OLDER_FLOW}; ${RE_RECORD}`
+    );
   }
-  const reason =
-    `no visible element matched selector ${describeSelector(sel)}, and no element with this id ` +
-    `is in the accessibility tree right now, on screen or off. Either the element is not there ` +
-    `at this moment (a banner or sheet that already closed, a list row not loaded yet): add an ` +
-    `await or scroll-to step before this one. Or the id never reaches the accessibility tree: a ` +
-    `flow recorded with Argent 0.27.0 or earlier on an iOS simulator can carry an id from the ` +
-    `view hierarchy, such as an SF Symbol name on an icon inside a button; re-record the step, ` +
-    `or target the control \`describe\` shows there.`;
-  return { ok: false, reason };
+  const wanted = sel.role?.toLowerCase();
+  if (wanted !== undefined && carriers.every((n) => !n.role?.toLowerCase().includes(wanted))) {
+    return `${missed}: the element with this id has the role "${carriers[0].role}", not "${sel.role}"; ${OLDER_FLOW}; ${RE_RECORD}`;
+  }
+  return undefined;
+}
+
+/** Why a selector step found no element: the stale reason when one shows, else the scroll-to hint. */
+export async function selectorMissReason(
+  env: ActionEnv,
+  sel: FlowSelector
+): Promise<DirectiveOutcome> {
+  const stale = await staleSelectorReason(env, sel);
+  if (stale === "aborted") return ABORTED_OUTCOME;
+  return { ok: false, reason: stale ?? offscreenHint(sel) };
 }
 
 /**
@@ -965,12 +1015,15 @@ export async function runDirective(env: ActionEnv, step: DirectiveStep): Promise
     case "type":
       return runType(env, step);
     case "await":
-      return waitForCondition(env, step, step.timeout ?? DEFAULT_ACTION_TIMEOUT_MS);
+      return waitForCondition(env, step, step.timeout ?? DEFAULT_ACTION_TIMEOUT_MS, true);
     case "assert":
-      return waitForCondition(env, step, DEFAULT_ASSERT_TIMEOUT_MS);
+      return waitForCondition(env, step, DEFAULT_ASSERT_TIMEOUT_MS, true);
     case "idle":
       return waitForIdle(env, step);
     case "scroll-to": {
+      // A role no element has needs no swiping to fail.
+      const role = unknownRoleReason(env, step.target);
+      if (role) return { ok: false, reason: role };
       const r = await scrollToVisible(env, step.target, step.direction, step.within);
       if (r.aborted) return ABORTED_OUTCOME;
       return { ok: Boolean(r.frame), reason: r.reason, ...warnedBy(r.warning) };
@@ -1702,7 +1755,10 @@ async function waitForCondition(
     expectedText?: string;
     textMatch?: TextMatchMode;
   },
-  timeoutMs: number
+  timeoutMs: number,
+  // Word a stale selector's miss (an extra read): `await` and `assert` only,
+  // never a `when:` guard, whose unmet condition is a clean skip.
+  explainMiss = false
 ): Promise<DirectiveOutcome> {
   const deadline = Date.now() + timeoutMs;
 
@@ -1817,6 +1873,12 @@ async function waitForCondition(
     !lastReadTrusted && fetchError
       ? ` (the final poll could not read the UI tree: ${fetchError})`
       : "";
+  // Nothing matched: say so when the selector looks stale.
+  if (explainMiss && lastMatches.length === 0 && step.condition !== "hidden") {
+    const stale = await staleSelectorReason(env, step.selector);
+    if (stale === "aborted") return ABORTED_OUTCOME;
+    if (stale) return { ok: false, reason: stale + blipNote };
+  }
   return {
     ok: false,
     reason:

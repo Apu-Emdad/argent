@@ -53,7 +53,7 @@ Use values that meet the [stable-selector definition](../SKILL.md#stable-selecto
 { id: settings-row, text: Notifications }
 ```
 
-All provided fields must match. `id` is exact and case-insensitive. `text` and `role` are case-insensitive substrings. A run of whitespace in a label, including a no-break space, matches one space in `text`. An unqualified Android id also matches its qualified resource id. `identifier` is accepted as an alias, but `id` is canonical. Never author a bare string. It is loose shorthand that tries id before text.
+All provided fields must match. `id` is exact and case-insensitive. `text` and `role` are case-insensitive substrings. A run of whitespace, including a no-break space, matches one space in `id` and `text`. An unqualified Android id also matches its qualified resource id. `identifier` is accepted as an alias, but `id` is canonical. Never author a bare string. It is loose shorthand that tries id before text.
 
 Use single quotes for anchored, case-sensitive regexes:
 

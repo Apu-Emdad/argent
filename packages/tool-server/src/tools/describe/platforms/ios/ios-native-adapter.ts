@@ -32,6 +32,20 @@ function clampNormalizedFrame(
   };
 }
 
+/** Every role {@link mapNativeTraitsToDescribeRole} returns. */
+export const NATIVE_DESCRIBE_ROLES = [
+  "AXHeading",
+  "AXSwitch",
+  "AXButton",
+  "AXTextField",
+  "AXLink",
+  "AXImage",
+  "AXStaticText",
+  "AXTabBar",
+  "AXAdjustable",
+  "AXGroup",
+] as const;
+
 export function mapNativeTraitsToDescribeRole(traits: string[]): string {
   const set = new Set(traits);
   if (set.has("header")) return "AXHeading";

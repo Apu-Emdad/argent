@@ -83,29 +83,34 @@ function device(extra: AXTreeNode[] = []): Sim {
 
 type Step = Parameters<typeof serializeFlow>[0]["steps"][number];
 
-/** Run one step that must fail without dispatching anything; returns its reason. */
-async function stepFails(sim: Sim, deviceId: string, step: Step): Promise<string> {
+/** Run one flow; returns its result. */
+async function run(sim: Sim, deviceId: string, steps: Step[]): Promise<FlowRunResult> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "flow-stale-id-"));
   try {
     const dir = path.join(root, ".argent", "flows");
     await fs.mkdir(dir, { recursive: true });
-    const flow = serializeFlow({ executionPrerequisite: "", steps: [step] });
+    const flow = serializeFlow({ executionPrerequisite: "", steps });
     await fs.writeFile(path.join(dir, "flow.yaml"), flow, "utf8");
     const r = await createRunFlowTool(sim.registry).execute(
       {},
       { name: "flow", project_root: root, device: deviceId }
     );
     if (!("steps" in r)) throw new Error(`expected a run result, got notice: ${r.notice}`);
-    const result: FlowRunResult = r;
-    if (result.steps[0]?.status !== "fail" || sim.tools.length > 0) {
-      throw new Error(
-        `expected the step to fail undispatched: ${JSON.stringify([result.steps, sim.tools])}`
-      );
-    }
-    return result.steps[0].reason ?? "";
+    return r;
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+}
+
+/** Run one step that must fail without dispatching anything; returns its reason. */
+async function stepFails(sim: Sim, deviceId: string, step: Step): Promise<string> {
+  const result = await run(sim, deviceId, [step]);
+  if (result.steps[0]?.status !== "fail" || sim.tools.length > 0) {
+    throw new Error(
+      `expected the step to fail undispatched: ${JSON.stringify([result.steps, sim.tools])}`
+    );
+  }
+  return result.steps[0].reason ?? "";
 }
 
 /** The miss path's extra reads made against this registry. */
@@ -126,7 +131,7 @@ describe.concurrent("a selector miss on an id", () => {
     expect(reason).toContain('no visible element matched selector id="house.fill"');
     expect(reason).toContain(STALE);
     expect(reason).toContain("add an await or scroll-to step before this one");
-    expect(reason).toContain("Argent 0.27.0 or earlier");
+    expect(reason).toContain("recorded on an iOS simulator by an older Argent");
     expect(reason).toContain("re-record the step, or target the control `describe` shows there");
     expect(reason).not.toContain("if it is off-screen");
     expect(extraReads(sim)).toBe(1);
@@ -150,6 +155,86 @@ describe.concurrent("a selector miss on an id", () => {
       expect(extraReads(sim)).toBe(1);
     }
   );
+
+  it.for<[string, string, Step]>([
+    ["await", "c1", { kind: "await", condition: "visible", selector: ID, timeout: 500 }],
+    ["assert visible", "c2", { kind: "assert", condition: "visible", selector: ID }],
+    ["assert text", "c3", { kind: "assert", condition: "text", selector: ID, expectedText: "x" }],
+  ])(
+    "names a stale id on an %s step",
+    { timeout: 20_000 },
+    async ([, suffix, step], { expect }) => {
+      const sim = device();
+      const reason = await stepFails(sim, `00000000-0000-0000-0000-0000000000${suffix}`, step);
+
+      expect(reason).toContain('no visible element matched selector id="house.fill"');
+      expect(reason).toContain(STALE);
+      expect(extraReads(sim)).toBe(1);
+    }
+  );
+
+  it("names a stale id when scroll-to reaches the end without it", async ({ expect }) => {
+    const sim = device();
+    const result = await run(sim, "00000000-0000-0000-0000-0000000000c4", [
+      { kind: "scroll-to", target: ID, direction: "down" },
+    ]);
+
+    expect(result.steps[0].status).toBe("fail");
+    expect(result.steps[0].reason).toContain(
+      'reached the end of the scroll without finding id="house.fill", and no element with this id'
+    );
+    expect(extraReads(sim)).toBe(1);
+  }, 20_000);
+
+  it("fails a scroll-to on a role no iOS element has without swiping", async ({ expect }) => {
+    const sim = device();
+    const reason = await stepFails(sim, "00000000-0000-0000-0000-0000000000c5", {
+      kind: "scroll-to",
+      target: { text: "Home", role: "AXScrollArea" },
+      direction: "down",
+    });
+
+    expect(reason).toContain('no element on an iOS simulator has the role "AXScrollArea"');
+    expect(reason).toContain("by an older Argent");
+    expect(extraReads(sim)).toBe(0);
+  }, 20_000);
+
+  it("names the role an id's element has when the selector names another", async ({ expect }) => {
+    const sim = device([
+      {
+        index: 2,
+        parentIndex: 0,
+        identifier: "haptics",
+        value: "1",
+        traits: ["button", "toggleButton"],
+        frame: { x: 0.1, y: 0.2, width: 0.8, height: 0.05 },
+      },
+    ]);
+    const reason = await stepFails(
+      sim,
+      "00000000-0000-0000-0000-0000000000c6",
+      tap({ identifier: "haptics", role: "AXAdjustable" })
+    );
+
+    expect(reason).toContain(
+      'the element with this id has the role "AXSwitch", not "AXAdjustable"'
+    );
+    expect(extraReads(sim)).toBe(1);
+  }, 20_000);
+
+  it("pays no extra read for an unmet when guard", async ({ expect }) => {
+    const sim = device();
+    const result = await run(sim, "00000000-0000-0000-0000-0000000000c7", [
+      {
+        kind: "when",
+        condition: { kind: "ui", condition: "visible", selector: ID },
+        steps: [{ kind: "echo", message: "never" }],
+      },
+    ]);
+
+    expect(result.steps.map((st) => st.status)).not.toContain("fail");
+    expect(extraReads(sim)).toBe(0);
+  }, 20_000);
 
   it("keeps the scroll-to hint when the id is on a node off the screen", async ({ expect }) => {
     const sim = device([
