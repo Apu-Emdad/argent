@@ -53,8 +53,9 @@ export const AUTO_SCREENSHOT_DELAY_MS_BY_TOOL: Record<string, number> = {
   "keyboard": 300,
   "paste": 300,
   "describe": 100,
-  // The tool has already waited for its condition.
-  "await-ui-element": 100,
+  // The wait returns on the first match, often mid-transition; the cap must
+  // leave `await-screen-idle` room to see two identical reads.
+  "await-ui-element": 1500,
 };
 
 const DEFAULT_DELAY_MS = 1400;

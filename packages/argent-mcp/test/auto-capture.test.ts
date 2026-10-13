@@ -82,10 +82,12 @@ describe("shouldAutoScreenshot", () => {
     expect(shouldAutoScreenshot("mcp__argent__launch-app")).toBe(true);
   });
 
-  it("returns the screen after await-ui-element, with a short settle", () => {
+  it("returns the screen after await-ui-element, settled like a tap", () => {
     expect(shouldAutoScreenshot("mcp__argent__await-ui-element")).toBe(true);
     expect(shouldAutoDescribe("mcp__argent__await-ui-element")).toBe(true);
-    expect(getAutoScreenshotDelayMs("await-ui-element")).toBe(100);
+    expect(getAutoScreenshotDelayMs("await-ui-element")).toBe(
+      getAutoScreenshotDelayMs("gesture-tap")
+    );
   });
 
   it("returns false for screenshot", () => {
