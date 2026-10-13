@@ -945,7 +945,8 @@ async function staleSelectorReason(
   }
   const wanted = sel.role?.toLowerCase();
   if (wanted !== undefined && carriers.every((n) => !n.role?.toLowerCase().includes(wanted))) {
-    return `${missed}: the element with this id has the role "${carriers[0].role}", not "${sel.role}"; ${OLDER_FLOW}; ${RE_RECORD}`;
+    const roles = [...new Set(carriers.map((n) => `"${n.role}"`))].join(" or ");
+    return `${missed}: the element with this id has the role ${roles}, not "${sel.role}"; ${OLDER_FLOW}; ${RE_RECORD}`;
   }
   return undefined;
 }
