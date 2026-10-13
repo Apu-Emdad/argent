@@ -21,7 +21,7 @@ const TEMP_RUNNER_MARKERS = [
   ".bun\\install\\cache",
 ];
 
-function isTempRunnerPath(binaryPath: string): boolean {
+export function isTempRunnerPath(binaryPath: string): boolean {
   return TEMP_RUNNER_MARKERS.some((marker) => binaryPath.includes(marker));
 }
 

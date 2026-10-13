@@ -5,7 +5,9 @@ import * as path from "node:path";
 import {
   childFailureReason,
   classifyMcpEntry,
+  findGlobalArgent,
   platformChecks,
+  remoteCheck,
   renderDoctorReport,
   stripPackageBinDirs,
   type DoctorReport,
@@ -32,8 +34,11 @@ function ctx(overrides: Partial<EntryContext> = {}): EntryContext {
   return {
     scope: "project",
     projectRoot,
+    cwd: projectRoot,
     globalOnPath: true,
     localInstalled: false,
+    argentCmd: "argent",
+    installCmd: "pnpm install",
     ...overrides,
   };
 }
@@ -79,9 +84,65 @@ describe("classifyMcpEntry", () => {
   });
 
   it("requires a local install for npx and yarn entries", () => {
-    const entry = { command: "npx", args: ["--no-install", "argent", "mcp"] };
-    expect(classifyMcpEntry(entry, ctx()).status).toBe("error");
-    expect(classifyMcpEntry(entry, ctx({ localInstalled: true })).status).toBe("ok");
+    for (const entry of [
+      { command: "npx", args: ["--no-install", "argent", "mcp"] },
+      { command: "yarn", args: ["argent", "mcp"] },
+    ]) {
+      const missing = classifyMcpEntry(entry, ctx());
+      expect(missing).toMatchObject({ status: "error", fix: "pnpm install" });
+      expect(classifyMcpEntry(entry, ctx({ localInstalled: true })).status).toBe("ok");
+    }
+  });
+
+  it("accepts an on-demand npx entry without a local install", () => {
+    const entry = { command: "npx", args: ["-y", "@swmansion/argent@latest", "mcp"] };
+    expect(classifyMcpEntry(entry, ctx()).status).toBe("ok");
+  });
+
+  it("fails entries that don't end in `mcp`", () => {
+    for (const entry of [
+      { command: "argent", args: [] },
+      { command: "argent", args: ["server", "start"] },
+      { command: "node", args: ["node_modules/@swmansion/argent/dist/cli.js"] },
+      { command: "npx", args: ["--no-install", "argent"] },
+    ]) {
+      expect(classifyMcpEntry(entry, ctx({ localInstalled: true })).status).toBe("error");
+    }
+  });
+
+  it("warns about an entry switched off in the editor", () => {
+    const entry = { command: "argent", args: ["mcp"], disabled: true };
+    expect(classifyMcpEntry(entry, ctx()).status).toBe("warn");
+  });
+
+  it("skips node flags to find the script", () => {
+    const rel = "node_modules/@swmansion/argent/dist/cli.js";
+    fs.mkdirSync(path.dirname(path.join(projectRoot, rel)), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, rel), "");
+    const entry = { command: "node", args: ["--no-warnings", rel, "mcp"] };
+    expect(classifyMcpEntry(entry, ctx()).status).toBe("ok");
+  });
+
+  it("does not judge a path that uses an editor variable", () => {
+    const entry = {
+      command: "node",
+      args: ["${workspaceFolder}/node_modules/@swmansion/argent/dist/cli.js", "mcp"],
+    };
+    expect(classifyMcpEntry(entry, ctx()).status).toBe("info");
+  });
+
+  it("checks that an absolute command exists", () => {
+    const missing = { command: path.join(projectRoot, "bin", "argent"), args: ["mcp"] };
+    expect(classifyMcpEntry(missing, ctx({ globalOnPath: false })).status).toBe("error");
+
+    fs.mkdirSync(path.join(projectRoot, "bin"));
+    fs.writeFileSync(missing.command, "");
+    expect(classifyMcpEntry(missing, ctx({ globalOnPath: false })).status).toBe("ok");
+  });
+
+  it("points a dead project-dependency path at the project's install command", () => {
+    const entry = { command: "node", args: ["node_modules/@swmansion/argent/dist/cli.js", "mcp"] };
+    expect(classifyMcpEntry(entry, ctx()).fix).toBe("pnpm install");
   });
 
   it("flags an unparseable entry", () => {
@@ -89,7 +150,7 @@ describe("classifyMcpEntry", () => {
   });
 
   it("does not judge a custom command", () => {
-    expect(classifyMcpEntry({ command: "/opt/argent-dev", args: [] }, ctx()).status).toBe("info");
+    expect(classifyMcpEntry({ command: "argent-dev", args: [] }, ctx()).status).toBe("info");
   });
 });
 
@@ -106,17 +167,18 @@ function hostDeps(overrides: Partial<HostDeps> = {}): HostDeps {
     ],
     bundled: [{ name: "simulator-server", path: "/pkg/bin/darwin/simulator-server" }],
     signing: { teamIdEnv: null, detectedTeams: 1 },
+    xcode: { developerDir: "/Applications/Xcode.app/Contents/Developer", simctl: true },
     ...overrides,
   };
 }
 
 describe("platformChecks", () => {
   it("reports a missing optional toolchain as info with its install hint", () => {
-    const vega = platformChecks(hostDeps()).find((c) => c.label.startsWith("Vega"));
+    const vega = platformChecks(hostDeps(), "reinstall").find((c) => c.label.startsWith("Vega"));
     expect(vega).toMatchObject({ status: "info", fix: "install vega" });
   });
 
-  it("errors only when no mobile toolchain is usable", () => {
+  it("warns, without failing, when only Chromium is usable", () => {
     const none = hostDeps({
       deps: [
         { dep: "xcrun", path: null, hint: "install xcode" },
@@ -125,24 +187,69 @@ describe("platformChecks", () => {
         { dep: "vega", path: null, hint: "install vega" },
       ],
     });
-    expect(platformChecks(none).filter((c) => c.status === "error")).toHaveLength(1);
-    expect(platformChecks(hostDeps()).some((c) => c.status === "error")).toBe(false);
+    const checks = platformChecks(none, "reinstall");
+    expect(checks[0]).toMatchObject({ status: "warn" });
+    expect(checks.some((c) => c.status === "error")).toBe(false);
+    expect(platformChecks(hostDeps(), "reinstall").some((c) => c.status === "warn")).toBe(false);
+  });
+
+  it("does not count the /usr/bin/xcrun shim without simctl as iOS support", () => {
+    const shimOnly = hostDeps({
+      deps: [
+        { dep: "xcrun", path: "/usr/bin/xcrun", hint: "install xcode" },
+        { dep: "adb", path: null, hint: "install adb" },
+        { dep: "emulator", path: null, hint: "install emulator" },
+        { dep: "vega", path: null, hint: "install vega" },
+      ],
+      xcode: { developerDir: "/Library/Developer/CommandLineTools", simctl: false },
+    });
+    const checks = platformChecks(shimOnly, "reinstall");
+    expect(checks.some((c) => c.status === "ok" && c.label === "iOS simulator")).toBe(false);
+    expect(checks[0]?.label).toMatch(/No mobile platform toolchain/);
+  });
+
+  it("needs adb for Vega", () => {
+    const vegaOnly = (adb: string | null) =>
+      hostDeps({
+        platform: "linux",
+        signing: null,
+        xcode: null,
+        deps: [
+          { dep: "xcrun", path: null, hint: "install xcode" },
+          { dep: "adb", path: adb, hint: "install adb" },
+          { dep: "emulator", path: null, hint: "install emulator" },
+          { dep: "vega", path: "/home/me/vega/bin/vega", hint: "install vega" },
+        ],
+      });
+    const withoutAdb = platformChecks(vegaOnly(null), "reinstall");
+    expect(withoutAdb.find((c) => c.label.startsWith("Vega"))).toMatchObject({
+      status: "warn",
+      fix: "install adb",
+    });
+    expect(withoutAdb[0]?.label).toMatch(/No mobile platform toolchain/);
+    const withAdb = platformChecks(vegaOnly("/sdk/adb"), "reinstall");
+    expect(withAdb.find((c) => c.label.startsWith("Vega"))?.status).toBe("ok");
+    expect(withAdb.some((c) => c.status === "warn")).toBe(false);
   });
 
   it("errors when a bundled artifact is missing (a broken install)", () => {
     const broken = hostDeps({
       bundled: [{ name: "simulator-server", path: null, error: "not found" }],
     });
-    const checks = platformChecks(broken);
+    const checks = platformChecks(broken, "reinstall");
     expect(checks[0]).toMatchObject({
       status: "error",
       label: "Bundled simulator-server is missing",
+      fix: "reinstall",
     });
     expect(checks.some((c) => c.label === "iOS simulator")).toBe(false);
   });
 
   it("skips iOS off macOS", () => {
-    const linux = platformChecks(hostDeps({ platform: "linux", signing: null }));
+    const linux = platformChecks(
+      hostDeps({ platform: "linux", signing: null, xcode: null }),
+      "reinstall"
+    );
     expect(linux.find((c) => c.label.startsWith("iOS"))?.status).toBe("info");
     expect(linux.some((c) => c.label.startsWith("Physical iPhone"))).toBe(false);
   });
@@ -175,15 +282,70 @@ describe("renderDoctorReport", () => {
 });
 
 describe("stripPackageBinDirs", () => {
+  const d = path.delimiter;
+
   it("drops the node_modules/.bin dirs npx and npm scripts prepend", () => {
-    const d = path.delimiter;
     const input = [
-      "/app/node_modules/.bin",
+      "/app/pkg/node_modules/.bin",
+      "/app/node_modules/.bin/",
       "/node_modules/.bin",
       "/opt/homebrew/bin",
       "/usr/bin",
     ].join(d);
-    expect(stripPackageBinDirs(input)).toBe(["/opt/homebrew/bin", "/usr/bin"].join(d));
+    expect(stripPackageBinDirs(input, "/app/pkg")).toBe(["/opt/homebrew/bin", "/usr/bin"].join(d));
+  });
+
+  it("keeps a global bin that happens to be a node_modules/.bin (Yarn classic)", () => {
+    const yarnGlobal = "/home/me/.config/yarn/global/node_modules/.bin";
+    const input = [yarnGlobal, "/app/node_modules/.bin-tools"].join(d);
+    expect(stripPackageBinDirs(input, "/app")).toBe(input);
+  });
+});
+
+describe("findGlobalArgent", () => {
+  const writeBin = (dir: string, body: string): string => {
+    fs.mkdirSync(dir, { recursive: true });
+    const bin = path.join(dir, "argent");
+    fs.writeFileSync(bin, body, { mode: 0o755 });
+    return bin;
+  };
+
+  it("accepts a script shim (pnpm, Yarn) without resolving its version", () => {
+    const bin = writeBin(path.join(projectRoot, "pnpm"), '#!/bin/sh\nexec node x "$@"\n');
+    expect(findGlobalArgent(path.dirname(bin))).toEqual({ bin, root: null, version: null });
+  });
+
+  it("reads the version through an npm bin symlink", () => {
+    const pkg = path.join(projectRoot, "lib", "node_modules", "@swmansion", "argent");
+    fs.mkdirSync(path.join(pkg, "dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(pkg, "package.json"),
+      JSON.stringify({ name: "@swmansion/argent", version: "1.2.3" })
+    );
+    fs.writeFileSync(path.join(pkg, "dist", "cli.js"), "", { mode: 0o755 });
+    const binDir = path.join(projectRoot, "bin");
+    fs.mkdirSync(binDir);
+    fs.symlinkSync(path.join(pkg, "dist", "cli.js"), path.join(binDir, "argent"));
+    expect(findGlobalArgent(binDir)).toMatchObject({ version: "1.2.3" });
+  });
+
+  it("skips npx caches and missing dirs", () => {
+    const npx = writeBin(path.join(projectRoot, "_npx", "abc", "node_modules", ".bin"), "");
+    const dirs = [path.join(projectRoot, "nope"), path.dirname(npx)].join(path.delimiter);
+    expect(findGlobalArgent(dirs)).toBeNull();
+  });
+});
+
+describe("remoteCheck", () => {
+  it("tells a rejected token apart from a dead server", () => {
+    expect(remoteCheck(200, "http://h:1", "link").status).toBe("ok");
+    expect(remoteCheck(401, "http://h:1", "link").label).toMatch(/rejects the token/);
+    expect(remoteCheck(null, "http://h:1", "link").label).toMatch(/unreachable/);
+  });
+
+  it("doesn't suggest argent unlink when the URL comes from ARGENT_TOOLS_URL", () => {
+    expect(remoteCheck(null, "http://h:1", "env").fix).toMatch(/unset ARGENT_TOOLS_URL/);
+    expect(remoteCheck(null, "http://h:1", "link").fix).toMatch(/argent unlink/);
   });
 });
 

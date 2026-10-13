@@ -13,6 +13,7 @@ import {
   removeClaudePermission,
   copyRulesAndAgents,
   findConfiguredAdapterScopes,
+  isArgentDisabledInClaudeProject,
   getManagedContentTargets,
   injectCodexRules,
   removeCodexRules,
@@ -264,6 +265,43 @@ describe("getArgentEntry env passthrough", () => {
       args: ["mcp"],
       env: { FOO: "bar" },
     });
+  });
+});
+
+describe("disabled entries", () => {
+  it("marks opencode `enabled: false` and Windsurf-style `disabled: true`", () => {
+    const opencode = ALL_ADAPTERS.find((a) => a.name === "opencode")!;
+    const opencodePath = path.join(tmpDir, "opencode.json");
+    fs.writeFileSync(
+      opencodePath,
+      JSON.stringify({ mcp: { argent: { command: ["argent", "mcp"], enabled: false } } })
+    );
+    expect(opencode.getArgentEntry(opencodePath)?.disabled).toBe(true);
+
+    const cursor = ALL_ADAPTERS.find((a) => a.name === "Cursor")!;
+    const cursorPath = path.join(tmpDir, "mcp.json");
+    fs.writeFileSync(
+      cursorPath,
+      JSON.stringify({
+        mcpServers: { argent: { command: "argent", args: ["mcp"], disabled: true } },
+      })
+    );
+    expect(cursor.getArgentEntry(cursorPath)?.disabled).toBe(true);
+  });
+
+  it("reads Claude Code's per-project /mcp toggle", () => {
+    homedirOverride = tmpDir;
+    const root = path.join(tmpDir, "proj");
+    fs.mkdirSync(root);
+    const write = (disabled: string[]) =>
+      fs.writeFileSync(
+        path.join(tmpDir, ".claude.json"),
+        JSON.stringify({ projects: { [root]: { disabledMcpServers: disabled } } })
+      );
+    write(["other"]);
+    expect(isArgentDisabledInClaudeProject(root)).toBe(false);
+    write(["argent"]);
+    expect(isArgentDisabledInClaudeProject(root)).toBe(true);
   });
 });
 

@@ -17,19 +17,19 @@ import {
 import {
   ALL_ADAPTERS,
   detectAdapters,
+  detectProjectPackageManager,
   findConfiguredAdapterScopes,
-  getGlobalSkillLockPath,
-  getGloballyInstalledPackageRoot,
-  getGloballyInstalledVersion,
+  formatShellCommand,
   getInstalledVersion,
   getManagedContentTargets,
-  getProjectSkillLockPath,
   hasCustomizingEnv,
+  isArgentDisabledInClaudeProject,
   isNewerVersion,
-  listArgentSkillsInLock,
+  isTempRunnerPath,
   listBundledSkills,
   nodeSatisfiesEngines,
   probeLocalInstall,
+  projectInstallCommand,
   readCliRecord,
   readInstallRecord,
   resolveInstallMode,
@@ -81,6 +81,23 @@ interface HostDepsReport {
   deps: Array<{ dep: string; path: string | null; hint: string }>;
   bundled: Array<{ name: string; path: string | null; error?: string }>;
   signing: { teamIdEnv: string | null; detectedTeams: number } | null;
+  /** Absent from reports of builds that predate the field. */
+  xcode?: { developerDir: string | null; simctl: boolean } | null;
+}
+
+type ResolvedToolsUrl = Awaited<ReturnType<typeof getResolvedToolsUrl>>;
+
+/** Facts every section shares, probed once per run. */
+interface DoctorContext {
+  projectRoot: string;
+  /** Where doctor runs: global-scope `node <relative>` entries resolve from here. */
+  cwd: string;
+  mode: "global" | "local";
+  global: GlobalInstall | null;
+  /** How to spell an argent command in a fix line (`argent`, or via npx when not on PATH). */
+  argentCmd: string;
+  /** The project's own install command (`pnpm install`, …). */
+  installCmd: string;
 }
 
 const UPDATE_CHECK_TIMEOUT_MS = 2_500;
@@ -96,7 +113,86 @@ function check(
 
 function home(p: string): string {
   const h = homedir();
-  return p.startsWith(h) ? `~${p.slice(h.length)}` : p;
+  if (h === path.sep || !h) return p;
+  return p === h || p.startsWith(h + path.sep) ? `~${p.slice(h.length)}` : p;
+}
+
+// MARK: Global install probe
+
+interface GlobalInstall {
+  bin: string;
+  /** Package root, when the bin links into one (npm). Null for script shims (pnpm, Yarn). */
+  root: string | null;
+  version: string | null;
+}
+
+function isExecutableFile(p: string): boolean {
+  try {
+    if (!fs.statSync(p).isFile()) return false;
+    if (process.platform !== "win32") fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function argentPackageRoot(bin: string): string | null {
+  let dir: string;
+  try {
+    dir = path.dirname(fs.realpathSync(bin));
+  } catch {
+    return null;
+  }
+  // The FIRST package.json up the tree decides, as in the installer's probe: a
+  // shim's walk would otherwise reach an unrelated manifest.
+  for (;;) {
+    const manifest = path.join(dir, "package.json");
+    if (fs.existsSync(manifest)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(manifest, "utf8")) as { name?: string };
+        return pkg.name === PACKAGE_NAME ? dir : null;
+      } catch {
+        return null;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * The `argent` an editor would start, looked up on `pathValue` in-process: no
+ * `which` (missing on some images) and no change to this process's PATH. Any
+ * executable counts, like the installer's `isGloballyInstalled()`, so pnpm and
+ * Yarn script shims pass; npx / dlx caches don't.
+ */
+export function findGlobalArgent(pathValue: string | undefined): GlobalInstall | null {
+  const exts =
+    process.platform === "win32"
+      ? ["", ...(process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
+      : [""];
+  for (const dir of (pathValue ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const bin = path.join(dir, MCP_BINARY_NAME + ext);
+      if (isTempRunnerPath(bin) || !isExecutableFile(bin)) continue;
+      const root = argentPackageRoot(bin);
+      let version: string | null = null;
+      if (root) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+            version?: string;
+          };
+          version = pkg.version ?? null;
+        } catch {
+          // Version stays unknown.
+        }
+      }
+      return { bin, root, version };
+    }
+  }
+  return null;
 }
 
 // MARK: Install
@@ -113,10 +209,11 @@ function readEnginesNode(packageRoot: string): string | null {
 }
 
 function installSection(
-  projectRoot: string,
+  ctx: DoctorContext,
   running: string,
   paths: ToolsServerPaths
 ): DoctorSection {
+  const { projectRoot } = ctx;
   const checks: DoctorCheck[] = [];
   const packageRoot = path.dirname(path.dirname(paths.bundlePath));
   checks.push(
@@ -137,28 +234,32 @@ function installSection(
     );
   }
 
-  const globalRoot = getGloballyInstalledPackageRoot();
-  const globalVersion = getGloballyInstalledVersion();
+  const global = ctx.global;
   checks.push(
-    globalRoot
-      ? check("ok", `Global install v${globalVersion ?? "?"} on PATH`, { detail: home(globalRoot) })
-      : check("info", "No global install on PATH")
+    !global
+      ? check("info", "No global install on PATH")
+      : global.root
+        ? check("ok", `Global install v${global.version ?? "?"} on PATH`, {
+            detail: home(global.root),
+          })
+        : check("ok", "Global install on PATH", {
+            detail: `${home(global.bin)} (a script shim, so its version can't be read)`,
+          })
   );
 
-  const mode = resolveInstallMode(projectRoot);
-  if (mode === "local") {
+  if (ctx.mode === "local") {
     const local = probeLocalInstall(projectRoot);
     const source = readInstallRecord(projectRoot) ? ".argent/install.json" : "package.json";
     if (!local.installed) {
       checks.push(
         check("error", `Project uses a local install (${source}) but it is not installed`, {
-          fix: "Install project dependencies (npm install)",
+          fix: ctx.installCmd,
         })
       );
     } else if (local.version && isNewerVersion(running, local.version)) {
       checks.push(
         check("warn", `Project's local install v${local.version} is older than v${running}`, {
-          fix: "argent update",
+          fix: `${ctx.argentCmd} update`,
         })
       );
     } else {
@@ -170,7 +271,7 @@ function installSection(
   if (!record) {
     checks.push(
       check("warn", "~/.argent/cli.json is missing (device providers can't find the CLI)", {
-        fix: "argent update (or start the MCP server once)",
+        fix: `${ctx.argentCmd} update (or start the MCP server once)`,
       })
     );
   } else if (!fs.existsSync(record.cli) || !fs.existsSync(record.node)) {
@@ -178,7 +279,7 @@ function installSection(
     checks.push(
       check("warn", "~/.argent/cli.json points at a path that no longer exists", {
         detail: home(gone),
-        fix: "argent update (or start the MCP server once)",
+        fix: `${ctx.argentCmd} update (or start the MCP server once)`,
       })
     );
   } else {
@@ -193,63 +294,125 @@ function installSection(
 export interface EntryContext {
   scope: "project" | "global";
   projectRoot: string;
+  cwd: string;
   globalOnPath: boolean;
   localInstalled: boolean;
+  argentCmd: string;
+  installCmd: string;
 }
 
 function formatEntry(entry: McpServerEntry): string {
   return [entry.command, ...entry.args].join(" ");
 }
 
+// `npx -y @swmansion/argent@latest mcp`: fetched on start, needs no local copy.
+const ON_DEMAND_PACKAGE = /^@swmansion\/argent(@.+)?$/;
+
 /**
  * Will this MCP entry start? Mirrors the "provably dead" rule `init` uses to
  * prune stale entries (init-stale-config.ts): a command that resolves in this
  * shell is fine; one that doesn't is dead unless custom env may fix it in the
- * client (an nvm PATH, classically).
+ * client (an nvm PATH, classically). Every argent shape must also end in `mcp`,
+ * or it starts the CLI instead of the server.
  */
 export function classifyMcpEntry(entry: McpServerEntry, ctx: EntryContext): DoctorCheck {
   const cmd = formatEntry(entry);
   if (entry.command === "") {
-    return check("warn", "argent entry exists but could not be parsed", { fix: "argent init" });
+    return check("warn", "argent entry exists but could not be parsed", {
+      fix: `${ctx.argentCmd} init`,
+    });
   }
-  if (entry.command === MCP_BINARY_NAME) {
-    if (ctx.globalOnPath) return check("ok", cmd);
+  if (entry.disabled) {
+    return check("warn", `${cmd} — switched off in the editor`, {
+      fix: "Turn the argent server back on in the editor's MCP settings",
+    });
+  }
+  const badArgs = (): DoctorCheck =>
+    check("error", `${cmd} — doesn't start the MCP server (the last argument must be \`mcp\`)`, {
+      fix: `${ctx.argentCmd} init`,
+    });
+  const endsInMcp = entry.args.at(-1) === "mcp";
+  const absolute = path.isAbsolute(entry.command);
+  const bare = path.basename(entry.command).replace(/\.(cmd|exe)$/i, "");
+
+  if (absolute && !fs.existsSync(entry.command)) {
+    return check("error", `${cmd} — ${entry.command} does not exist`, {
+      fix: `Point the entry at an existing argent, or remove it and run ${ctx.argentCmd} init`,
+    });
+  }
+  if (bare === MCP_BINARY_NAME) {
+    if (!endsInMcp) return badArgs();
+    if (absolute || ctx.globalOnPath) return check("ok", cmd);
     if (hasCustomizingEnv(entry)) {
       return check("warn", `${cmd} — \`argent\` is not on this shell's PATH`, {
         detail: "its custom env may still make it resolve inside the editor",
       });
     }
     return check("error", `${cmd} — \`argent\` is not on PATH, so this entry can't start`, {
-      fix: "argent init (or npm i -g @swmansion/argent)",
+      fix: "npm i -g @swmansion/argent (or npx @swmansion/argent init)",
     });
   }
-  if (entry.command === "node" && entry.args[0]) {
-    const script = entry.args[0];
-    const base = ctx.scope === "project" ? ctx.projectRoot : process.cwd();
+  if (bare === "node") {
+    // Node's own flags (`--no-warnings`) come before the script.
+    const script = entry.args.find((a) => !a.startsWith("-"));
+    if (!script || !endsInMcp) return badArgs();
+    if (script.includes("${")) {
+      return check("info", `${cmd} (uses an editor variable, not verified)`);
+    }
+    const base = ctx.scope === "project" ? ctx.projectRoot : ctx.cwd;
     const resolved = path.isAbsolute(script) ? script : path.join(base, script);
-    return fs.existsSync(resolved)
-      ? check("ok", cmd)
-      : check("error", `${cmd} — ${script} does not exist`, {
-          fix: "Install project dependencies (npm install), then argent update",
-        });
+    if (fs.existsSync(resolved)) return check("ok", cmd);
+    const inProjectDeps = !path.isAbsolute(script) && /node_modules[\\/]/.test(script);
+    return check("error", `${cmd} — ${script} does not exist`, {
+      fix: inProjectDeps
+        ? ctx.installCmd
+        : `Point the entry at an existing argent, or remove it and run ${ctx.argentCmd} init`,
+    });
   }
-  if (entry.command === "npx" || entry.command === "yarn") {
+  if (bare === "npx" || bare === "yarn") {
+    if (!endsInMcp) return badArgs();
+    if (bare === "npx" && entry.args.some((a) => ON_DEMAND_PACKAGE.test(a))) {
+      return check("ok", cmd, { detail: "fetched from npm when the editor starts it" });
+    }
     return ctx.localInstalled
       ? check("ok", cmd)
-      : check("error", `${cmd} — no local @swmansion/argent to run`, {
-          fix: "Install project dependencies (npm install)",
-        });
+      : check("error", `${cmd} — no local @swmansion/argent to run`, { fix: ctx.installCmd });
   }
   return check("info", `${cmd} (custom command, not verified)`);
 }
 
-function editorsSection(projectRoot: string): DoctorSection {
+function editorsSection(ctx: DoctorContext): DoctorSection {
+  const { projectRoot } = ctx;
   const checks: DoctorCheck[] = [];
-  const configured = findConfiguredAdapterScopes(ALL_ADAPTERS, projectRoot);
-  const ctx = {
+  // Run from ~, a project config path can be the global one: list it once.
+  const seenPaths = new Set<string>();
+  const configured = findConfiguredAdapterScopes(ALL_ADAPTERS, projectRoot)
+    .map((c) =>
+      c.scope === "project" && c.configPath === c.adapter.globalPath()
+        ? { ...c, scope: "global" as const }
+        : c
+    )
+    .filter((c) => !seenPaths.has(c.configPath) && seenPaths.add(c.configPath));
+  const entryCtx = {
     projectRoot,
-    globalOnPath: getGloballyInstalledPackageRoot() !== null,
+    cwd: ctx.cwd,
+    globalOnPath: ctx.global !== null,
     localInstalled: probeLocalInstall(projectRoot).installed,
+    argentCmd: ctx.argentCmd,
+    installCmd: ctx.installCmd,
+  };
+  const pushEntry = (
+    adapterName: string,
+    entry: McpServerEntry,
+    scope: "project" | "global",
+    location: string
+  ): void => {
+    const result = classifyMcpEntry(entry, { ...entryCtx, scope });
+    checks.push({
+      ...result,
+      label: `${adapterName}: ${result.label}`,
+      detail: [location, result.detail].filter(Boolean).join(" · "),
+    });
   };
 
   for (const { adapter, scope, configPath } of configured) {
@@ -259,51 +422,66 @@ function editorsSection(projectRoot: string): DoctorSection {
     } catch {
       entry = { command: "", args: [] };
     }
-    if (!entry) continue;
-    const result = classifyMcpEntry(entry, { ...ctx, scope });
-    checks.push({
-      ...result,
-      label: `${adapter.name}: ${result.label}`,
-      detail: [home(configPath) + ` (${scope})`, result.detail].filter(Boolean).join(" · "),
-    });
+    if (entry) pushEntry(adapter.name, entry, scope, `${home(configPath)} (${scope})`);
   }
 
-  // Hidden scopes that can outrank the entries above (Claude Code's local
-  // scope, VS Code's user-profile mcp.json).
-  const seen = new Set<string>();
-  for (const { adapter, scope } of configured) {
-    if (!adapter.findShadowingConfigs || seen.has(adapter.name)) continue;
-    seen.add(adapter.name);
+  // Hidden scopes that can outrank the entries above (VS Code's user-profile
+  // mcp.json, Claude Code's local scope). Claude Code is always scanned: its
+  // local scope is where `claude mcp add` writes by default, so it can be the
+  // only entry. An entry found there is judged like any other.
+  const configuredNames = new Set(configured.map((c) => c.adapter.name));
+  let localScopeEntries = 0;
+  for (const adapter of ALL_ADAPTERS) {
+    if (!adapter.findShadowingConfigs) continue;
+    const isClaude = adapter.name === "Claude Code";
+    if (!isClaude && !configuredNames.has(adapter.name)) continue;
+    const hasProjectEntry = configured.some((c) => c.adapter === adapter && c.scope === "project");
     try {
       for (const finding of adapter.findShadowingConfigs(
         projectRoot,
-        scope === "project" ? "local" : "global"
+        hasProjectEntry ? "local" : "global"
       )) {
-        checks.push(
-          check("warn", `${adapter.name}: ${finding.reason}`, { detail: finding.location })
-        );
+        if (isClaude && finding.entry) {
+          localScopeEntries++;
+          pushEntry(adapter.name, finding.entry, "project", finding.location);
+        } else {
+          checks.push(
+            check("warn", `${adapter.name}: ${finding.reason}`, { detail: finding.location })
+          );
+        }
       }
     } catch {
       // A malformed editor config must not abort the report.
     }
   }
 
-  if (configured.length === 0) {
+  if (isArgentDisabledInClaudeProject(projectRoot)) {
     checks.push(
-      check("error", "argent is not configured in any editor for this project", {
-        fix: "argent init",
+      check("warn", "Claude Code: argent is switched off for this project", {
+        detail: "~/.claude.json disabledMcpServers",
+        fix: "Turn it back on under /mcp in Claude Code",
       })
     );
   }
 
-  const configuredNames = new Set(configured.map((c) => c.adapter.name));
+  if (configured.length === 0 && localScopeEntries === 0) {
+    checks.push(
+      check("error", "argent is not configured in any editor for this project", {
+        fix: `${ctx.argentCmd} init`,
+      })
+    );
+  }
+
+  if (localScopeEntries > 0) configuredNames.add("Claude Code");
   const unconfigured = detectAdapters()
+    // A local install only writes project configs: editors without one can't be added.
+    .filter((a) => ctx.mode === "global" || a.projectPath(projectRoot) !== null)
     .map((a) => a.name)
     .filter((name) => !configuredNames.has(name));
   if (unconfigured.length > 0) {
     checks.push(
       check("info", `Detected without argent: ${unconfigured.join(", ")}`, {
-        detail: "run argent init to add them",
+        detail: `run ${ctx.argentCmd} init to add them`,
       })
     );
   }
@@ -313,27 +491,30 @@ function editorsSection(projectRoot: string): DoctorSection {
 
 // MARK: Skills & rules
 
+// A skill counts only when its directory resolves: a symlink into a missing
+// `.agents/` (a fresh clone) is no skill to the agent, and neither is a name
+// that is only in a lock file.
 function listArgentDirs(dir: string): string[] {
   try {
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
-      .filter(
-        (e) => (e.isDirectory() || e.isSymbolicLink()) && e.name.startsWith(ARGENT_SKILL_PREFIX)
-      )
-      .map((e) => e.name);
+    return fs.readdirSync(dir).filter((name) => {
+      if (!name.startsWith(ARGENT_SKILL_PREFIX)) return false;
+      try {
+        return fs.statSync(path.join(dir, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return [];
   }
 }
 
-function skillsSection(projectRoot: string): DoctorSection {
+function skillsSection(ctx: DoctorContext, reinstall: string): DoctorSection {
+  const { projectRoot } = ctx;
   const checks: DoctorCheck[] = [];
   const configured = findConfiguredAdapterScopes(ALL_ADAPTERS, projectRoot);
 
-  const installed = new Set<string>([
-    ...listArgentSkillsInLock(getProjectSkillLockPath(projectRoot)),
-    ...listArgentSkillsInLock(getGlobalSkillLockPath()),
-  ]);
+  const installed = new Set<string>();
   const ruleTargets: string[] = [];
   for (const scope of ["local", "global"] as const) {
     const adapters = configured
@@ -347,8 +528,12 @@ function skillsSection(projectRoot: string): DoctorSection {
 
   const bundled = listBundledSkills();
   const missing = bundled.filter((s) => !installed.has(s));
-  if (bundled.length > 0 && missing.length === bundled.length) {
-    checks.push(check("error", "No argent skills installed", { fix: "argent init" }));
+  if (bundled.length === 0) {
+    checks.push(
+      check("error", "The argent package ships no skills (a partial install)", { fix: reinstall })
+    );
+  } else if (missing.length === bundled.length) {
+    checks.push(check("error", "No argent skills installed", { fix: `${ctx.argentCmd} init` }));
   } else if (missing.length > 0) {
     checks.push(
       check(
@@ -356,11 +541,11 @@ function skillsSection(projectRoot: string): DoctorSection {
         `${bundled.length - missing.length}/${bundled.length} argent skills installed`,
         {
           detail: `missing: ${missing.join(", ")}`,
-          fix: "argent update",
+          fix: `${ctx.argentCmd} update`,
         }
       )
     );
-  } else if (bundled.length > 0) {
+  } else {
     checks.push(check("ok", `${bundled.length}/${bundled.length} argent skills installed`));
   }
 
@@ -368,7 +553,13 @@ function skillsSection(projectRoot: string): DoctorSection {
   try {
     ruleFiles = fs.readdirSync(RULES_DIR).filter((f) => f.endsWith(".md"));
   } catch {
-    // No bundled rules: nothing to compare against.
+    // Reported below.
+  }
+  if (ruleFiles.length === 0) {
+    checks.push(
+      check("error", "The argent package ships no rules (a partial install)", { fix: reinstall })
+    );
+    return { title: "Skills & rules", checks };
   }
   for (const target of new Set(ruleTargets)) {
     const absent = ruleFiles.filter((f) => !fs.existsSync(path.join(target, f)));
@@ -377,7 +568,7 @@ function skillsSection(projectRoot: string): DoctorSection {
         ? check("ok", `Rules present in ${home(target)}`)
         : check("warn", `Rules missing in ${home(target)}`, {
             detail: absent.join(", "),
-            fix: "argent update",
+            fix: `${ctx.argentCmd} update`,
           })
     );
   }
@@ -387,30 +578,61 @@ function skillsSection(projectRoot: string): DoctorSection {
 
 // MARK: Tool-server
 
-async function isRemoteHealthy(url: string, token?: string): Promise<boolean> {
+/** What a linked tool-server's `/tools` answer means; null status = no answer. */
+export function remoteCheck(
+  status: number | null,
+  url: string,
+  source: ResolvedToolsUrl["source"]
+): DoctorCheck {
+  const where = `${url} (${source === "env" ? "ARGENT_TOOLS_URL" : "~/.argent/link.json"})`;
+  if (status !== null && status >= 200 && status < 300) {
+    return check("ok", `Linked to ${where}, reachable`);
+  }
+  if (status === 401 || status === 403) {
+    return check("error", `Linked to ${where}, which rejects the token (HTTP ${status})`, {
+      fix:
+        source === "env"
+          ? "Set ARGENT_AUTH_TOKEN to the token the remote server printed"
+          : "Pair again: argent link <the argent:// string argent server start printed>",
+    });
+  }
+  return check(
+    "error",
+    `Linked to ${where}, ${status === null ? "unreachable" : `HTTP ${status}`}`,
+    {
+      fix:
+        source === "env"
+          ? "Start the remote server, or unset ARGENT_TOOLS_URL"
+          : "Start the remote server, or run argent unlink",
+    }
+  );
+}
+
+async function remoteStatus(url: string, token?: string): Promise<number | null> {
   try {
     const res = await fetch(`${url.replace(/\/$/, "")}/tools`, {
       signal: AbortSignal.timeout(2_000),
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    return res.ok;
+    // An unread body keeps the keep-alive socket (and the process) alive.
+    await res.body?.cancel();
+    return res.status;
   } catch {
-    return false;
+    return null;
   }
 }
 
-async function toolServerSection(running: string, paths: ToolsServerPaths): Promise<DoctorSection> {
+async function toolServerSection(
+  ctx: DoctorContext,
+  running: string,
+  paths: ToolsServerPaths,
+  linked: ResolvedToolsUrl
+): Promise<DoctorSection> {
   const checks: DoctorCheck[] = [];
 
-  const resolved = await getResolvedToolsUrl();
-  if (resolved.url) {
-    const source = resolved.source === "env" ? "ARGENT_TOOLS_URL" : "~/.argent/link.json";
+  if (linked.url) {
     checks.push(
-      (await isRemoteHealthy(resolved.url, resolved.token))
-        ? check("ok", `Linked to ${resolved.url} (${source}), reachable`)
-        : check("error", `Linked to ${resolved.url} (${source}), unreachable`, {
-            fix: "Start the remote server, or run argent unlink",
-          })
+      remoteCheck(await remoteStatus(linked.url, linked.token), linked.url, linked.source)
     );
     return { title: "Tool-server", checks };
   }
@@ -428,7 +650,7 @@ async function toolServerSection(running: string, paths: ToolsServerPaths): Prom
       checks.push(
         stale
           ? check("warn", `Running ${url} (pid ${state.pid}) from v${state.version}`, {
-              fix: "argent server stop (the next tool call starts the current version)",
+              fix: `${ctx.argentCmd} server stop (the next tool call starts the current version)`,
             })
           : check("ok", `Running ${url} (pid ${state.pid})`)
       );
@@ -469,7 +691,14 @@ async function probeHostDeps(paths: ToolsServerPaths): Promise<HostDepsReport | 
     });
     return JSON.parse(stdout) as HostDepsReport;
   } catch (err) {
-    const stderr = (err as { stderr?: unknown }).stderr;
+    const { stderr, killed, signal } = err as {
+      stderr?: unknown;
+      killed?: boolean;
+      signal?: string | null;
+    };
+    if (killed || signal) {
+      return `timed out after ${DEPS_PROBE_TIMEOUT_MS / 1000}s (${signal ?? "killed"})`;
+    }
     const fallback = err instanceof Error ? err.message.split("\n")[0]! : String(err);
     return childFailureReason(typeof stderr === "string" ? stderr : "", fallback);
   }
@@ -488,7 +717,7 @@ export function childFailureReason(stderr: string, fallback: string): string {
   return lines.find((l) => /^[\w.]*Error\b/.test(l)) ?? lines[0] ?? fallback;
 }
 
-export function platformChecks(report: HostDepsReport): DoctorCheck[] {
+export function platformChecks(report: HostDepsReport, reinstall: string): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   const dep = (name: string) => report.deps.find((d) => d.dep === name);
   const brokenBundle = report.bundled.filter((b) => b.error);
@@ -496,7 +725,7 @@ export function platformChecks(report: HostDepsReport): DoctorCheck[] {
     checks.push(
       check("error", `Bundled ${b.name} is missing`, {
         detail: b.error,
-        fix: "Reinstall argent (argent update)",
+        fix: reinstall,
       })
     );
   }
@@ -507,9 +736,23 @@ export function platformChecks(report: HostDepsReport): DoctorCheck[] {
     checks.push(check("info", "iOS simulator: requires a macOS host"));
   } else {
     const xcrun = dep("xcrun");
-    if (xcrun?.path && bundleOk(["simulator-server", "ax-service"])) {
+    // /usr/bin/xcrun is a shim on every Mac: simulators need a developer dir
+    // with simctl (full Xcode, not just the Command Line Tools).
+    const noSimctl = report.xcode != null && !report.xcode.simctl;
+    if (xcrun?.path && noSimctl) {
+      checks.push(
+        check("info", "iOS simulator: Xcode not found (no simctl in the active developer dir)", {
+          detail: report.xcode?.developerDir ?? "xcode-select -p failed",
+          fix: "Install Xcode, then sudo xcode-select -s /Applications/Xcode.app",
+        })
+      );
+    } else if (xcrun?.path && bundleOk(["simulator-server", "ax-service"])) {
       usable++;
-      checks.push(check("ok", "iOS simulator", { detail: `xcrun at ${xcrun.path}` }));
+      checks.push(
+        check("ok", "iOS simulator", {
+          detail: report.xcode?.developerDir ?? `xcrun at ${xcrun.path}`,
+        })
+      );
     } else if (!xcrun?.path) {
       checks.push(
         check("info", "iOS simulator: Xcode command-line tools not found", { fix: xcrun?.hint })
@@ -551,9 +794,16 @@ export function platformChecks(report: HostDepsReport): DoctorCheck[] {
   }
 
   const vega = dep("vega");
-  if (vega?.path) {
+  if (vega?.path && adb?.path) {
     usable++;
     checks.push(check("ok", "Vega (Fire TV)", { detail: `vega at ${vega.path}` }));
+  } else if (vega?.path) {
+    // The Vega SDK does not ship adb, and most Vega tools need it.
+    checks.push(
+      check("warn", "Vega (Fire TV): adb not found, which Vega tools need too", {
+        fix: adb?.hint,
+      })
+    );
   } else {
     checks.push(check("info", "Vega (Fire TV): vega CLI not found", { fix: vega?.hint }));
   }
@@ -565,17 +815,28 @@ export function platformChecks(report: HostDepsReport): DoctorCheck[] {
     })
   );
 
+  // Chromium / Electron need nothing installed, so this is not a failure.
   if (usable === 0) {
     checks.unshift(
-      check("error", "No mobile platform toolchain found: argent can't list or boot devices", {
-        fix: "Install Xcode (iOS) or Android platform-tools (see the lines below)",
+      check("warn", "No mobile platform toolchain found: only Chromium / Electron apps work", {
+        fix: "Install Xcode (iOS), Android platform-tools, or the Vega SDK (see the lines below)",
       })
     );
   }
   return checks;
 }
 
-async function platformsSection(paths: ToolsServerPaths): Promise<DoctorSection> {
+async function platformsSection(
+  paths: ToolsServerPaths,
+  linked: ResolvedToolsUrl,
+  reinstall: string
+): Promise<DoctorSection> {
+  if (linked.url) {
+    return {
+      title: "Platforms",
+      checks: [check("info", "Skipped: device tools run on the linked tool-server's host")],
+    };
+  }
   const report = await probeHostDeps(paths);
   if (typeof report === "string") {
     return {
@@ -583,12 +844,12 @@ async function platformsSection(paths: ToolsServerPaths): Promise<DoctorSection>
       checks: [
         check("error", "Could not run the bundled tool-server's dependency check", {
           detail: report,
-          fix: "Reinstall argent (argent update)",
+          fix: reinstall,
         }),
       ],
     };
   }
-  return { title: "Platforms", checks: platformChecks(report) };
+  return { title: "Platforms", checks: platformChecks(report, reinstall) };
 }
 
 // MARK: Other
@@ -607,12 +868,12 @@ async function fetchLatestVersion(): Promise<string | null> {
 }
 
 async function otherSection(
-  projectRoot: string,
+  ctx: DoctorContext,
   running: string,
   offline: boolean
 ): Promise<DoctorSection> {
   const checks: DoctorCheck[] = [];
-  const consent = getConsentState(process.env, projectRoot);
+  const consent = getConsentState(process.env, ctx.projectRoot);
   const source = consent.source.detail ?? consent.source.source;
   checks.push(
     check("info", `Telemetry ${consent.enabled ? "enabled" : "disabled"} (${source})`, {
@@ -628,7 +889,9 @@ async function otherSection(
       checks.push(check("info", "Update check skipped (npm registry unreachable)"));
     } else if (isNewerVersion(latest, running)) {
       checks.push(
-        check("warn", `Update available: v${running} → v${latest}`, { fix: "argent update" })
+        check("warn", `Update available: v${running} → v${latest}`, {
+          fix: `${ctx.argentCmd} update`,
+        })
       );
     } else {
       checks.push(check("ok", `Up to date (latest v${latest})`));
@@ -641,37 +904,68 @@ async function otherSection(
 
 /**
  * PATH as an editor sees it. `npx argent doctor` and npm scripts prepend the
- * project's `node_modules/.bin`, which would make the project-local copy pass
- * for a global install (and a bare `argent mcp` entry look startable). Editors
- * spawn MCP servers without those dirs, so the probes must not see them either.
+ * `node_modules/.bin` of the project and its ancestors, which would make the
+ * project-local copy pass for a global install (and a bare `argent mcp` entry
+ * look startable). Editors don't see those dirs. A `node_modules/.bin` outside
+ * cwd's ancestry is a real global bin (Yarn classic's) and stays.
  */
-export function stripPackageBinDirs(pathValue: string): string {
+export function stripPackageBinDirs(pathValue: string, cwd: string): string {
+  const here = path.resolve(cwd);
   return pathValue
     .split(path.delimiter)
-    .filter((dir) => !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(dir))
+    .filter((dir) => {
+      const match = /^(.*)[\\/]node_modules[\\/]\.bin[\\/]?$/.exec(dir);
+      if (!match) return true;
+      const rel = path.relative(path.resolve(match[1] || path.sep), here);
+      return rel.startsWith("..") || path.isAbsolute(rel);
+    })
     .join(path.delimiter);
+}
+
+function currentDir(): string {
+  try {
+    return process.cwd();
+  } catch {
+    // The shell's directory was deleted (a removed worktree).
+    return homedir();
+  }
 }
 
 async function collectDoctorReport(options: {
   paths: ToolsServerPaths;
   offline: boolean;
-  cwd?: string;
 }): Promise<DoctorReport> {
-  const projectRoot = resolveProjectRoot(options.cwd ?? process.cwd());
-  // The global-install probe shells out to `which` with process.env.
-  if (process.env.PATH) process.env.PATH = stripPackageBinDirs(process.env.PATH);
+  const cwd = currentDir();
+  const projectRoot = resolveProjectRoot(cwd);
+  const mode = resolveInstallMode(projectRoot);
+  const global = findGlobalArgent(stripPackageBinDirs(process.env.PATH ?? "", cwd));
+  const ctx: DoctorContext = {
+    projectRoot,
+    cwd,
+    mode,
+    global,
+    argentCmd: global ? "argent" : mode === "local" ? "npx argent" : "npx @swmansion/argent",
+    installCmd: formatShellCommand(projectInstallCommand(detectProjectPackageManager(projectRoot))),
+  };
   const running = options.paths.version ?? getInstalledVersion() ?? "unknown";
+  // `argent update` only installs when a newer version exists, so it can't
+  // repair a broken copy of the current one.
+  const reinstall =
+    options.paths.installKind === "local"
+      ? `Reinstall argent: delete node_modules/${PACKAGE_NAME}, then ${ctx.installCmd}`
+      : `Reinstall argent: npm i -g ${PACKAGE_NAME}`;
+  const linked = await getResolvedToolsUrl();
 
   // Sections that touch the network or spawn a process run concurrently.
   const [toolServer, platforms, other] = await Promise.all([
-    toolServerSection(running, options.paths),
-    platformsSection(options.paths),
-    otherSection(projectRoot, running, options.offline),
+    toolServerSection(ctx, running, options.paths, linked),
+    platformsSection(options.paths, linked, reinstall),
+    otherSection(ctx, running, options.offline),
   ]);
   const sections = [
-    installSection(projectRoot, running, options.paths),
-    editorsSection(projectRoot),
-    skillsSection(projectRoot),
+    installSection(ctx, running, options.paths),
+    editorsSection(ctx),
+    skillsSection(ctx, reinstall),
     toolServer,
     platforms,
     other,
