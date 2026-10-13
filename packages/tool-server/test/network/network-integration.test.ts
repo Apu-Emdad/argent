@@ -41,7 +41,7 @@ const networkLog: Array<{
   id: number;
   requestId: string;
   state: string;
-  request: { url: string; method: string; headers: Record<string, string> };
+  request: { url: string; method: string; headers: Record<string, string>; postData?: string };
   response?: {
     url: string;
     status: number;
@@ -279,9 +279,10 @@ beforeAll(async () => {
       requestId: "rn-net-2",
       state: "failed",
       request: {
-        url: "https://api.example.com/broken",
+        url: "https://api.example.com/broken?access_token=tok-leak&page=2",
         method: "POST",
         headers: {},
+        postData: '{"email":"dev@example.com","password":"hunter2"}',
       },
       resourceType: "Fetch",
       timestamp: Date.now() / 1000,
@@ -429,6 +430,19 @@ describe("NetworkInspector integration (mock server)", () => {
     expect(resp.body).toBeDefined();
     expect(resp.body).toContain("Alice");
     expect(resp.body).toContain("Bob");
+  });
+
+  it("view-network-request-details masks credentials in the request body and URL", async () => {
+    const result = (await registry.invokeTool("view-network-request-details", {
+      port: mockPort,
+      device_id: "mock-device",
+      requestId: "rn-net-2",
+    })) as { request: { url: string; postData?: string } };
+
+    expect(result.request.url).toBe(
+      "https://api.example.com/broken?access_token=[REDACTED]&page=2"
+    );
+    expect(result.request.postData).toBe('{"email":"dev@example.com","password":"[REDACTED]"}');
   });
 
   it("view-network-request-details returns error for unknown requestId", async () => {

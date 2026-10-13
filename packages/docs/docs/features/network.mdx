@@ -39,7 +39,9 @@ First the agent reads the list of requests. Each line has this format:
 
 Then the agent reads the details of one request. The details contain the headers of the request and of the response, the times, the initiator, and the body of the response.
 
-For the JS runtime and Chrome DevTools Protocol layers, Argent replaces the values of secret headers with `[REDACTED]`. A header is secret if its name contains `authorization`, `cookie`, `token`, `api-key` or a related word. In a JSON or form request body, Argent also replaces the values of fields such as `password`, `secret`, `access_token` and `api_key`. The field names stay visible. A one-time code stays visible. Argent also shortens a body that is longer than 1000 characters. The message shows the initial length. The native `NSURLProtocol` layer does not redact headers. See the Limits section.
+For the JS runtime and Chrome DevTools Protocol layers, Argent replaces the values of secret headers with `[REDACTED]`. A header is secret if its name contains `authorization`, `cookie`, `token`, `api-key` or a related word. For the same layers, Argent also replaces secret values in the request body and in the query of the URL. A value is secret if its field name contains `password`, `token`, `secret`, `api_key` or a related word. Argent does this for JSON bodies, form bodies and multipart bodies. The field names stay visible. A one-time code and an empty value stay visible.
+
+Argent shortens a response body that is longer than 1000 characters. The message shows the initial length. The native `NSURLProtocol` layer does not redact headers or bodies. See the Limits section.
 
 Argent removes the bundle traffic and the HMR traffic of Metro from the record. Thus the record contains the requests of your app only.
 
@@ -56,7 +58,7 @@ Argent removes the bundle traffic and the HMR traffic of Metro from the record. 
 - The record keeps the most recent requests only. The limits are 2000 requests for the JS layer and 1000 requests for Chromium. For native iOS, the limit is 1000 protocol events. A request produces several events, so the native record holds fewer than 1000 requests.
 - For Chromium, Argent reads the active tab. If you change the tab, Argent attaches to the new tab. If the page changed after the request, the body of the response can be unavailable.
 - The `NSURLProtocol` layer is available on iOS only. On Android, use the JS layer.
-- Argent does not replace the data in the bodies of the requests and of the responses. Protect a record of requests as you protect other data of the app.
-- On the native `NSURLProtocol` layer, Argent does not replace the values of secret headers. The agent sees headers such as `Authorization` and `Cookie` in full. Protect a record of native requests as you protect other data of the app.
+- Argent does not replace the data in the bodies of the responses. For example, the agent sees an access token that the server sends back. Protect a record of requests as you protect other data of the app.
+- On the native `NSURLProtocol` layer, Argent does not replace secret values. The agent sees headers such as `Authorization` and `Cookie` in full. The agent also sees the request bodies in full. Protect a record of native requests as you protect other data of the app.
 
 Argent does this with these three tools: `view-network-logs`, `view-network-request-details` and `native-network-logs`. The [tools reference](/docs/reference/tools) contains all tools.

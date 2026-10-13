@@ -256,6 +256,28 @@ describe("view-network-request-details (chromium branch)", () => {
     expect(details.response.body).toBe('{"ok":true}');
   });
 
+  it("masks credentials in the request body and URL", async () => {
+    const record = rec({
+      requestId: "r2",
+      method: "POST",
+      url: "https://x.test/login?key=AIzaSECRET&page=2",
+      postData: "username=a&password=hunter2",
+    });
+    const services = {
+      chromium: { cdp: { send: vi.fn() }, server: { network: { get: () => record } } },
+    } as never;
+
+    const details = (await networkRequestTool.execute(services, {
+      device_id: "chromium-cdp-9222",
+      port: 8081,
+      requestId: "r2",
+      includeBody: true,
+    })) as { request: { url: string; postData?: string } };
+
+    expect(details.request.url).toBe("https://x.test/login?key=[REDACTED]&page=2");
+    expect(details.request.postData).toBe("username=a&password=[REDACTED]");
+  });
+
   it("returns an error string when the requestId is unknown", async () => {
     const services = {
       chromium: { cdp: { send: vi.fn() }, server: { network: { get: () => undefined } } },

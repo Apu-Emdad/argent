@@ -10,6 +10,7 @@ import {
   makeNetworkDetailReadScript,
 } from "../../utils/debugger/scripts/network-interceptor";
 import { metroPort, metroPortField } from "../../utils/debugger/metro-port";
+import { redactBody, redactUrl } from "./redact-body";
 
 const SENSITIVE_HEADER_PATTERNS = [
   "auth",
@@ -37,52 +38,6 @@ function redactHeaders(headers: Record<string, string> | undefined): Record<stri
     result[key] = isSensitiveHeader(key) ? "[REDACTED]" : value;
   }
   return result;
-}
-
-/**
- * Request-body fields whose values are masked. Keys stay visible, so an agent
- * can still tell which request carries a credential; only the secret is not
- * copied into the transcript (a sign-in POST used to show the password).
- * One-time codes are deliberately not masked: proving which request carries
- * an OTP is a common debugging question.
- */
-const SENSITIVE_BODY_KEY =
-  /^(password|passwd|pass|new_?password|current_?password|secret|client_?secret|api_?key|token|auth_?token|access_?token|refresh_?token|id_?token|private_?key)$/i;
-
-export function redactBody(body: string | undefined): string | undefined {
-  if (!body) return body;
-  try {
-    const parsed: unknown = JSON.parse(body);
-    const mask = (v: unknown): unknown => {
-      if (Array.isArray(v)) return v.map(mask);
-      if (v && typeof v === "object") {
-        return Object.fromEntries(
-          Object.entries(v as Record<string, unknown>).map(([k, val]) => [
-            k,
-            SENSITIVE_BODY_KEY.test(k) && val !== null && typeof val !== "object"
-              ? "[REDACTED]"
-              : mask(val),
-          ])
-        );
-      }
-      return v;
-    };
-    return JSON.stringify(mask(parsed));
-  } catch {
-    // Form-encoded: key=value&key=value
-    if (/^[^=&\s]+=[^&]*(&[^=&\s]+=[^&]*)*$/.test(body)) {
-      return body
-        .split("&")
-        .map((pair) => {
-          const [k, ...rest] = pair.split("=");
-          return SENSITIVE_BODY_KEY.test(decodeURIComponent(k ?? "")) && rest.length
-            ? `${k}=[REDACTED]`
-            : pair;
-        })
-        .join("&");
-    }
-    return body;
-  }
 }
 
 /** Response body chars kept; the rest is truncated to limit context. */
@@ -164,7 +119,8 @@ export const networkRequestTool: ToolDefinition<
       `Failed to read network request ${params.requestId}: ${failureSignal.error_code}`,
   },
   description: `Get full details of a specific network request by its requestId (from view-network-logs).
-Returns request/response headers (sensitive headers and password/secret body fields redacted), status, timing, and optionally the response body.
+Returns request/response headers, status, timing, the request body, and optionally the response body.
+Sensitive headers, and password/token/api-key fields in the request body and URL query, are redacted. The response body is returned as-is, not redacted.
 Large response bodies are truncated. Use when you need headers, body, or timing for a specific request after listing logs.
 Returns an error message string if the requestId is not found — use view-network-logs to get valid requestId values.`,
   zodSchema,
@@ -196,7 +152,7 @@ Returns an error message string if the requestId is not found — use view-netwo
       };
       if (rec.url) {
         details.request = {
-          url: rec.url,
+          url: redactUrl(rec.url),
           method: rec.method,
           headers: redactHeaders(rec.requestHeaders),
           postData: redactBody(rec.postData),
@@ -259,7 +215,7 @@ Returns an error message string if the requestId is not found — use view-netwo
 
     if (entry.request) {
       details.request = {
-        url: entry.request.url,
+        url: redactUrl(entry.request.url),
         method: entry.request.method,
         headers: redactHeaders(entry.request.headers),
         postData: redactBody(entry.request.postData),
