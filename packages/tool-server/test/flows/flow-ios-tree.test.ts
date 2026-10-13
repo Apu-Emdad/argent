@@ -9,6 +9,12 @@ import {
   queryIosSimulatorFlowTree,
   readIosSimulatorUiTree,
 } from "../../src/tools/flows/flow-ios-tree";
+import {
+  evaluateCondition,
+  findAll,
+  nodeAtPoint,
+  selectorToFrame,
+} from "../../src/utils/ui-tree-match";
 
 const UDID = "00000000-0000-0000-0000-0000000000AB";
 const device = { platform: "ios", id: UDID, udid: UDID, kind: "simulator" } as DeviceInfo;
@@ -292,6 +298,106 @@ describe("iOS simulator flow tree projection", () => {
     ]);
     const list = tree.children.find((c) => c.scrollable)!;
     expect(list.subtreeText).toBe("Haptic Feedback Volume 50% Brightness 20% Contrast 70%");
+  });
+  it("reads a switch row's text without the switch's 0/1 state", () => {
+    // Settings > Keyboards: a toggle row (id, label, value) over a title and
+    // the switch itself, which carries only the value.
+    const settings = (value: "0" | "1") =>
+      adaptIosUiTreeForFlows(
+        adaptAxTree(
+          reply([
+            app,
+            {
+              index: 1,
+              parentIndex: 0,
+              identifier: "KeyboardVisceral",
+              label: "Haptic Feedback",
+              value,
+              traits: ["button", "staticText", "toggleButton"],
+              elementType: 40,
+              frame: frame(0.05, 0.4, 0.9, 0.06),
+            },
+            {
+              index: 2,
+              parentIndex: 1,
+              identifier: "KeyboardVisceral",
+              label: "Haptic Feedback",
+              traits: ["button", "staticText"],
+              elementType: 9,
+              frame: frame(0.09, 0.41, 0.3, 0.04),
+            },
+            {
+              index: 3,
+              parentIndex: 1,
+              value,
+              traits: ["button", "toggleButton"],
+              elementType: 40,
+              frame: frame(0.76, 0.41, 0.16, 0.04),
+            },
+          ])
+        )
+      );
+    for (const value of ["0", "1"] as const) {
+      const tree = settings(value);
+      const row = findAll(tree, { identifier: "KeyboardVisceral", role: "AXSwitch" });
+      expect(row).toHaveLength(1);
+      expect(row[0]!.subtreeText).toBe("Haptic Feedback");
+      expect(evaluateCondition("text", "Haptic Feedback", row, "equals")).toBe(true);
+      // The state stays readable on the row and on the bare switch.
+      expect(evaluateCondition("text", `Haptic Feedback ${value}`, row, "equals")).toBe(true);
+      const bare = tree.children.filter((c) => c.role === "AXSwitch" && !c.identifier);
+      expect(evaluateCondition("text", value, bare, "equals")).toBe(true);
+    }
+  });
+
+  it("keeps keyboard keys' text out of selectors, but not their ids", () => {
+    const tree = adaptIosUiTreeForFlows(
+      adaptAxTree(
+        reply([
+          app,
+          {
+            index: 1,
+            parentIndex: 0,
+            label: "Continue to next step",
+            traits: ["button"],
+            elementType: 9,
+            frame: frame(0.05, 0.5, 0.9, 0.06),
+          },
+          {
+            index: 2,
+            parentIndex: 0,
+            identifier: "UIKeyboardLayoutStar Preview",
+            elementType: 0,
+            frame: frame(0, 0.65, 1, 0.35),
+          },
+          {
+            index: 3,
+            parentIndex: 2,
+            label: "next",
+            identifier: "Next:",
+            traits: ["button", "keyboardKey"],
+            elementType: 21,
+            frame: frame(0.75, 0.9, 0.24, 0.05),
+          },
+          {
+            index: 4,
+            parentIndex: 2,
+            label: "q",
+            traits: ["keyboardKey"],
+            elementType: 21,
+            frame: frame(0.01, 0.7, 0.1, 0.05),
+          },
+        ])
+      )
+    );
+    expect(selectorToFrame(tree, { text: "next" })).toEqual(frame(0.05, 0.5, 0.9, 0.06));
+    expect(evaluateCondition("hidden", undefined, findAll(tree, { text: "q" }))).toBe(true);
+    expect(selectorToFrame(tree, { identifier: "Next:" })).toEqual(frame(0.75, 0.9, 0.24, 0.05));
+    // A tap on a key still hits the key, not the keyboard behind it.
+    expect(nodeAtPoint(tree, { x: 0.05, y: 0.72 })?.frame).toEqual(frame(0.01, 0.7, 0.1, 0.05));
+    expect(
+      tree.children.find((c) => c.identifier === "UIKeyboardLayoutStar Preview")?.subtreeText
+    ).toBeUndefined();
   });
 });
 

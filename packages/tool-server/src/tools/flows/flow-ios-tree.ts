@@ -49,6 +49,21 @@ function isScrollIndicator(node: UiTreeNode): boolean {
   return node.type === "Other" && node.traits?.length === 1 && node.traits[0] === "adjustable";
 }
 
+/**
+ * A software keyboard key. Its text is not a selector target: the return key's
+ * label (Next, Done, Go) would win an exact-text tap over the app's own button,
+ * and fail a `hidden` check on it. The key keeps its id and frame, so a
+ * recorded tap on it still records the key.
+ */
+function isKeyboardKey(node: UiTreeNode): boolean {
+  return node.traits?.includes("keyboardKey") === true;
+}
+
+/** A toggle's "0"/"1" is its state, not text the row shows. */
+function isToggleState(node: UiTreeNode): boolean {
+  return node.checked !== undefined && (node.value === "0" || node.value === "1");
+}
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
@@ -96,14 +111,15 @@ function projectAxNode(node: UiTreeNode): FlatNode<UiTreeNode> {
     node.role !== "AXGroup";
   // An empty input reports its placeholder as its value, as `describe` prints it.
   const value = node.value ?? (node.hintShowing ? node.placeholder : undefined);
+  const key = isKeyboardKey(node);
   let leaf: DescribeNode | null = null;
   if (frame && addressable) {
     leaf = {
       role: node.role,
       frame,
       children: [],
-      ...(node.label !== undefined ? { label: node.label } : {}),
-      ...(value !== undefined && !node.password ? { value } : {}),
+      ...(node.label !== undefined && !key ? { label: node.label } : {}),
+      ...(value !== undefined && !node.password && !key ? { value } : {}),
       ...(node.identifier !== undefined ? { identifier: node.identifier } : {}),
       ...(node.focused ? { focused: true } : {}),
       ...(node.disabled ? { disabled: true } : {}),
@@ -117,7 +133,7 @@ function projectAxNode(node: UiTreeNode): FlatNode<UiTreeNode> {
     skip: false,
     children: scrollable ? node.children.filter((c) => !isScrollIndicator(c)) : node.children,
     // Off-screen text must not hoist: a `text` assert guards what the screen shows.
-    ownText: leaf ? nodeText(leaf) : "",
+    ownText: leaf ? nodeText(isToggleState(node) ? { ...leaf, value: undefined } : leaf) : "",
     leaf,
     shield: Boolean(node.identifier) || node.password === true,
     // Scroll-clip inputs, unclamped and in the tree's normalized space.
