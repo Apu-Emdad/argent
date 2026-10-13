@@ -8,6 +8,7 @@ import { isTvOsSimulator } from "../../utils/ios-devices";
 import { iosRequires } from "../describe/platforms/ios";
 import { androidRequires } from "../describe/platforms/android";
 import { adaptAndroidTree } from "../ui-tree/android";
+import { awaitAndroidTransitionStart } from "../../utils/android-input";
 
 // Mirrored, with field docs, in argent/src/client.ts. Same meaning as ui-tree's
 // foregroundApp and alertVisible.
@@ -46,6 +47,7 @@ async function readAndroidForegroundApp(
 ): Promise<ForegroundApp> {
   const ref = androidDevtoolsRef(device);
   const devtools = await registry.resolveService<AndroidDevtoolsApi>(ref.urn, ref.options);
+  await awaitAndroidTransitionStart(device.id);
   const [capture, size] = await Promise.all([
     // The default settle, as ui-tree: free on a settled screen, and it keeps a
     // mid-transition window list (right after home or a launch) from naming the old app.

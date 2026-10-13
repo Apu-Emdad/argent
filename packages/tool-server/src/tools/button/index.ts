@@ -7,7 +7,11 @@ import { RunnerCommandError } from "../../utils/ios-device/runner-client";
 import { isIosPhysicalDevice, resolveDevice } from "../../utils/device-info";
 import { UnsupportedOperationError } from "../../utils/capability";
 import { sendCommand } from "../../utils/simulator-client";
-import { ANDROID_BUTTON_KEYCODES, injectAndroidKeycode } from "../../utils/android-input";
+import {
+  ANDROID_BUTTON_KEYCODES,
+  injectAndroidKeycode,
+  markAndroidTransitionKey,
+} from "../../utils/android-input";
 import { ensureDep } from "../../utils/check-deps";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -41,6 +45,13 @@ export const BUTTONS_BY_PLATFORM: Record<Platform, ReadonlySet<Params["button"]>
   // `vega`, so this entry only keeps the record total.
   "vega": new Set([]),
 };
+
+// Android buttons whose window transition a following foreground-app / ui-tree read waits for.
+const ANDROID_TRANSITION_BUTTONS: ReadonlySet<Params["button"]> = new Set([
+  "home",
+  "back",
+  "appSwitch",
+]);
 
 const capability: ToolCapability = {
   apple: { simulator: true, device: true },
@@ -138,7 +149,11 @@ Fails if the device backend is not reachable: the simulator-server for iOS, or \
       // The tool declares no global `requires`, so preflight adb here for the
       // clean 424 install hint on a missing binary.
       await ensureDep("adb");
+      const startedAt = Date.now();
       await injectAndroidKeycode(params.udid, ANDROID_BUTTON_KEYCODES[params.button]!);
+      if (ANDROID_TRANSITION_BUTTONS.has(params.button)) {
+        markAndroidTransitionKey(params.udid, Date.now() - startedAt);
+      }
       return { pressed: params.button };
     }
     const api = services.simulatorServer as SimulatorServerApi;

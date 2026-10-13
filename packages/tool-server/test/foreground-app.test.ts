@@ -6,6 +6,7 @@ import { createForegroundAppTool } from "../src/tools/foreground-app";
 import { UnsupportedOperationError } from "../src/utils/capability";
 import { cacheSimulatorRuntimeKind } from "../src/utils/ios-devices";
 import { __primeDepCacheForTests, __resetDepCacheForTests } from "../src/utils/check-deps";
+import { markAndroidTransitionKey } from "../src/utils/android-input";
 
 const IOS_UDID = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
 const TV_UDID = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB";
@@ -74,6 +75,45 @@ describe("foreground-app", () => {
     it("reads window roots only, with the default settle", async () => {
       await android(dump(win("1", "com.google.android.apps.nexuslauncher")));
       expect(hierarchyCalls).toEqual([{ maxDepth: 0, clearCache: true }]);
+    });
+
+    it("waits for the transition to begin right after a home, back or app switch press", async () => {
+      vi.useFakeTimers();
+      try {
+        markAndroidTransitionKey("emulator-5554");
+        let done = false;
+        const read = android(dump(win("1", "com.example"))).then(() => (done = true));
+        await vi.advanceTimersByTimeAsync(100);
+        expect(hierarchyCalls).toEqual([]);
+        await vi.advanceTimersByTimeAsync(60);
+        await read;
+        expect(done).toBe(true);
+        expect(hierarchyCalls).toHaveLength(1);
+        // A later read pays nothing.
+        await vi.advanceTimersByTimeAsync(1000);
+        hierarchyCalls.length = 0;
+        await android(dump(win("1", "com.example")));
+        expect(hierarchyCalls).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waits longer after a press whose keyevent call was slow", async () => {
+      vi.useFakeTimers();
+      try {
+        // Its own serial: a press marked under fake time must not delay the other tests.
+        markAndroidTransitionKey("emulator-5556", 600);
+        capture = { xml: dump(win("1", "com.example")), truncated: true, ...V2 };
+        const read = run("emulator-5556");
+        await vi.advanceTimersByTimeAsync(500);
+        expect(hierarchyCalls).toEqual([]);
+        await vi.advanceTimersByTimeAsync(150);
+        await read;
+        expect(hierarchyCalls).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("answers the launcher on the home screen", async () => {

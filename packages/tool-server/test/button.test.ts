@@ -12,6 +12,7 @@ vi.mock("../src/utils/simulator-client", async (importOriginal) => ({
 vi.mock("../src/utils/android-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/utils/android-input")>()),
   injectAndroidKeycode: vi.fn(),
+  markAndroidTransitionKey: vi.fn(),
 }));
 
 // The Android branch preflights adb via `ensureDep("adb")` before injecting.
@@ -27,7 +28,11 @@ import { FAILURE_CODES, getFailureSignal } from "@argent/registry";
 import { buttonTool, BUTTONS_BY_PLATFORM } from "../src/tools/button";
 import { UnsupportedOperationError } from "../src/utils/capability";
 import { RunnerCommandError } from "../src/utils/ios-device/runner-client";
-import { ANDROID_BUTTON_KEYCODES, injectAndroidKeycode } from "../src/utils/android-input";
+import {
+  ANDROID_BUTTON_KEYCODES,
+  injectAndroidKeycode,
+  markAndroidTransitionKey,
+} from "../src/utils/android-input";
 import { DependencyMissingError, ensureDep } from "../src/utils/check-deps";
 import { sendCommand } from "../src/utils/simulator-client";
 
@@ -88,6 +93,17 @@ describe("button tool — per-platform validation", () => {
       );
       // Every Android button goes over adb only — never the sim-server HID path.
       expect(sendCommand).not.toHaveBeenCalled();
+    }
+  });
+
+  it("marks home, back and app switch so a following read waits for the transition", async () => {
+    for (const button of BUTTONS_BY_PLATFORM.android) {
+      vi.mocked(markAndroidTransitionKey).mockClear();
+      await buttonTool.execute(services, { udid: androidUdid, button });
+      const marked = ["home", "back", "appSwitch"].includes(button);
+      expect(vi.mocked(markAndroidTransitionKey).mock.calls).toEqual(
+        marked ? [[androidUdid, expect.any(Number)]] : []
+      );
     }
   });
 

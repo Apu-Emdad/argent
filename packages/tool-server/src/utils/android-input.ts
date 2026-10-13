@@ -122,6 +122,27 @@ export async function injectAndroidKeycode(serial: string, keycode: number): Pro
   await adbShell(serial, `input keyevent ${keycode}`, { timeoutMs: ADB_INPUT_TIMEOUT_MS });
 }
 
+// Home, back and app switch start their window transition only after `input keyevent` returns.
+// Until then the window list still shows the old app and no AX event has arrived, so a settle
+// returns at once with the old answer. Readers wait out this gap after such a press, longer on a
+// slow device, where the keyevent call itself was slow.
+const TRANSITION_START_MS = 150;
+const TRANSITION_START_MAX_MS = 2000;
+const transitionReadyAt = new Map<string, number>();
+
+/** Record a press that starts a window transition (home, back, app switch); `tookMs` is how long it took. */
+export function markAndroidTransitionKey(serial: string, tookMs = 0): void {
+  const wait = Math.min(Math.max(TRANSITION_START_MS, tookMs), TRANSITION_START_MAX_MS);
+  transitionReadyAt.set(serial, Date.now() + wait);
+}
+
+/** Wait until a transition started by a recent press has had time to begin. */
+export async function awaitAndroidTransitionStart(serial: string): Promise<void> {
+  const until = transitionReadyAt.get(serial);
+  const wait = until === undefined ? 0 : until - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+}
+
 /** Press a named key (keyboard tool `key` vocabulary) on Android. */
 export async function injectAndroidNamedKey(serial: string, name: string): Promise<void> {
   const lower = name.toLowerCase();

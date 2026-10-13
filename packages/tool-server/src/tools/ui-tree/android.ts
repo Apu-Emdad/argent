@@ -6,6 +6,7 @@ import {
   parseUiAutomatorBounds,
   parseUiAutomatorXml,
 } from "../describe/platforms/android/uiautomator-parser";
+import { awaitAndroidTransitionStart } from "../../utils/android-input";
 import { FLOW_MAX_NODES } from "../flows/flow-android-tree";
 import type { UiTree, UiTreeNode } from "./index";
 
@@ -189,6 +190,7 @@ export function adaptAndroidTree(
 export async function readAndroidUiTree(registry: Registry, device: DeviceInfo): Promise<UiTree> {
   const ref = androidDevtoolsRef(device);
   const devtools = await registry.resolveService<AndroidDevtoolsApi>(ref.urn, ref.options);
+  await awaitAndroidTransitionStart(device.id);
   const [capture, size] = await Promise.all([
     devtools.getHierarchy({ maxNodes: FLOW_MAX_NODES, clearCache: true }),
     devtools.getScreenSize(),
