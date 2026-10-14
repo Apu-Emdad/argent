@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { stripVTControlCharacters } from "node:util";
 import { update } from "../src/update.js";
 import { cleanupStaleMcpConfigs } from "../src/init-stale-config.js";
 
@@ -289,9 +290,13 @@ describe("update — interactive decline", () => {
 });
 
 describe("update — read-only global directory", () => {
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "fails before the confirm prompt and never runs the install",
-    async () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
+    [true, "update", "argent init --local"],
+    [false, "install", "npx @swmansion/argent init --local"],
+  ])(
+    "fails before the confirm prompt and never runs the install (installed: %s)",
+    async (installed, verb, localInit) => {
+      topologyState.globalInstalled = installed;
       const globalRoot = path.join(tmpDir, "store", "lib", "node_modules");
       fs.mkdirSync(globalRoot, { recursive: true });
       fs.chmodSync(globalRoot, 0o555);
@@ -299,7 +304,7 @@ describe("update — read-only global directory", () => {
         args[0] === "root" ? `${globalRoot}\n` : undefined) as never);
 
       try {
-        await expect(update([])).rejects.toThrow(ExitSentinel);
+        await expect(update(["--global"])).rejects.toThrow(ExitSentinel);
       } finally {
         fs.chmodSync(globalRoot, 0o755);
       }
@@ -307,9 +312,9 @@ describe("update — read-only global directory", () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(promptsMock.confirm).not.toHaveBeenCalled();
       expect(npmInstallCalls()).toHaveLength(0);
-      expect(String(promptsMock.log.error.mock.calls[0]?.[0])).toContain(
-        "cannot update @swmansion/argent globally"
-      );
+      const message = stripVTControlCharacters(String(promptsMock.log.error.mock.calls[0]?.[0]));
+      expect(message).toContain(`cannot ${verb} @swmansion/argent globally`);
+      expect(message.split("\n").map((line) => line.trim())).toContain(localInit);
     }
   );
 
