@@ -1761,6 +1761,10 @@ async function runType(
   return { ok: true, ...warnedBy(toolWarning(focusTap)) };
 }
 
+const CUT_SHORT_READ =
+  "the screen has more elements than the accessibility service reads in one walk, so an " +
+  "element past the cut reads as absent";
+
 /**
  * Poll a condition against the flow tree until it holds or `timeoutMs` passes.
  * One engine behind both conditional directives — they differ only in budget:
@@ -1812,9 +1816,11 @@ async function waitForCondition(
     try {
       const data = await readFlowTree(env);
       lastMatches = flowFindAll(data.tree, step.selector, data.uiOrientation);
-      fetchError = undefined;
       everMatched ||= lastMatches.length > 0;
-      const blind = isBlindRead(data, everMatched);
+      // A cut-short read vouches for what it found, never for an absence.
+      const cutShort = data.truncated === true && lastMatches.length === 0;
+      fetchError = cutShort ? CUT_SHORT_READ : undefined;
+      const blind = cutShort || isBlindRead(data, everMatched);
       if (!blind) lastTrustedReadAt = Date.now();
       lastReadTrusted = !blind;
       if (

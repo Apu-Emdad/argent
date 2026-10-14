@@ -38,7 +38,8 @@ function mockRegistry(ax: Pick<AXServiceApi, "degraded" | "tree">): Registry {
 }
 
 async function runHiddenAssert(
-  ax: Pick<AXServiceApi, "degraded" | "tree">
+  ax: Pick<AXServiceApi, "degraded" | "tree">,
+  condition: "hidden" | "visible" = "hidden"
 ): Promise<FlowRunResult> {
   const dir = path.join(tmpDir, ".argent", "flows");
   await fs.mkdir(dir, { recursive: true });
@@ -46,7 +47,7 @@ async function runHiddenAssert(
     path.join(dir, "hidden.yaml"),
     serializeFlow({
       executionPrerequisite: "",
-      steps: [{ kind: "assert", condition: "hidden", selector: { identifier: "General" } }],
+      steps: [{ kind: "assert", condition, selector: { identifier: "General" } }],
     }),
     "utf8"
   );
@@ -95,5 +96,39 @@ describe("hidden assert against an unreadable tree (end-to-end)", () => {
     expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual(["assert:fail"]);
     expect(result.steps[0].reason).toMatch(/could not read the UI tree/);
     expect(result.steps[0].reason).toMatch(reason);
+  });
+});
+
+// A walk the ax-service cut short (node, depth or time cap) still finds what it
+// read, so a large screen stays usable; only an absence on it is unconfirmed.
+describe("assert against a cut-short tree (end-to-end)", () => {
+  const cutShort = (withGeneral: boolean): Pick<AXServiceApi, "degraded" | "tree"> => ({
+    degraded: false,
+    tree: async () => ({
+      ...EMPTY_TREE,
+      truncated: true,
+      nodes: [
+        ...EMPTY_TREE.nodes,
+        {
+          index: 1,
+          parentIndex: 0,
+          label: withGeneral ? "General" : "Other",
+          identifier: withGeneral ? "General" : "Other",
+          traits: ["button"],
+          frame: { x: 0, y: 0.5, width: 1, height: 0.1 },
+        },
+      ],
+    }),
+  });
+
+  it("passes visible on an element the walk read", async () => {
+    const result = await runHiddenAssert(cutShort(true), "visible");
+    expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual(["assert:pass"]);
+  });
+
+  it("does not pass hidden on an element the walk did not reach", async () => {
+    const result = await runHiddenAssert(cutShort(false));
+    expect(result.steps.map((s) => `${s.kind}:${s.status}`)).toEqual(["assert:fail"]);
+    expect(result.steps[0].reason).toMatch(/more elements than the accessibility service reads/);
   });
 });

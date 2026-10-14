@@ -575,10 +575,13 @@ describe("queryIosSimulatorFlowTree", () => {
     );
   });
 
-  it("refuses a walk the service cut short, where elements past the cut would read as absent", async () => {
-    await expect(
-      queryIosSimulatorFlowTree(registryWith(screen({ truncated: true })), device)
-    ).rejects.toThrow(/was cut short.*would read as absent.*scroll a long list/);
+  it("returns a walk the service cut short, flagged truncated", async () => {
+    const data = await queryIosSimulatorFlowTree(registryWith(screen({ truncated: true })), device);
+    expect(data.truncated).toBe(true);
+    expect(leaves(data.tree)).toEqual(["Continue"]);
+    expect((await queryIosSimulatorFlowTree(registryWith(screen()), device)).truncated).toBe(
+      undefined
+    );
   });
 
   it("refuses a blind read, naming the boot remedy on a simulator argent did not boot", async () => {

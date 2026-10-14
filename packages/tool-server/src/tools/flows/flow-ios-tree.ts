@@ -238,9 +238,9 @@ export async function readIosSimulatorUiTree(
 /**
  * Simulator flow tree from the ax-service accessibility tree. Throws, with a
  * remedy, when the tree cannot be read, when a pinned launch's app is no
- * longer in the foreground (it crashed, or a tap opened another app), when the
- * walk was cut short, and on a blind read: an app serving no accessible
- * elements must not settle or satisfy `hidden`.
+ * longer in the foreground (it crashed, or a tap opened another app), and on a
+ * blind read: an app serving no accessible elements must not settle or satisfy
+ * `hidden`. A walk the service cut short is returned flagged `truncated`.
  */
 export async function queryIosSimulatorFlowTree(
   registry: Registry,
@@ -254,15 +254,6 @@ export async function queryIosSimulatorFlowTree(
         `(${tree.foregroundApp ? `${tree.foregroundApp} is` : "no app is"}). ` +
         `It may have crashed or opened another app. If the flow meant to leave it, switch apps ` +
         `with a \`tool: launch-app\` step first (a \`launch:\` step restarts the app).`
-    );
-  }
-  // A walk the service cut short (node, depth or time cap) lacks what lies past
-  // the cut, and a `hidden` check would pass on it.
-  if (tree.truncated) {
-    throw new Error(
-      `the accessibility tree of ${device.id} was cut short: the screen has too many elements ` +
-        `to read in one walk, and elements past the cut would read as absent. Wait for the app ` +
-        `to settle, or scroll a long list or web page out of view, then run the flow again.`
     );
   }
   if (tree.roots.every((root) => root.children.length === 0)) {
@@ -280,6 +271,7 @@ export async function queryIosSimulatorFlowTree(
     source: "ax-service",
     screen: tree.screen,
     uiOrientation: tree.interfaceOrientation,
+    ...(tree.truncated ? { truncated: true } : {}),
   };
 }
 
