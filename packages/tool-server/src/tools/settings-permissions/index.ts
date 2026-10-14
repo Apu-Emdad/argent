@@ -1,15 +1,11 @@
 import { z } from "zod";
 import type { ToolCapability, ToolDefinition } from "@argent/registry";
 import { dispatchByPlatform } from "../../utils/cross-platform-tool";
+import { BUNDLE_ID_MESSAGE, BUNDLE_ID_PATTERN } from "../../utils/bundle-id";
 import { PERMISSION_ACTIONS, PERMISSION_NAMES } from "./types";
 import type { SettingsPermissionsResult, SettingsPermissionsServices } from "./types";
 import { iosImpl, iosRemoteImpl } from "./platforms/ios";
 import { androidImpl } from "./platforms/android";
-
-// Mirrors launch-app / restart-app: the leading-letter rule stops a bundleId
-// like `--user` masquerading as a flag in `pm …`. shellQuote is the real
-// injection guard; this is defense in depth.
-const BUNDLE_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
 
 const zodSchema = z.object({
   udid: z
@@ -28,9 +24,9 @@ const zodSchema = z.object({
     ),
   bundleId: z
     .string()
-    .regex(BUNDLE_ID_PATTERN, "bundleId may only contain letters, digits, '.', '_' and '-'")
+    .regex(BUNDLE_ID_PATTERN, BUNDLE_ID_MESSAGE)
     .describe(
-      "App to change the permission for — required for every action. iOS: bundle id (e.g. com.example.app). Android: package name. `reset` is per-app too: simctl's device-wide reset (no bundleId) silently leaves existing per-app grants untouched on recent iOS, so the permission is always reset for this one app."
+      "App to change the permission for, required for every action. iOS: bundle id (e.g. com.example.app). Android: package name. `reset` is per-app too: simctl's device-wide reset (no bundleId) silently leaves existing per-app grants untouched on recent iOS, so the permission is always reset for this one app."
     ),
 });
 
@@ -64,9 +60,9 @@ export const settingsPermissionsTool: ToolDefinition<Params, SettingsPermissions
   },
   description: `Grant, deny, or reset a runtime permission for an app without navigating the system Settings UI. Use during test setup to pre-authorize (or explicitly deny) a service before the app asks, or \`reset\` so the permission dialog appears again on next use. Always per-app: bundleId is required.
 Permissions: camera, microphone, photos, contacts, notifications, calendar, location, location-always, media-library, motion, reminders.
-iOS simulator: edits the simulator's TCC store, always per-app. \`notifications\` is not supported (no iOS equivalent). \`reset\` is per-app — a device-wide reset is a no-op for existing grants on recent iOS, so it is not offered. \`grant location\`/\`location-always\` needs the app already installed (location auth isn't stored in TCC and isn't applied to a bundle id until the app exists) — enforced on local simulators; a remote simulator can't be probed for install state, so ensure the app is installed there first. Other services can be granted before install.
+iOS simulator: edits the simulator's TCC store, always per-app. \`notifications\` is not supported (no iOS equivalent). \`reset\` is per-app: a device-wide reset is a no-op for existing grants on recent iOS, so it is not offered. \`grant location\`/\`location-always\` needs the app already installed (location auth isn't stored in TCC and isn't applied to a bundle id until the app exists). This is enforced on local simulators; a remote simulator can't be probed for install state, so ensure the app is installed there first. Other services can be granted before install.
 Android: changes the mapped \`android.permission.*\` runtime permissions (reset also best-effort clears the user-set permission flags). The app must be installed and declare them in its manifest; \`reminders\` has no Android equivalent.
-Some permission changes terminate the app if it is running (system behavior on both platforms) — set permissions before launching, or relaunch after.
+Some permission changes terminate the app if it is running (system behavior on both platforms), so set permissions before launching, or relaunch after.
 Returns { action, permission, bundleId, applied, skipped? }: \`applied\` lists the platform-level services/permissions actually changed; \`skipped\` (Android) lists mapped permissions the package manager rejected, e.g. ones the manifest doesn't declare. Fails if nothing could be applied.`,
   searchHint: "grant deny reset revoke app permissions privacy camera microphone location settings",
   zodSchema,

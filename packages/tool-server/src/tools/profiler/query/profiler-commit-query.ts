@@ -8,6 +8,7 @@ import type {
 } from "../../../utils/react-profiler/types/input";
 import { deriveReason } from "../../../utils/react-profiler/pipeline/utils";
 import { readCommitTree } from "../../../utils/react-profiler/debug/dump";
+import { metroPort, metroPortField } from "../../../utils/debugger/metro-port";
 import {
   resolveComponentName,
   renderComponentNameMiss,
@@ -19,17 +20,17 @@ const timeRangeSchema = z.object({
   start: z.coerce
     .number()
     .describe(
-      "Start of range in ms since profiling started — the same clock profiler-commit-query prints"
+      "Start of range in ms since profiling started, the same clock profiler-commit-query prints"
     ),
   end: z.coerce
     .number()
     .describe(
-      "End of range in ms since profiling started — the same clock profiler-commit-query prints"
+      "End of range in ms since profiling started, the same clock profiler-commit-query prints"
     ),
 });
 
 const zodSchema = z.object({
-  port: z.coerce.number().default(8081).describe("Metro server port"),
+  port: metroPortField,
   device_id: metroDeviceIdParam(
     "Device logicalDeviceId from debugger-connect (iOS simulator UDID or Android logicalDeviceId)."
   ),
@@ -54,7 +55,7 @@ const zodSchema = z.object({
     .describe(
       "Max results to return. Defaults to 20 for by_component / by_time_range, which count " +
         "commits. by_index counts individual fibers and returns all of them unless this is set, " +
-        "because one commit's fibers collapse to far fewer distinct components — a small cap there " +
+        "because one commit's fibers collapse to far fewer distinct components, and a small cap there " +
         "can show less than the analyze report it is meant to expand on."
     ),
 });
@@ -398,7 +399,7 @@ Fails if react-profiler-stop has not been called or no commit data is stored.`,
   capability: RN_ONLY_TOOL_CAPABILITY,
   services: () => ({}),
   async execute(_services, params) {
-    const commitTree = await getCommitTree(params.port, params.device_id);
+    const commitTree = await getCommitTree(metroPort(params), params.device_id);
 
     switch (params.mode) {
       case "by_component": {

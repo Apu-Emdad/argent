@@ -11,6 +11,7 @@ import {
   NETWORK_INTERCEPTOR_SCRIPT,
   makeNetworkLogReadScript,
 } from "../../utils/debugger/scripts/network-interceptor";
+import { metroPort, metroPortField } from "../../utils/debugger/metro-port";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -99,14 +100,11 @@ function renderChromiumPage(
 }
 
 const zodSchema = z.object({
-  port: z.coerce
-    .number()
-    .default(8081)
-    .describe("Metro server port (RN only; ignored on Chromium)"),
+  port: metroPortField,
   device_id: z
     .string()
     .describe(
-      "Device id from list-devices (iOS simulator UDID or Android serial) — the same id used with debugger-connect."
+      "Device id from list-devices (iOS simulator UDID or Android serial), the same id used with debugger-connect."
     ),
   pageIndex: z
     .union([z.coerce.number().int().nonnegative(), z.literal("latest")])
@@ -127,7 +125,7 @@ export const networkLogsTool: ToolDefinition<z.infer<typeof zodSchema>, string> 
   description: `Retrieve captured network (HTTP) requests from the running app.
 Returns a paginated list of requests with method, URL, status, resource type, size, and duration.
 Each entry includes a requestId that can be passed to view-network-request-details for full details.
-On React Native (iOS / Android / Vega) interception is injected into the JS runtime — it captures fetch() calls. On Chromium it reads the browser's native CDP Network domain (the active tab; all request types).
+On React Native (iOS / Android / Vega) interception is injected into the JS runtime: it captures fetch() calls. On Chromium it reads the browser's native CDP Network domain (the active tab; all request types).
 Use when inspecting outbound HTTP traffic or debugging API calls in the running app.
 Fails if the app is not connected (RN) or the device is not reachable (Chromium).`,
   zodSchema,
@@ -137,7 +135,9 @@ Fails if the app is not connected (RN) or the device is not reachable (Chromium)
     if (device.platform === "chromium") {
       return { chromium: chromiumCdpRef(device) };
     }
-    return { inspector: `NetworkInspector:${params.port}:${canonicalDeviceId(params.device_id)}` };
+    return {
+      inspector: `NetworkInspector:${metroPort(params)}:${canonicalDeviceId(params.device_id)}`,
+    };
   },
   async execute(services, params) {
     if (resolveDevice(params.device_id).platform === "chromium") {

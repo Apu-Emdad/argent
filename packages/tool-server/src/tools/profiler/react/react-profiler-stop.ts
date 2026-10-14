@@ -20,13 +20,14 @@ import {
 } from "../../../utils/react-profiler/scripts";
 import { RN_ONLY_TOOL_CAPABILITY } from "../../debugger/debugger-service-ref";
 import { canonicalDeviceId } from "../../../utils/debugger/device-alias";
+import { metroPort, metroPortField } from "../../../utils/debugger/metro-port";
 
 const zodSchema = z.object({
-  port: z.coerce.number().default(8081).describe("Metro server port"),
+  port: metroPortField,
   device_id: z
     .string()
     .describe(
-      "Device id from list-devices — the SAME id you passed to debugger-connect (iOS simulator UDID or Android serial)."
+      "Device id from list-devices: the SAME id you passed to debugger-connect (iOS simulator UDID or Android serial)."
     ),
 });
 
@@ -160,13 +161,13 @@ Reads commit data from the in-app React DevTools backend.
 Stores results in the ReactProfilerSession for later use by react-profiler-analyze or react-profiler-cpu-summary.
 Call react-profiler-start first, then exercise the app, then call this.
 Returns { duration_ms, sample_count, fiber_renders_captured, total_react_commits, hot_commit_indices } summarizing the session.
-When any commit had fibers whose display name could not be resolved at stop time (typically transient components like modals/tooltips/animations that unmounted before stop), the response also includes { unattributed_ms, unattributed_fiber_count, unattributed_commit_count } — these quantify how much work is not accounted for in the per-component breakdown (the per-commit duration itself remains correct).
+When any commit had fibers whose display name could not be resolved at stop time (typically transient components like modals/tooltips/animations that unmounted before stop), the response also includes { unattributed_ms, unattributed_fiber_count, unattributed_commit_count }. These quantify how much work is not accounted for in the per-component breakdown (the per-commit duration itself remains correct).
 Fails if no active profiling session exists or the CDP connection was lost during recording.`,
     zodSchema,
     capability: RN_ONLY_TOOL_CAPABILITY,
     services: () => ({}),
     async execute(_services, params) {
-      const psUrn = `${REACT_PROFILER_SESSION_NAMESPACE}:${params.port}:${canonicalDeviceId(params.device_id)}`;
+      const psUrn = `${REACT_PROFILER_SESSION_NAMESPACE}:${metroPort(params)}:${canonicalDeviceId(params.device_id)}`;
       const snapshot = registry.getSnapshot();
       const entry = snapshot.services.get(psUrn);
 

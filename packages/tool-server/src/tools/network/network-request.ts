@@ -9,6 +9,7 @@ import {
   NETWORK_INTERCEPTOR_SCRIPT,
   makeNetworkDetailReadScript,
 } from "../../utils/debugger/scripts/network-interceptor";
+import { metroPort, metroPortField } from "../../utils/debugger/metro-port";
 
 const SENSITIVE_HEADER_PATTERNS = [
   "auth",
@@ -42,11 +43,11 @@ function redactHeaders(headers: Record<string, string> | undefined): Record<stri
 const MAX_BODY_SIZE = 1000;
 
 const zodSchema = z.object({
-  port: z.coerce.number().default(8081).describe("Metro server port"),
+  port: metroPortField,
   device_id: z
     .string()
     .describe(
-      "Device id from list-devices (iOS simulator UDID or Android serial) — the same id used with debugger-connect."
+      "Device id from list-devices (iOS simulator UDID or Android serial), the same id used with debugger-connect."
     ),
   requestId: z.string().describe("The requestId from view-network-logs to get full details for"),
   includeBody: z.coerce
@@ -119,7 +120,7 @@ export const networkRequestTool: ToolDefinition<
   description: `Get full details of a specific network request by its requestId (from view-network-logs).
 Returns request/response headers (sensitive headers redacted), status, timing, and optionally the response body.
 Large response bodies are truncated. Use when you need headers, body, or timing for a specific request after listing logs.
-Returns an error message string if the requestId is not found — use view-network-logs to get valid requestId values.`,
+Returns an error message string if the requestId is not found; use view-network-logs to get valid requestId values.`,
   zodSchema,
   capability: DEBUGGER_TOOL_CAPABILITY,
   services: (params): Record<string, ServiceRef> => {
@@ -127,7 +128,9 @@ Returns an error message string if the requestId is not found — use view-netwo
     if (device.platform === "chromium") {
       return { chromium: chromiumCdpRef(device) };
     }
-    return { inspector: `NetworkInspector:${params.port}:${canonicalDeviceId(params.device_id)}` };
+    return {
+      inspector: `NetworkInspector:${metroPort(params)}:${canonicalDeviceId(params.device_id)}`,
+    };
   },
   async execute(services, params) {
     if (resolveDevice(params.device_id).platform === "chromium") {

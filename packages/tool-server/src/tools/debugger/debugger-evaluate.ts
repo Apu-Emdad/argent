@@ -7,13 +7,14 @@ import {
 } from "@argent/registry";
 import type { JsRuntimeDebuggerApi } from "../../blueprints/js-runtime-debugger";
 import { DEBUGGER_TOOL_CAPABILITY, debuggerServiceRef } from "./debugger-service-ref";
+import { metroPortField } from "../../utils/debugger/metro-port";
 
 const zodSchema = z.object({
-  port: z.coerce.number().default(8081).describe("Metro server port (ignored for Chromium)"),
+  port: metroPortField,
   device_id: z
     .string()
     .describe(
-      "Device id from list-devices — the SAME id you passed to debugger-connect (iOS simulator UDID, Android serial, Vega serial, or Chromium device id). The logicalDeviceId debugger-connect returns also resolves here, but prefer the stable list-devices id."
+      "Device id from list-devices: the SAME id you passed to debugger-connect (iOS simulator UDID, Android serial, Vega serial, or Chromium device id). The logicalDeviceId debugger-connect returns also resolves here, but prefer the stable list-devices id."
     ),
   expression: z.string().describe("JavaScript expression to evaluate in the app runtime"),
 });
@@ -29,8 +30,8 @@ export const debuggerEvaluateTool: ToolDefinition<
     failedMsg: ({ failureSignal }) =>
       `Failed to run JavaScript in the app: ${failureSignal.error_code}`,
   },
-  description: `Execute arbitrary JavaScript in the app's JS runtime via CDP — Hermes on iOS / Android / Vega, V8 on Chromium.
-Returns the evaluation result as a JSON-serializable value, along with deviceName, appName, and logicalDeviceId for context. Use when you need to read app state, call app functions, or test logic at runtime. The result is serialized by value, so cyclic objects (many RN runtime values — fiber nodes, navigation refs, global — are cyclic) fail with a serialization error rather than returning silently. Fails if the expression throws or the runtime is not connected.`,
+  description: `Execute arbitrary JavaScript in the app's JS runtime via CDP: Hermes on iOS / Android / Vega, V8 on Chromium.
+Returns the evaluation result as a JSON-serializable value, along with deviceName, appName, and logicalDeviceId for context. Use when you need to read app state, call app functions, or test logic at runtime. The result is serialized by value, so cyclic objects (many RN runtime values, such as fiber nodes, navigation refs and global, are cyclic) fail with a serialization error rather than returning silently. Fails if the expression throws or the runtime is not connected.`,
   zodSchema,
   capability: DEBUGGER_TOOL_CAPABILITY,
   services: (params) => ({

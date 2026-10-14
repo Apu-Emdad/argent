@@ -6,6 +6,7 @@ import type { JsRuntimeDebuggerApi } from "../../blueprints/js-runtime-debugger"
 import { makeInspectScript } from "../../utils/debugger/scripts/inspect-at-point";
 import { shouldSkip, isHardSkip } from "../../utils/debugger/skip-rules";
 import { RN_ONLY_TOOL_CAPABILITY } from "./debugger-service-ref";
+import { metroPort, metroPortField } from "../../utils/debugger/metro-port";
 
 export interface InspectItem {
   name: string;
@@ -116,11 +117,11 @@ export function filterInspectItems(items: InspectItem[], includeSkipped = false)
 }
 
 const zodSchema = z.object({
-  port: z.coerce.number().default(8081).describe("Metro server port"),
+  port: metroPortField,
   device_id: z
     .string()
     .describe(
-      "Device id from list-devices — the SAME id you passed to debugger-connect (iOS simulator UDID or Android serial)."
+      "Device id from list-devices: the SAME id you passed to debugger-connect (iOS simulator UDID or Android serial)."
     ),
   x: z.coerce.number().describe("Logical X coordinate on device screen"),
   y: z.coerce.number().describe("Logical Y coordinate on device screen"),
@@ -138,7 +139,7 @@ const zodSchema = z.object({
     .number()
     .default(35)
     .describe(
-      "Maximum number of hierarchy items to return, counted from the bottom (most specific component first). The hierarchy walks from the tapped element up to the root — the first items are the most relevant for editing. Increase to 70+ if you need to understand the broader navigation/screen structure."
+      "Maximum number of hierarchy items to return, counted from the bottom (most specific component first). The hierarchy walks from the tapped element up to the root, so the first items are the most relevant for editing. Increase to 70+ if you need to understand the broader navigation/screen structure."
     ),
   includeSkipped: z
     .boolean()
@@ -175,7 +176,7 @@ export const debuggerInspectElementTool: ToolDefinition<
 Returns components from the tapped element upward through its parent hierarchy,
 each with its source file:line and a code fragment.
 
-The first items (lowest indices) are the most specific — the exact component under
+The first items (lowest indices) are the most specific: the exact component under
 the tap point and its direct parents. Higher indices are broader context (page, navigator).
 Default shows 35 items which covers all app-specific code; use maxItems=70+ to also
 see the navigation/screen structure.
@@ -189,7 +190,7 @@ Use when you need the source file and line for a component at a tap coordinate. 
   // Metro's /symbolicate; the Chromium session has no source resolver.
   capability: RN_ONLY_TOOL_CAPABILITY,
   services: (params) => ({
-    debugger: `JsRuntimeDebugger:${params.port}:${canonicalDeviceId(params.device_id)}`,
+    debugger: `JsRuntimeDebugger:${metroPort(params)}:${canonicalDeviceId(params.device_id)}`,
   }),
   async execute(services, params) {
     const api = services.debugger as JsRuntimeDebuggerApi;
