@@ -166,7 +166,7 @@ export function resolveProjectRoot(startDir: string): string {
 export function readToml(filePath: string): Record<string, unknown> {
   if (!fs.existsSync(filePath)) return {};
   try {
-    return parseToml(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    return parseToml(stripBom(fs.readFileSync(filePath, "utf8"))) as Record<string, unknown>;
   } catch {
     return {};
   }
@@ -200,10 +200,17 @@ export function writeYaml(filePath: string, doc: Document): void {
 export function readJson(filePath: string): Record<string, unknown> {
   if (!fs.existsSync(filePath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(stripBom(fs.readFileSync(filePath, "utf8")));
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
     return {};
   }
+}
+
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 export function writeJson(filePath: string, data: unknown): void {
