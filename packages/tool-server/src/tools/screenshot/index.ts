@@ -58,7 +58,7 @@ const zodSchema = z.object({
     .optional()
     .default(true)
     .describe(
-      "Default true. Set false only when capturing a full-resolution PNG (scale: 1.0) to save as a baseline/current for screenshot-diff — the file is still written, but the image bytes are not attached to the agent context."
+      "Default true. Set false only when capturing a full-resolution PNG (scale: 1.0) to save as a baseline/current for screenshot-diff. The file is still written, but the image bytes are not attached to the agent context."
     ),
   downscaler: z
     .enum(["lanczos3", "box", "bilinear", "nearest"])
