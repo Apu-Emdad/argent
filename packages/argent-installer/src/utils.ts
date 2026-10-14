@@ -142,11 +142,19 @@ const PROJECT_ROOT_MARKERS = [
   "skills-lock.json",
 ];
 
-export function resolveProjectRoot(startDir: string): string {
+// The walk never climbs into the home directory: `~/.claude`, `~/.cursor`,
+// `~/.codex`, … are the editors' global config dirs, not project markers, so
+// matching them would resolve every markerless project under home to home.
+export function resolveProjectRoot(startDir: string, homeDir: string = os.homedir()): string {
   const initialDir = path.resolve(startDir);
+  const home = path.resolve(homeDir);
   let currentDir = initialDir;
 
   while (true) {
+    if (currentDir === home && currentDir !== initialDir) {
+      return initialDir;
+    }
+
     if (PROJECT_ROOT_MARKERS.some((marker) => fs.existsSync(path.join(currentDir, marker)))) {
       return currentDir;
     }
@@ -455,9 +463,25 @@ export function withNpmForce(npxArgs: string[]): string[] {
   return ["--force", ...npxArgs];
 }
 
+// `npx --package <spec> -- argent ...` (and `npx -p <spec> argent ...`) runs
+// argent with `npm_config_package=<spec>` in its environment. A nested `npx`
+// inherits it and npm then installs <spec> in place of the requested package,
+// so `npx skills add ...` re-runs argent instead of the skills CLI (#1335).
+// The skills commands argent spawns get an environment without it.
+export function npxChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const childEnv = { ...env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.toLowerCase() === "npm_config_package") {
+      delete childEnv[key];
+    }
+  }
+  return childEnv;
+}
+
 export function isSkillsCliAvailable(): boolean {
   try {
     execSync("npx --force --no-install skills --version", {
+      env: npxChildEnv(),
       stdio: ["ignore", "ignore", "ignore"],
       timeout: PROBE_TIMEOUT_MS,
     });
