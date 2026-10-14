@@ -84,7 +84,12 @@ function device(extra: AXTreeNode[] = []): Sim {
 type Step = Parameters<typeof serializeFlow>[0]["steps"][number];
 
 /** Run one flow; returns its result. */
-async function run(sim: Sim, deviceId: string, steps: Step[]): Promise<FlowRunResult> {
+async function run(
+  sim: Sim,
+  deviceId: string,
+  steps: Step[],
+  signal?: AbortSignal
+): Promise<FlowRunResult> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "flow-stale-id-"));
   try {
     const dir = path.join(root, ".argent", "flows");
@@ -93,7 +98,8 @@ async function run(sim: Sim, deviceId: string, steps: Step[]): Promise<FlowRunRe
     await fs.writeFile(path.join(dir, "flow.yaml"), flow, "utf8");
     const r = await createRunFlowTool(sim.registry).execute(
       {},
-      { name: "flow", project_root: root, device: deviceId }
+      { name: "flow", project_root: root, device: deviceId },
+      { signal } as never
     );
     if (!("steps" in r)) throw new Error(`expected a run result, got notice: ${r.notice}`);
     return r;
@@ -365,25 +371,11 @@ describe("the miss read on an id", () => {
       );
       return actual.readIosSimulatorUiTree(registry, dev);
     });
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "flow-stale-id-"));
-    try {
-      const dir = path.join(root, ".argent", "flows");
-      await fs.mkdir(dir, { recursive: true });
-      const flow = serializeFlow({ executionPrerequisite: "", steps: [tap(ID)] });
-      await fs.writeFile(path.join(dir, "flow.yaml"), flow, "utf8");
-      const r = await createRunFlowTool(sim.registry).execute(
-        {},
-        { name: "flow", project_root: root, device: "00000000-0000-0000-0000-0000000000a7" },
-        { signal: controller.signal } as never
-      );
-      if (!("steps" in r)) throw new Error(`expected a run result, got notice: ${r.notice}`);
+    const r = await run(sim, "00000000-0000-0000-0000-0000000000a7", [tap(ID)], controller.signal);
 
-      expect(r.steps.map((st) => `${st.kind}:${st.status}`)).toEqual(["tap:skip"]);
-      expect(r.steps[0].reason).toBe("run aborted");
-      expect(r.aborted).toBe(true);
-      expect(extraReads(sim)).toBe(1);
-    } finally {
-      await fs.rm(root, { recursive: true, force: true });
-    }
+    expect(r.steps.map((st) => `${st.kind}:${st.status}`)).toEqual(["tap:skip"]);
+    expect(r.steps[0].reason).toBe("run aborted");
+    expect(r.aborted).toBe(true);
+    expect(extraReads(sim)).toBe(1);
   }, 20_000);
 });

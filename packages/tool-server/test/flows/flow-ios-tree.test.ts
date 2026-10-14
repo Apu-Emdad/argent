@@ -352,6 +352,7 @@ describe("iOS simulator flow tree projection", () => {
     // The rating's id shields its text from the scroller.
     expect(list.subtreeText).toBe("Haptic Feedback Volume 50% Brightness 20% Contrast 70%");
   });
+
   it("reads a switch row's text without the switch's 0/1 state", () => {
     // Settings > Keyboards: a toggle row (id, label, value) over a title and
     // the switch itself, which carries only the value.
