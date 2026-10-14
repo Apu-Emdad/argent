@@ -639,7 +639,7 @@ describe("findGlobalArgent edge cases", () => {
       JSON.stringify({ name: "@swmansion/argent", version: "1.2.3" })
     );
     fs.writeFileSync(path.join(prefix, "argent"), "#!/bin/sh\n");
-    fs.writeFileSync(path.join(prefix, "argent.cmd"), "@echo off\n");
+    fs.writeFileSync(path.join(prefix, "argent.CMD"), "@echo off\n");
     vi.stubEnv("PATHEXT", ".COM;.EXE;.BAT;.CMD");
     try {
       withPlatform("win32", () =>
