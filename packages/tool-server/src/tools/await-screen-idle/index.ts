@@ -140,7 +140,7 @@ export function createAwaitScreenIdleTool(registry: Registry): ToolDefinition<Pa
 
 Polls the same accessibility / DOM tree as \`describe\` every pollIntervalMs (default ${DEFAULT_POLL_INTERVAL_MS}ms) until it
 has content and that content holds identical for minStableMs (default ${DEFAULT_MIN_STABLE_MS}ms), or timeoutMs (default
-${DEFAULT_TIMEOUT_MS}ms) is reached. Returns { settled, waitedMs, polls, note? } — settled=false means the screen never went
+${DEFAULT_TIMEOUT_MS}ms) is reached. Returns { settled, waitedMs, polls, note? }; settled=false means the screen never went
 still before the timeout. A note on settled=true means the screen it settled on is not live: a suspended HarmonyOS
 panel settles instantly on its last frame, and taps land nowhere until it is woken.
 Use after a launch/navigation to wait for the UI to render before screenshotting or tapping.`,

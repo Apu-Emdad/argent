@@ -49,6 +49,8 @@ function makeSequencedAXService(
     describe: async () => responses[Math.min(i++, responses.length - 1)],
     alertCheck: async () => false,
     livePanel: async () => null,
+    foregroundApp: async () => ({ alertVisible: false }),
+    fill: async () => ({ focused: false, verified: false }),
     tree: async () => ({ alertVisible: false, nodes: [], truncated: false }),
     ping: async () => true,
   };
@@ -65,6 +67,8 @@ function makeFailingAXService(): AXServiceApi {
     },
     alertCheck: async () => false,
     livePanel: async () => null,
+    foregroundApp: async () => ({ alertVisible: false }),
+    fill: async () => ({ focused: false, verified: false }),
     tree: async () => ({ alertVisible: false, nodes: [], truncated: false }),
     ping: async () => false,
   };
@@ -941,6 +945,8 @@ describe("await-ui-element tool", () => {
           : new Promise(() => {}),
       alertCheck: async () => false,
       livePanel: async () => null,
+      foregroundApp: async () => ({ alertVisible: false }),
+      fill: async () => ({ focused: false, verified: false }),
       tree: async () => ({ alertVisible: false, nodes: [], truncated: false }),
       ping: async () => true,
     };
@@ -1154,6 +1160,8 @@ describe("await-ui-element tool", () => {
       describe: () => new Promise(() => {}), // never resolves
       alertCheck: async () => false,
       livePanel: async () => null,
+      foregroundApp: async () => ({ alertVisible: false }),
+      fill: async () => ({ focused: false, verified: false }),
       tree: async () => ({ alertVisible: false, nodes: [], truncated: false }),
       ping: async () => true,
     };
@@ -1191,6 +1199,8 @@ describe("await-ui-element tool", () => {
           : new Promise(() => {}),
       alertCheck: async () => false,
       livePanel: async () => null,
+      foregroundApp: async () => ({ alertVisible: false }),
+      fill: async () => ({ focused: false, verified: false }),
       tree: async () => ({ alertVisible: false, nodes: [], truncated: false }),
       ping: async () => true,
     };
@@ -1221,6 +1231,8 @@ describe("await-ui-element tool", () => {
       describe: () => new Promise(() => {}), // never resolves
       alertCheck: async () => false,
       livePanel: async () => null,
+      foregroundApp: async () => ({ alertVisible: false }),
+      fill: async () => ({ focused: false, verified: false }),
       tree: async () => ({ alertVisible: false, nodes: [], truncated: false }),
       ping: async () => true,
     };

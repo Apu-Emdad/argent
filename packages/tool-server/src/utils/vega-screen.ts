@@ -6,6 +6,7 @@ import { FAILURE_CODES, FailureError } from "@argent/registry";
 import { runAdb } from "./adb";
 import { discoverVegaConsolePort } from "./vega-vvd";
 import { scaleDecodedPng } from "./png-scale";
+import { getScreenshotScaleOverride, tvDefaultScale } from "./simulator-client";
 
 /**
  * Capture the VVD screen as a PNG.
@@ -39,7 +40,11 @@ async function captureViaEmulatorConsole(opts: { scale?: number }): Promise<stri
       });
     }
     const decoded = PNG.sync.read(await readFile(join(outDir, pngName)));
-    const scaled = scaleDecodedPng(decoded, opts.scale);
+    // Without a `scale`, `ARGENT_SCREENSHOT_SCALE` applies, then the TV default size.
+    const scaled = scaleDecodedPng(
+      decoded,
+      opts.scale ?? getScreenshotScaleOverride() ?? tvDefaultScale(decoded.width, decoded.height)
+    );
     const outPath = join(tmpdir(), `vega-screenshot-${process.hrtime.bigint()}.png`);
     await writeFile(outPath, PNG.sync.write(scaled));
     return outPath;
