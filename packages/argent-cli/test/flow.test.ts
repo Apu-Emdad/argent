@@ -2219,6 +2219,20 @@ describe("argent flow run <dir>", () => {
     );
   });
 
+  it("rejects a misspelled --platform under --json with one error record and no aggregate", async () => {
+    await expect(flow(["run", flowsDir, "--platform", "iOS", "--json"], opts)).rejects.toThrow(
+      "process.exit:2"
+    );
+
+    expect(toolsClientMock.callTool).not.toHaveBeenCalled();
+    expect(logs).toEqual([]);
+    expect(errs.join("\n").split("\n")).toHaveLength(1);
+    expect(JSON.parse(errs[0]!)).toEqual({
+      event: "error",
+      error: '--platform must be "ios", "android", "chromium", "vega" or "ios-remote", got "iOS"',
+    });
+  });
+
   it("forwards run flags to every flow in the batch", async () => {
     await expect(
       flow(["run", flowsDir, "--device", "SIM-1", "--platform", "ios", "--update-baselines"], opts)
