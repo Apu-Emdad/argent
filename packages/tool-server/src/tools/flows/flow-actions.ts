@@ -874,14 +874,35 @@ function isIosSimulatorEnv(env: ActionEnv): boolean {
   return platform === "ios-remote" || (platform === "ios" && kind !== "device");
 }
 
-/** A role anywhere in the selector that the iOS simulator tree never gives a node. */
-function unknownIosRole(sel: FlowSelector | undefined): string | undefined {
+/** A role anywhere in the selector that passes `test` (given it lowercased). */
+function selectorRole(
+  sel: FlowSelector | undefined,
+  test: (role: string) => boolean
+): string | undefined {
   if (sel === undefined) return undefined;
-  const role = sel.role?.toLowerCase();
-  if (role !== undefined && !NATIVE_DESCRIBE_ROLES.some((r) => r.toLowerCase().includes(role))) {
-    return sel.role;
-  }
-  return unknownIosRole(sel.within) ?? unknownIosRole(sel.after) ?? unknownIosRole(sel.next);
+  if (sel.role !== undefined && test(sel.role.toLowerCase())) return sel.role;
+  return (
+    selectorRole(sel.within, test) ?? selectorRole(sel.after, test) ?? selectorRole(sel.next, test)
+  );
+}
+
+/** A role anywhere in the selector that the iOS simulator tree never gives a node. */
+function unknownIosRole(sel: FlowSelector): string | undefined {
+  return selectorRole(
+    sel,
+    (role) => !NATIVE_DESCRIBE_ROLES.some((r) => r.toLowerCase().includes(role))
+  );
+}
+
+/**
+ * An older Argent gave a switch the role AXAdjustable from its view class; the
+ * simulator tree calls it AXSwitch. Sliders keep AXAdjustable, so this only
+ * words a miss.
+ */
+function switchRoleReason(sel: FlowSelector, missed: string): string | undefined {
+  const role = selectorRole(sel, (r) => r === "axadjustable");
+  if (role === undefined) return undefined;
+  return `${missed}, and a switch has the role "AXSwitch" on an iOS simulator, not "${role}": ${OLDER_FLOW}; ${RE_RECORD}`;
 }
 
 /** On an iOS simulator, why a selector naming a role no element has can never match. */
@@ -917,7 +938,7 @@ async function staleSelectorReason(
   // Every alternative must be an id: a bare string also tries its text, which
   // this check does not look for.
   const ids = selectorAlternatives(sel).map((alt) => alt.identifier);
-  if (!ids.every((id): id is string => id !== undefined)) return undefined;
+  if (!ids.every((id): id is string => id !== undefined)) return switchRoleReason(sel, missed);
   const read = await settleWithin(
     readIosSimulatorUiTree(env.registry, env.device),
     undefined,
@@ -960,7 +981,7 @@ async function staleSelectorReason(
     const roles = [...new Set(carriers.map((n) => `"${n.role}"`))].join(" or ");
     return `${missed}: the element with this id has the role ${roles}, not "${sel.role}"; ${OLDER_FLOW}; ${RE_RECORD}`;
   }
-  return undefined;
+  return switchRoleReason(sel, missed);
 }
 
 /** Why a selector step found no element: the stale reason when one shows, else the scroll-to hint. */

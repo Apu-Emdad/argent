@@ -222,6 +222,21 @@ describe.concurrent("a selector miss on an id", () => {
     expect(extraReads(sim)).toBe(1);
   }, 20_000);
 
+  it("names the switch role when an AXAdjustable selector misses", async ({ expect }) => {
+    const sim = device();
+    const reason = await stepFails(
+      sim,
+      "00000000-0000-0000-0000-0000000000c9",
+      tap({ role: "AXAdjustable", within: { identifier: "KeyboardVisceral" } })
+    );
+
+    expect(reason).toContain(
+      'a switch has the role "AXSwitch" on an iOS simulator, not "AXAdjustable"'
+    );
+    expect(reason).not.toContain("if it is off-screen");
+    expect(extraReads(sim)).toBe(0);
+  }, 20_000);
+
   it("pays no extra read for an unmet when guard", async ({ expect }) => {
     const sim = device();
     const result = await run(sim, "00000000-0000-0000-0000-0000000000c7", [
