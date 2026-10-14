@@ -96,6 +96,26 @@ export interface UiTree {
   unsupportedFields: string[];
 }
 
+/** The `foreground-app` result: which app is in front, as `UiTree.foregroundApp` reports it. */
+export interface ForegroundApp {
+  /** iOS bundle id or Android package of the app in front; under a system alert, the app it covers. Unset when unknown. */
+  bundleId?: string;
+  /** iOS: the app's display name. */
+  name?: string;
+  /** A system alert or dialog covers the app. Unset when unknown. */
+  alertVisible?: boolean;
+}
+
+/**
+ * The `fill` result. It never carries the field's text or the text that was
+ * asked for: either may be a credential. A field that does not read back the
+ * text fails with FILL_NOT_VERIFIED instead.
+ */
+export interface FillResult {
+  /** The field was read back and holds the text. False on a physical iPhone, where nothing can read it back. */
+  verified: boolean;
+}
+
 export interface CallToolOptions {
   /** Receive progress events while a long-running tool works. */
   onProgress?: (event: unknown) => void;
