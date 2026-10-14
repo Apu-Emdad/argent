@@ -46,8 +46,11 @@ export interface McpServerEntry {
   command: string;
   args: string[];
   env?: Record<string, string>;
-  /** Switched off in the editor (`enabled: false` / `disabled: true`). */
-  disabled?: boolean;
+  /**
+   * The key that switches the entry off (`enabled: false` / `disabled: true`).
+   * Only some editors honour each key; callers decide.
+   */
+  switchedOffBy?: "enabled" | "disabled";
 }
 
 // Argent config or client state outside the scope init just wrote that can keep
@@ -207,10 +210,11 @@ function normalizeServerEntry(raw: unknown): McpServerEntry | null {
       rawEnv && Object.keys(rawEnv).length > 0
         ? Object.fromEntries(Object.entries(rawEnv).map(([key, value]) => [key, String(value)]))
         : undefined;
-    // opencode spells it `enabled: false`; Windsurf, Kiro and Cline `disabled: true`.
+    const switchedOffBy: McpServerEntry["switchedOffBy"] =
+      raw.enabled === false ? "enabled" : raw.disabled === true ? "disabled" : undefined;
     const extra = {
       ...(env ? { env } : {}),
-      ...(raw.enabled === false || raw.disabled === true ? { disabled: true } : {}),
+      ...(switchedOffBy ? { switchedOffBy } : {}),
     };
     // opencode stores the command as a single array: { command: [cmd, ...args] }.
     if (Array.isArray(raw.command) && raw.command.every((c) => typeof c === "string")) {

@@ -276,7 +276,7 @@ describe("disabled entries", () => {
       opencodePath,
       JSON.stringify({ mcp: { argent: { command: ["argent", "mcp"], enabled: false } } })
     );
-    expect(opencode.getArgentEntry(opencodePath)?.disabled).toBe(true);
+    expect(opencode.getArgentEntry(opencodePath)?.switchedOffBy).toBe("enabled");
 
     const cursor = ALL_ADAPTERS.find((a) => a.name === "Cursor")!;
     const cursorPath = path.join(tmpDir, "mcp.json");
@@ -286,7 +286,7 @@ describe("disabled entries", () => {
         mcpServers: { argent: { command: "argent", args: ["mcp"], disabled: true } },
       })
     );
-    expect(cursor.getArgentEntry(cursorPath)?.disabled).toBe(true);
+    expect(cursor.getArgentEntry(cursorPath)?.switchedOffBy).toBe("disabled");
   });
 
   it("reads Claude Code's per-project /mcp toggle", () => {
@@ -302,6 +302,49 @@ describe("disabled entries", () => {
     expect(isArgentDisabledInClaudeProject(root)).toBe(false);
     write(["argent"]);
     expect(isArgentDisabledInClaudeProject(root)).toBe(true);
+  });
+
+  it("scopes the /mcp toggle to its own project", () => {
+    homedirOverride = tmpDir;
+    const projA = path.join(tmpDir, "projA");
+    const projB = path.join(tmpDir, "projB");
+    fs.mkdirSync(projA);
+    fs.mkdirSync(projB);
+    fs.writeFileSync(
+      path.join(tmpDir, ".claude.json"),
+      JSON.stringify({ projects: { [projA]: { disabledMcpServers: ["argent"] } } })
+    );
+    expect(isArgentDisabledInClaudeProject(projA)).toBe(true);
+    expect(isArgentDisabledInClaudeProject(projB)).toBe(false);
+  });
+
+  it("survives a ~/.claude.json that holds null", () => {
+    homedirOverride = tmpDir;
+    fs.writeFileSync(path.join(tmpDir, ".claude.json"), "null");
+    expect(isArgentDisabledInClaudeProject(path.join(tmpDir, "proj"))).toBe(false);
+  });
+
+  it("reads a recorded reject from a settings file that starts with a BOM", () => {
+    homedirOverride = tmpDir;
+    const root = path.join(tmpDir, "proj");
+    fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, ".claude", "settings.local.json"),
+      "\uFEFF" + JSON.stringify({ disabledMcpjsonServers: ["argent"] })
+    );
+    const claude = ALL_ADAPTERS.find((a) => a.name === "Claude Code")!;
+    const findings = claude.findShadowingConfigs!(root, "local");
+    expect(findings.map((f) => f.location)).toContain(".claude/settings.local.json");
+  });
+
+  it("reads a Codex config.toml that starts with a BOM", () => {
+    const codex = ALL_ADAPTERS.find((a) => a.name === "Codex")!;
+    const configPath = path.join(tmpDir, "config.toml");
+    fs.writeFileSync(
+      configPath,
+      '\uFEFF[mcp_servers.argent]\ncommand = "argent"\nargs = ["mcp"]\n'
+    );
+    expect(codex.getArgentEntry(configPath)).toEqual({ command: "argent", args: ["mcp"] });
   });
 });
 

@@ -7,8 +7,10 @@ export {
   detectProjectPackageManager,
   formatShellCommand,
   getInstalledVersion,
+  globalInstallCommand,
   getGloballyInstalledVersion,
   isNewerVersion,
+  isYarnPnp,
   listBundledSkills,
   nodeSatisfiesEngines,
   probeLocalInstall,
@@ -29,5 +31,6 @@ export {
   getManagedContentTargets,
   hasCustomizingEnv,
   isArgentDisabledInClaudeProject,
+  type McpConfigAdapter,
   type McpServerEntry,
 } from "./mcp-configs.js";
