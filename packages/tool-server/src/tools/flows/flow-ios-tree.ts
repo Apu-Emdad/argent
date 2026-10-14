@@ -55,23 +55,6 @@ function isScrollIndicator(node: UiTreeNode): boolean {
   );
 }
 
-/**
- * The keys of the system software keyboard (descendants of its `Keyboard`
- * element). Their text is not a selector target: the return key's label (Next,
- * Done, Go) would win an exact-text tap over the app's own button, and fail a
- * `hidden` check on it. A key keeps its id and frame, so a recorded tap on it
- * still records the key. An app's own keyboardKey buttons (a PIN pad) keep
- * their text.
- */
-function systemKeyboardKeys(nodes: UiTreeNode[], inKeyboard = false, out = new Set<UiTreeNode>()) {
-  for (const node of nodes) {
-    const under = inKeyboard || node.type === "Keyboard";
-    if (under && node.traits?.includes("keyboardKey")) out.add(node);
-    systemKeyboardKeys(node.children, under, out);
-  }
-  return out;
-}
-
 /** A toggle's "0"/"1" is its state, not text the row shows. */
 function isToggleState(node: UiTreeNode): boolean {
   return node.checked !== undefined && (node.value === "0" || node.value === "1");
@@ -112,7 +95,7 @@ function onScreenFrame(frame: DescribeFrame): DescribeFrame | undefined {
  * focus — and for a scrolling container. An identifier shields hoisted text
  * to the nearest identified ancestor; a password never contributes its value.
  */
-function projectAxNode(node: UiTreeNode, keys: Set<UiTreeNode>): FlatNode<UiTreeNode> {
+function projectAxNode(node: UiTreeNode): FlatNode<UiTreeNode> {
   if (node.covered) {
     return { skip: true, children: [], ownText: "", leaf: null, shield: false };
   }
@@ -124,16 +107,15 @@ function projectAxNode(node: UiTreeNode, keys: Set<UiTreeNode>): FlatNode<UiTree
     node.role !== "AXGroup";
   // An empty input reports its placeholder as its value, as `describe` prints it.
   const value = node.value ?? (node.hintShowing ? node.placeholder : undefined);
-  const key = keys.has(node);
   let leaf: DescribeNode | null = null;
   if (frame && addressable) {
     leaf = {
       role: node.role,
       frame,
       children: [],
-      ...(node.label !== undefined && !key ? { label: node.label } : {}),
+      ...(node.label !== undefined ? { label: node.label } : {}),
       // A secure field's placeholder is not its secret.
-      ...(value !== undefined && (!node.password || node.hintShowing) && !key ? { value } : {}),
+      ...(value !== undefined && (!node.password || node.hintShowing) ? { value } : {}),
       ...(node.identifier !== undefined ? { identifier: node.identifier } : {}),
       ...(node.focused ? { focused: true } : {}),
       ...(node.disabled ? { disabled: true } : {}),
@@ -169,11 +151,9 @@ function projectAxNode(node: UiTreeNode, keys: Set<UiTreeNode>): FlatNode<UiTree
  */
 export function adaptIosUiTreeForFlows(tree: UiTree): DescribeNode {
   const children: DescribeNode[] = [];
-  const keys = systemKeyboardKeys(tree.roots);
-  const project = (node: UiTreeNode) => projectAxNode(node, keys);
   for (const root of tree.roots) {
     if (root.covered) continue;
-    for (const child of root.children) flattenHoisting(child, project, children);
+    for (const child of root.children) flattenHoisting(child, projectAxNode, children);
   }
   return parseDescribeResult({
     role: "AXGroup",

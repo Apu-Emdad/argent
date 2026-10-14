@@ -113,6 +113,8 @@ On an iOS simulator and on a physical iPhone, the runner and `describe` read one
 - The runner keeps the unlabeled scrolling containers that `describe` does not show.
 - The runner keeps the unlabeled containers that carry an id. `describe` does not show them.
 
+When the software keyboard shows, its keys are in both trees. An exact text match wins over a substring match. Thus `tap: { text: next }` taps the return key `next`, not a button `Continue to next step`. Use the full text or the id of the button.
+
 On Android and on Chromium, an id absent from `describe` can still resolve in a flow. Verify the id in a scratch fragment.
 
 ## Directives

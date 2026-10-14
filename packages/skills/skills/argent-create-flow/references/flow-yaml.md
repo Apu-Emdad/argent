@@ -78,7 +78,9 @@ On Android and Chromium, an id absent from `describe` can still resolve in a flo
 
 The recorder rechecks each successful `await-ui-element` against the flow tree. Follow any `message` warning and replay each conversion. On iOS and Vega, a mismatch usually means the screen changed. A `text` check can also select different elements from the same source. See [Live waits and checks](live-authoring.md#live-waits-and-checks).
 
-On an iOS simulator, each tree read after a `launch:` expects the launched app in the foreground. If another app is in front, the step fails and names it. When the switch is intended, add a `tool: launch-app` step before that step. A `launch:` step restarts the app.
+On an iOS simulator, each tree read after a `launch:` expects the launched app in the foreground. If another app is in front, the step fails and names it. When the switch is intended, add a `tool: launch-app` step before that step. Later reads then expect the app that step started. A `launch:` step restarts the app.
+
+With the software keyboard up, its keys are selector targets. An exact text match wins over a substring, so `{ text: next }` taps the return key, not a `Continue to next step` button. Use the button's full text or id.
 
 When several nodes match, the directive decides:
 

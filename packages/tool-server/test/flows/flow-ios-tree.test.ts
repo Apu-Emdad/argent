@@ -9,12 +9,7 @@ import {
   queryIosSimulatorFlowTree,
   readIosSimulatorUiTree,
 } from "../../src/tools/flows/flow-ios-tree";
-import {
-  evaluateCondition,
-  findAll,
-  nodeAtPoint,
-  selectorToFrame,
-} from "../../src/utils/ui-tree-match";
+import { evaluateCondition, findAll, selectorToFrame } from "../../src/utils/ui-tree-match";
 
 const UDID = "00000000-0000-0000-0000-0000000000AB";
 const device = { platform: "ios", id: UDID, udid: UDID, kind: "simulator" } as DeviceInfo;
@@ -408,7 +403,7 @@ describe("iOS simulator flow tree projection", () => {
     }
   });
 
-  it("keeps keyboard keys' text out of selectors, but not their ids", () => {
+  it("keeps the system keyboard's key text, so a describe-copied key selector hits the key", () => {
     const tree = adaptIosUiTreeForFlows(
       adaptAxTree(
         reply([
@@ -427,10 +422,17 @@ describe("iOS simulator flow tree projection", () => {
             // The system keyboard (XCUIElementTypeKeyboard), as iOS 26 reports it.
             identifier: "UIKeyboardLayoutStar Preview",
             elementType: 19,
-            frame: frame(0, 0.65, 1, 0.35),
+            frame: frame(0, 0.6, 1, 0.4),
           },
           {
             index: 3,
+            parentIndex: 2,
+            label: "Typing Predictions",
+            elementType: 0,
+            frame: frame(0, 0.6, 1, 0.05),
+          },
+          {
+            index: 4,
             parentIndex: 2,
             label: "next",
             identifier: "Next:",
@@ -439,51 +441,23 @@ describe("iOS simulator flow tree projection", () => {
             frame: frame(0.75, 0.9, 0.24, 0.05),
           },
           {
-            index: 4,
+            index: 5,
             parentIndex: 2,
-            label: "q",
+            label: "e",
             traits: ["keyboardKey"],
             elementType: 20,
-            frame: frame(0.01, 0.7, 0.1, 0.05),
+            frame: frame(0.21, 0.7, 0.1, 0.05),
           },
         ])
       )
     );
-    expect(selectorToFrame(tree, { text: "next" })).toEqual(frame(0.05, 0.5, 0.9, 0.06));
-    expect(evaluateCondition("hidden", undefined, findAll(tree, { text: "q" }))).toBe(true);
-    expect(selectorToFrame(tree, { identifier: "Next:" })).toEqual(frame(0.75, 0.9, 0.24, 0.05));
-    // A tap on a key still hits the key, not the keyboard behind it.
-    expect(nodeAtPoint(tree, { x: 0.05, y: 0.72 })?.frame).toEqual(frame(0.01, 0.7, 0.1, 0.05));
-    expect(
-      tree.children.find((c) => c.identifier === "UIKeyboardLayoutStar Preview")?.subtreeText
-    ).toBeUndefined();
-  });
-  it("keeps the text of an app's own keyboardKey buttons", () => {
-    // React Native maps accessibilityRole="keyboardkey" to the keyboardKey trait.
-    const tree = adaptIosUiTreeForFlows(
-      adaptAxTree(
-        reply([
-          app,
-          {
-            index: 1,
-            parentIndex: 0,
-            identifier: "pinPad",
-            elementType: 0,
-            frame: frame(0.1, 0.5, 0.8, 0.4),
-          },
-          {
-            index: 2,
-            parentIndex: 1,
-            label: "5",
-            traits: ["button", "keyboardKey"],
-            elementType: 9,
-            frame: frame(0.4, 0.6, 0.2, 0.1),
-          },
-        ])
-      )
+    // Dropping the keys' text sent `text: e` to "Typing Predictions" by substring.
+    expect(selectorToFrame(tree, { text: "e" })).toEqual(frame(0.21, 0.7, 0.1, 0.05));
+    // The exact-text ranking picks the return key over a button containing the word.
+    expect(selectorToFrame(tree, { text: "next" })).toEqual(frame(0.75, 0.9, 0.24, 0.05));
+    expect(selectorToFrame(tree, { text: "Continue to next step" })).toEqual(
+      frame(0.05, 0.5, 0.9, 0.06)
     );
-    expect(selectorToFrame(tree, { text: "5" })).toEqual(frame(0.4, 0.6, 0.2, 0.1));
-    expect(evaluateCondition("hidden", undefined, findAll(tree, { text: "5" }))).toBe(false);
   });
 });
 
