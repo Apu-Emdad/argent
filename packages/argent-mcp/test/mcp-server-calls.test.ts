@@ -248,6 +248,7 @@ describe("startMcpServer screen capture after an interaction", () => {
   let client: Client;
   let events: string[];
   let settled: boolean;
+  let idleStatus: number;
   let screenshotStatus: number;
 
   const send = (res: http.ServerResponse, status: number, payload: unknown) => {
@@ -266,13 +267,16 @@ describe("startMcpServer screen capture after an interaction", () => {
   beforeEach(async () => {
     events = [];
     settled = true;
+    idleStatus = 200;
     screenshotStatus = 200;
     stub = await startStub(
       undefined,
       {
         "/tools/gesture-tap": (res) => send(res, 200, { data: { tapped: true } }),
         "/tools/await-screen-idle": (res) =>
-          send(res, 200, { data: { settled, waitedMs: 1, polls: 1 } }),
+          idleStatus === 200
+            ? send(res, 200, { data: { settled, waitedMs: 1, polls: 1 } })
+            : send(res, idleStatus, { error: "await-screen-idle is not supported" }),
         "/tools/screenshot": slow("screenshot", (res) =>
           screenshotStatus === 200
             ? send(res, 200, { data: { url: `${stub.url}/shot.png`, path: "/tmp/shot.png" } })
@@ -330,6 +334,19 @@ describe("startMcpServer screen capture after an interaction", () => {
 
   it("captures the tree after the screenshot when the screen did not settle", async () => {
     settled = false;
+
+    await tap();
+
+    expect(events).toEqual([
+      "screenshot start",
+      "screenshot end",
+      "describe start",
+      "describe end",
+    ]);
+  });
+
+  it("captures the tree after the screenshot when the settle wait fails", async () => {
+    idleStatus = 400;
 
     await tap();
 
