@@ -69,11 +69,11 @@ import {
 const zodSchema = z.object({
   name: z
     .string()
-    .describe("Name of the flow being recorded — the one passed to flow-start-recording."),
+    .describe("Name of the flow being recorded: the one passed to flow-start-recording."),
   project_root: z
     .string()
     .describe(
-      "Absolute path to the project root of the flow being recorded — the same value passed to flow-start-recording. Together with `name` it identifies which recording this step belongs to."
+      "Absolute path to the project root of the flow being recorded: the same value passed to flow-start-recording. Together with `name` it identifies which recording this step belongs to."
     ),
   command: z
     .string()
