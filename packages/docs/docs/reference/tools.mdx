@@ -18,6 +18,7 @@ Run `argent tools` to list them from the terminal, `argent tools describe <name>
 | `boot-device`                | Boot a simulator, emulator, or Vega Virtual Device, or spawn an Electron app                  |
 | `launch-app`                 | Open an app by bundle id (iOS) or package name (Android)                                      |
 | `restart-app`                | Terminate then relaunch an app                                                                |
+| `terminate-app` (SDK only)   | Stop an app without relaunching it                                                            |
 | `reinstall-app`              | Install or reinstall an app, clearing app data and runtime permissions                        |
 | `open-url`                   | Open a URL or URL scheme on the device                                                        |
 | `settings-permissions`       | Grant, deny, or reset a runtime permission without navigating the Settings UI                 |
@@ -46,16 +47,15 @@ Argent supports physical iPhones; physical iPads are not supported yet. `list-de
 
 ## Inspecting the screen
 
-| Tool                 | Description                                                                      |
-| -------------------- | -------------------------------------------------------------------------------- |
-| `screenshot`         | Capture the device screen                                                        |
-| `describe`           | Get the accessibility / DOM element tree for the current screen                  |
-| `screenshot-diff`    | Compare two PNG screenshots and return a visual-diff summary                     |
-| `await-screen-idle`  | Block until the screen has rendered content and stopped changing                 |
-| `await-ui-element`   | Block until a UI element reaches an expected state, instead of polling in a loop |
-| `ui-tree` (SDK only) | Get the raw accessibility tree as nested JSON, iOS simulator and Android         |
-
-`ui-tree` is hidden from MCP; call it with the [Argent SDK](./node-client.mdx), which exports its `UiTree` result type. Fields a platform cannot report yet are listed in `unsupportedFields`. A node is `hidden` when no part of it is on screen inside its ancestors. On iOS, while a system alert shows, `roots` holds the system app first and the app it covers second. On Android, `roots` holds one root per window, topmost first. A system dialog, such as a runtime permission prompt or a crash dialog, sets `alertVisible`, and every node of the app it covers is `covered`. When Android hides the app's window under the dialog, `foregroundApp` is unset.
+| Tool                        | Description                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| `screenshot`                | Capture the device screen                                                        |
+| `describe`                  | Get the accessibility / DOM element tree for the current screen                  |
+| `screenshot-diff`           | Compare two PNG screenshots and return a visual-diff summary                     |
+| `await-screen-idle`         | Block until the screen has rendered content and stopped changing                 |
+| `await-ui-element`          | Block until a UI element reaches an expected state, instead of polling in a loop |
+| `ui-tree` (SDK only)        | Get the raw accessibility tree as nested JSON, iOS simulator and Android         |
+| `foreground-app` (SDK only) | Get the app in front, iOS simulator and Android                                  |
 
 ## Interacting
 
@@ -70,6 +70,7 @@ Argent supports physical iPhones; physical iPads are not supported yet. `list-de
 | `gesture-custom`         | Send an arbitrary sequence of touch events for complex gestures |
 | `keyboard`               | Type text or press special keys                                 |
 | `paste`                  | Put text on the device clipboard and paste it (sim/emu only)    |
+| `fill` (SDK only)        | Set the text of the focused text field                          |
 | `run-sequence`           | Execute several interaction steps in a single call              |
 | `screen-recording-start` | Start recording the screen to an h264 mp4                       |
 | `screen-recording-stop`  | Stop the recording and retrieve the video                       |
@@ -174,3 +175,11 @@ The client resolves a relative path in these arguments against its working direc
 The working directory of `argent run` is the directory of the shell. The working directory of the [Argent SDK](/docs/reference/node-client) is `process.cwd()` of the program. The working directory of the MCP server is the directory where the editor starts `argent mcp`.
 
 Other arguments get to the tool-server as written. The working directory of the tool-server is the directory of the client that started it. Give an absolute path in other arguments that name a file or a directory.
+
+## Footnotes
+
+`terminate-app`, `ui-tree`, `foreground-app` and `fill` are hidden from MCP. Call them with the [Argent SDK](./node-client.mdx), which exports the `UiTree`, `ForegroundApp` and `FillResult` result types.
+
+`terminate-app` works on iOS and tvOS simulators, Android emulators and devices, and Vega Virtual Devices. On an iOS simulator it succeeds with `terminated: false` when the app is not running or not installed. Android and Vega always report `terminated: true`. Physical iPhones are not supported yet.
+
+In `ui-tree`, fields a platform cannot report yet are listed in `unsupportedFields`. A node is `hidden` when no part of it is on screen inside its ancestors. On iOS, while a system alert shows, `roots` holds the system app first and the app it covers second. On Android, `roots` holds one root per window, topmost first. A system dialog, such as a runtime permission prompt or a crash dialog, sets `alertVisible`, and every node of the app it covers is `covered`. When Android hides the app's window under the dialog, `foregroundApp` is unset. `foreground-app` returns the same `foregroundApp` and `alertVisible` without reading the tree, plus the app's `name` on iOS.
