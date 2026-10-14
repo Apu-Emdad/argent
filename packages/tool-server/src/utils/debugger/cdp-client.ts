@@ -421,46 +421,69 @@ export class CDPClient {
   /**
    * Evaluate and return the value, settling a Promise result first.
    *
-   * Hermes ignores `awaitPromise` and answers with the Promise object itself.
-   * So the expression runs once without serializing; if the result has a
-   * `then` method, its settle callbacks write the outcome into a box object
-   * that is polled with `Runtime.getProperties`, which compiles no script.
-   * Every handle belongs to one object group, released when the call ends, so
-   * nothing the expression returned stays pinned in the app's heap.
+   * Hermes ignores `awaitPromise` and answers with the Promise object itself,
+   * so it is never requested and every runtime takes the same path: the
+   * expression runs once without serializing; if the result has a `then`
+   * method, its settle callbacks write the outcome into a box object that is
+   * polled with `Runtime.getProperties`, which compiles no script. Every
+   * handle belongs to one object group, released when the call ends. The
+   * whole call shares one `timeout` budget.
    */
   async evaluateAwaited(expression: string, options?: { timeout?: number }): Promise<unknown> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
     const objectGroup = `argent-await-${crypto.randomUUID()}`;
-    const first = (await this.send(
-      "Runtime.evaluate",
-      { expression, objectGroup, returnByValue: false, awaitPromise: true },
-      timeout
-    )) as RemoteResult;
-    if (first.exceptionDetails) throw runtimeException(first.exceptionDetails);
-    const objectId = first.result?.objectId;
-    if (!objectId) return first.result?.value;
-
+    let ran = false;
     try {
-      return await this.settleRemote(objectId, objectGroup, timeout);
+      const first = (await this.send(
+        "Runtime.evaluate",
+        { expression, objectGroup, returnByValue: false },
+        timeout
+      )) as RemoteResult;
+      ran = true;
+      if (first.exceptionDetails) throw runtimeException(first.exceptionDetails);
+      if (first.result?.type === "symbol") return first.result.description;
+      const objectId = first.result?.objectId;
+      if (!objectId) return first.result?.value;
+      return await this.settleRemote(objectId, objectGroup, deadline, timeout);
+    } catch (err) {
+      if (
+        ran &&
+        err instanceof Error &&
+        getFailureSignal(err)?.error_code === FAILURE_CODES.DEBUGGER_CDP_NOT_CONNECTED
+      ) {
+        throw new FailureError(
+          "The connection closed after the expression ran, before its result was read.",
+          {
+            error_code: FAILURE_CODES.DEBUGGER_CDP_CONNECTION_CLOSED,
+            failure_stage: "debugger_cdp_evaluate",
+            failure_area: "tool_server",
+            error_kind: "network",
+          },
+          { cause: err }
+        );
+      }
+      throw err;
     } finally {
-      await this.send("Runtime.releaseObjectGroup", { objectGroup }, timeout).catch(
-        () => undefined
-      );
+      this.send("Runtime.releaseObjectGroup", { objectGroup }, 1000).catch(() => undefined);
     }
   }
 
   private async settleRemote(
     objectId: string,
     objectGroup: string,
+    deadline: number,
     timeout: number
   ): Promise<unknown> {
+    const left = () => Math.max(1, deadline - Date.now());
     const verdict = (
       await this.callOn(
         objectId,
         objectGroup,
-        `function(){try{if(!this||typeof this.then!=="function")return {v:this}}catch(_){}return {pending:true}}`,
+        `function(){"use strict";try{if(!this||typeof this.then!=="function")` +
+          `return {v:typeof this==="symbol"?String(this):this}}catch(_){}return {pending:true}}`,
         true,
-        timeout
+        left()
       )
     ).value as { v?: unknown; pending?: true } | undefined;
     if (!verdict?.pending) return verdict?.v;
@@ -469,10 +492,10 @@ export class CDPClient {
       await this.callOn(
         objectId,
         objectGroup,
-        `function(){var b={s:0};try{this.then(function(v){b.v=v;b.s=1},function(e){b.e=e;b.s=2})}` +
-          `catch(e){b.e=e;b.s=2}return b}`,
+        `function(){var b={s:0};function no(e){b.e=e;b.s=2}` +
+          `try{Promise.resolve(this).then(function(v){b.v=v;b.s=1},no)}catch(e){no(e)}return b}`,
         false,
-        timeout
+        left()
       )
     ).objectId;
     if (!box) {
@@ -484,14 +507,14 @@ export class CDPClient {
       });
     }
 
-    const deadline = Date.now() + timeout;
     for (;;) {
+      if (this.paused) throw this.pausedError("the Promise's callbacks");
       let props: { result?: { name: string; value?: RemoteObjectLike }[] };
       try {
         props = (await this.send(
           "Runtime.getProperties",
           { objectId: box, ownProperties: true },
-          timeout
+          left()
         )) as typeof props;
       } catch (err) {
         if (
@@ -513,11 +536,18 @@ export class CDPClient {
       }
       const state = props.result?.find((p) => p.name === "s")?.value?.value;
       if (state === 1) {
-        return (await this.callOn(box, objectGroup, "function(){return this.v}", true, timeout))
-          .value;
+        return (
+          await this.callOn(
+            box,
+            objectGroup,
+            `function(){var v=this.v;return typeof v==="symbol"?String(v):v}`,
+            true,
+            left()
+          )
+        ).value;
       }
       if (state === 2) {
-        const reason = (await this.callOn(box, objectGroup, REJECTION_REASON, true, timeout)).value;
+        const reason = (await this.callOn(box, objectGroup, REJECTION_REASON, true, left())).value;
         throw new FailureError(`Promise rejected: ${String(reason)}`, {
           error_code: FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION,
           failure_stage: "debugger_cdp_evaluate",

@@ -3,12 +3,13 @@ import { Session } from "node:inspector/promises";
 import { FAILURE_CODES, FailureError, getFailureSignal } from "@argent/registry";
 import { CDPClient } from "../../src/utils/debugger/cdp-client";
 import { debuggerEvaluateTool } from "../../src/tools/debugger/debugger-evaluate";
+import { jsRuntimeDebuggerBlueprint } from "../../src/blueprints/js-runtime-debugger";
 import type { JsRuntimeDebuggerApi } from "../../src/blueprints/js-runtime-debugger";
 
 /**
  * evaluateAwaited against this process's own V8 through `node:inspector`.
- * `awaitPromise` is stripped from every request, because Hermes ignores it:
- * that forces the same path a Hermes app takes, with a real runtime behind it.
+ * It never asks for `awaitPromise` (Hermes ignores it), so V8 takes the same
+ * path a Hermes app does, with a real runtime behind it.
  */
 const sessions: Session[] = [];
 
@@ -23,11 +24,13 @@ function v8Client(hooks?: { beforeSend?: (method: string, params: any) => Promis
   sessions.push(session);
   const client = new CDPClient("ws://localhost:1");
   const calls: string[] = [];
-  (client as any).send = async (method: string, params: any = {}) => {
+  const timeouts: number[] = [];
+  (client as any).send = async (method: string, params: any = {}, timeout?: number) => {
     calls.push(method);
+    if (timeout !== undefined) timeouts.push(timeout);
     await hooks?.beforeSend?.(method, params);
     try {
-      return await session.post(method as any, { ...params, awaitPromise: undefined });
+      return await session.post(method as any, params);
     } catch (err) {
       throw new FailureError((err as Error).message, {
         error_code: FAILURE_CODES.DEBUGGER_CDP_PROTOCOL_ERROR,
@@ -37,7 +40,7 @@ function v8Client(hooks?: { beforeSend?: (method: string, params: any) => Promis
       });
     }
   };
-  return { client, calls, session };
+  return { client, calls, timeouts, session };
 }
 
 const TRACK = "(globalThis.__wrs||(globalThis.__wrs=[])).push(new WeakRef(o));";
@@ -62,7 +65,7 @@ describe("CDPClient.evaluateAwaited", () => {
   it("returns a primitive in one round-trip", async () => {
     const { client, calls } = v8Client();
     expect(await client.evaluateAwaited("1+1")).toBe(2);
-    expect(calls).toEqual(["Runtime.evaluate"]);
+    expect(calls).toEqual(["Runtime.evaluate", "Runtime.releaseObjectGroup"]);
   });
 
   it("serializes an object and leaves nothing pinned", async () => {
@@ -152,6 +155,120 @@ describe("CDPClient.evaluateAwaited", () => {
       client.evaluateAwaited("new Promise(r=>setTimeout(r,5000))", { timeout: 3000 })
     ).rejects.toThrow(/Lost the Promise while waiting for it/);
     expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("reports an expression that throws", async () => {
+    const { client } = v8Client();
+    const { err, signal } = await signalOf(() => client.evaluateAwaited("throw new Error('x')"));
+    expect(err.message).toMatch(/Error: x/);
+    expect(signal?.error_code).toBe(FAILURE_CODES.DEBUGGER_CDP_RUNTIME_EXCEPTION);
+  });
+
+  it("returns an object whose then is not a function as is", async () => {
+    const { client } = v8Client();
+    expect(await client.evaluateAwaited("({then:5,a:1})")).toEqual({ then: 5, a: 1 });
+  });
+
+  it("follows a thenable that resolves with a Promise", async () => {
+    const { client } = v8Client();
+    expect(await client.evaluateAwaited("({then(r){r(Promise.resolve(42))}})")).toBe(42);
+  });
+
+  it("returns a Symbol as its description, also when a Promise resolves to one", async () => {
+    const { client } = v8Client();
+    expect(await client.evaluateAwaited("Symbol('x')")).toBe("Symbol(x)");
+    expect(await client.evaluateAwaited("Promise.resolve(Symbol('y'))")).toBe("Symbol(y)");
+  });
+
+  it("releases the object group when the first request times out", async () => {
+    const released: string[] = [];
+    const { client, session } = v8Client({
+      beforeSend: async (method, params) => {
+        if (method === "Runtime.releaseObjectGroup") released.push(params.objectGroup);
+        if (method === "Runtime.evaluate") {
+          void session.post("Runtime.evaluate", params);
+          throw new FailureError("timed out", {
+            error_code: FAILURE_CODES.DEBUGGER_CDP_REQUEST_TIMEOUT,
+            failure_stage: "debugger_cdp_send",
+            failure_area: "tool_server",
+            error_kind: "timeout",
+          });
+        }
+      },
+    });
+    const { signal } = await signalOf(() =>
+      client.evaluateAwaited(`(()=>{const o={big:new Array(1e5).fill(1)};${TRACK}return o})()`)
+    );
+    expect(signal?.error_code).toBe(FAILURE_CODES.DEBUGGER_CDP_REQUEST_TIMEOUT);
+    expect(released).toHaveLength(1);
+    expect(await collected(session)).toEqual([true]);
+  });
+
+  it("keeps the whole call within one timeout budget", async () => {
+    const { client, timeouts } = v8Client({
+      beforeSend: async (method) => {
+        if (method === "Runtime.evaluate") await new Promise((r) => setTimeout(r, 300));
+      },
+    });
+    const t0 = Date.now();
+    const { signal } = await signalOf(() =>
+      client.evaluateAwaited("new Promise(()=>{})", { timeout: 400 })
+    );
+    expect(signal?.error_kind).toBe("timeout");
+    expect(Date.now() - t0).toBeLessThan(600);
+    expect(Math.max(...timeouts.slice(1, -1))).toBeLessThanOrEqual(400 - 250);
+  });
+
+  it("reports a pause instead of waiting out the timeout", async () => {
+    const { client } = v8Client({
+      beforeSend: async (method) => {
+        if (method === "Runtime.getProperties") {
+          (client as any).paused = { callFrames: [], reason: "other" };
+        }
+      },
+    });
+    const t0 = Date.now();
+    const { signal } = await signalOf(() =>
+      client.evaluateAwaited("new Promise(r=>setTimeout(r,5000))", { timeout: 3000 })
+    );
+    expect(signal?.error_code).toBe(FAILURE_CODES.JS_RUNTIME_PAUSED);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("does not let the registry retry once the expression has run", async () => {
+    const { client } = v8Client({
+      beforeSend: async (method) => {
+        if (method === "Runtime.getProperties") {
+          throw new FailureError("CDP not connected", {
+            error_code: FAILURE_CODES.DEBUGGER_CDP_NOT_CONNECTED,
+            failure_stage: "debugger_cdp_send",
+            failure_area: "tool_server",
+            error_kind: "network",
+          });
+        }
+      },
+    });
+    const { err } = await signalOf(() => client.evaluateAwaited("new Promise(()=>{})"));
+    expect(getFailureSignal(err)?.error_code).toBe(FAILURE_CODES.DEBUGGER_CDP_CONNECTION_CLOSED);
+    expect(jsRuntimeDebuggerBlueprint.recoverable?.(err)).toBe(false);
+  });
+
+  it("passes a request timeout while polling through unchanged", async () => {
+    const { client } = v8Client({
+      beforeSend: async (method) => {
+        if (method === "Runtime.getProperties") {
+          throw new FailureError("timed out", {
+            error_code: FAILURE_CODES.DEBUGGER_CDP_REQUEST_TIMEOUT,
+            failure_stage: "debugger_cdp_send",
+            failure_area: "tool_server",
+            error_kind: "timeout",
+          });
+        }
+      },
+    });
+    const { err, signal } = await signalOf(() => client.evaluateAwaited("new Promise(()=>{})"));
+    expect(err.message).toBe("timed out");
+    expect(signal?.error_code).toBe(FAILURE_CODES.DEBUGGER_CDP_REQUEST_TIMEOUT);
   });
 });
 
