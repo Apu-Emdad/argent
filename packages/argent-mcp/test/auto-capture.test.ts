@@ -214,8 +214,9 @@ describe("getAutoScreenshotDelayMs", () => {
     }
   });
 
-  // A cap is spent in full only on a screen that never settles, so a large
-  // in-app cap is dead wait. App launches are exempt: a cold start may need more.
+  // A cap is spent in full on every screen that never reads as settled, so a
+  // large in-app cap is dead wait there. App launches are exempt so their cold
+  // start cap can be raised.
   const APP_LAUNCH_TOOLS = new Set(["launch-app", "restart-app", "open-url"]);
   it("keeps every in-app-transition settle cap at or below 3s", () => {
     for (const [tool, ms] of Object.entries(AUTO_SCREENSHOT_DELAY_MS_BY_TOOL)) {
