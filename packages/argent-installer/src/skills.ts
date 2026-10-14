@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { track } from "@argent/telemetry";
@@ -8,12 +10,14 @@ import {
   getGlobalSkillLockPath,
   getInstalledVersion,
   getProjectSkillLockPath,
+  LEGACY_ARGENT_SKILL_NAMES,
   listArgentSkillsInLock,
   listBundledSkills,
   npxChildEnv,
   withNpmForce,
   SKILLS_DIR,
 } from "./utils.js";
+import { ALL_ADAPTERS, getManagedContentTargets } from "./mcp-configs.js";
 
 type SkillScope = "project" | "global";
 
@@ -128,10 +132,45 @@ export function refreshArgentSkills(projectRoot: string): SkillScopeResult[] {
       }
     }
 
+    for (const name of removeLegacySkillDirs(projectRoot, spec.scope, bundled)) {
+      if (!result.pruned.includes(name)) result.pruned.push(name);
+    }
+
     results.push(result);
   }
 
   return results;
+}
+
+// A renamed skill's old dir can outlive its lock entry (or never have had one),
+// so `skills remove` never sees it. Removes it, and editor links to it, from
+// every skills dir of the scope. Returns the names removed.
+function removeLegacySkillDirs(
+  projectRoot: string,
+  scope: SkillScope,
+  bundled: ReadonlySet<string>
+): string[] {
+  const legacy = LEGACY_ARGENT_SKILL_NAMES.filter((name) => !bundled.has(name));
+  const { skillTargets } = getManagedContentTargets(
+    ALL_ADAPTERS,
+    projectRoot,
+    scope === "global" ? "global" : "local"
+  );
+  const removed = new Set<string>();
+  for (const { targetPath } of skillTargets) {
+    for (const name of legacy) {
+      const dir = path.join(targetPath, name);
+      try {
+        // lstat: an editor link into an emptied .agents/skills dangles.
+        if (!fs.lstatSync(dir, { throwIfNoEntry: false })) continue;
+        fs.rmSync(dir, { recursive: true, force: true });
+        removed.add(name);
+      } catch {
+        // non-fatal
+      }
+    }
+  }
+  return [...removed].sort();
 }
 
 // Returns null when nothing happened, so the caller can skip printing an empty
