@@ -30,12 +30,12 @@ import { __resetRecordingsForTesting, parseFlow } from "../../src/tools/flows/fl
 
 // A path that exists on the (simulated) client but not on this "server".
 const CLIENT_ROOT = path.join(os.tmpdir(), "definitely-not-on-this-host", "agent-project");
-const CLIENT_FLOW_PATH = path.join(CLIENT_ROOT, ".argent", "flows", "remote-flow.yaml");
+const CLIENT_FLOW_PATH = path.join(CLIENT_ROOT, ".argent", "e2e", "remote-flow.yaml");
 
 // A SECOND client project — a different agent recording a flow of the same
 // name. Same host, same flow name, different project root.
 const OTHER_CLIENT_ROOT = path.join(os.tmpdir(), "definitely-not-on-this-host", "other-project");
-const OTHER_CLIENT_FLOW_PATH = path.join(OTHER_CLIENT_ROOT, ".argent", "flows", "remote-flow.yaml");
+const OTHER_CLIENT_FLOW_PATH = path.join(OTHER_CLIENT_ROOT, ".argent", "e2e", "remote-flow.yaml");
 
 function remoteCtx(root: string = CLIENT_ROOT): ToolContext {
   return {
@@ -128,8 +128,8 @@ describe("flow recording with a remote client (probe miss)", () => {
     // sub.yaml beside the recording, so captureRunTarget keeps the raw
     // `tool: flow-execute` step: where a record-time device id would be baked
     // in and pin every replay.
-    const subPath = path.join(OTHER_CLIENT_ROOT, ".argent", "flows", "sub.yaml");
-    const sibling = path.join(CLIENT_ROOT, ".argent", "flows", "sub.yaml");
+    const subPath = path.join(OTHER_CLIENT_ROOT, ".argent", "e2e", "sub.yaml");
+    const sibling = path.join(CLIENT_ROOT, ".argent", "e2e", "sub.yaml");
     const member = (spelled: string, text?: string): [string, ResolvedMember] => [
       flowMemberKey(path.dirname(spelled), path.basename(spelled)),
       text === undefined
@@ -190,7 +190,7 @@ describe("flow recording with a remote client (probe miss)", () => {
     expect(parseFlow(directive.content).steps).toEqual([
       {
         kind: "tool",
-        name: "flow-execute",
+        name: "e2e-execute",
         args: { name: "sub", project_root: OTHER_CLIENT_ROOT },
       },
     ]);
@@ -214,7 +214,7 @@ describe("flow recording with a remote client (probe miss)", () => {
           project_root: CLIENT_ROOT,
           command: "flow-execute",
           args: JSON.stringify({
-            flow_path: path.join(CLIENT_ROOT, ".argent", "flows", "login.yaml"),
+            flow_path: path.join(CLIENT_ROOT, ".argent", "e2e", "login.yaml"),
             project_root: CLIENT_ROOT,
           }),
         }
@@ -552,7 +552,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
     // superRefine enforces it and the description states it.
     expect(schema.required as string[]).not.toContain("name");
     expect(schema.required as string[]).not.toContain("flow_path");
-    expect(runFlow.description).toMatch(/exactly one flow source/i);
+    expect(runFlow.description).toMatch(/exactly one e2e test source/i);
   });
 
   it("states the absolute-path requirement in the flow_path description", () => {
@@ -664,7 +664,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
       () => null,
       (e: unknown) => e as Error
     );
-    expect(err?.message).toContain("flow paths must be absolute");
+    expect(err?.message).toContain("e2e test paths must be absolute");
     expect(err?.message).not.toContain("file-input boundary");
   });
 
@@ -701,7 +701,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
       () => null,
       (e: unknown) => e as Error
     );
-    expect(err?.message).toContain('Invalid flow name ""');
+    expect(err?.message).toContain('Invalid e2e test name ""');
     expect(err?.message).not.toMatch(/must use the (lowercase )?\.yaml extension/);
   });
 
@@ -716,7 +716,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
         viaUpload: false,
         statVerified: true,
       })
-    ).rejects.toThrow('flow files must use the lowercase .yaml extension, not ".YAML"');
+    ).rejects.toThrow('e2e test files must use the lowercase .yaml extension, not ".YAML"');
   });
 
   it("rejects a mis-cased basename the filesystem's stat vouched for, naming the on-disk spelling", async () => {
@@ -772,7 +772,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
         'matched "checkout.yaml" case-insensitively to "checkout.YAML"'
       );
       expect(err?.message).toContain(
-        'Rename "checkout.YAML" to "checkout.yaml" to run it — flow files must be lowercase .yaml.'
+        'Rename "checkout.YAML" to "checkout.yaml" to run it — e2e test files must be lowercase .yaml.'
       );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
@@ -857,7 +857,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
         presentOnHost: false,
         viaUpload: true,
       })
-    ).rejects.toThrow('Invalid flow_path "flows/relative.yaml": flow paths must be absolute');
+    ).rejects.toThrow('Invalid flow_path "flows/relative.yaml": e2e test paths must be absolute');
   });
 
   it("rejects an uploaded flow_path whose client spelling has a .. segment", async () => {
@@ -869,7 +869,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
         presentOnHost: false,
         viaUpload: true,
       })
-    ).rejects.toThrow('flow paths must not contain ".." segments');
+    ).rejects.toThrow('e2e test paths must not contain ".." segments');
   });
 
   it("rejects an uploaded flow_path without the .yaml extension", async () => {
@@ -880,7 +880,7 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
         presentOnHost: false,
         viaUpload: true,
       })
-    ).rejects.toThrow("flow files must use the .yaml extension");
+    ).rejects.toThrow("e2e test files must use the .yaml extension");
   });
 
   it("rejects direct callers that provide both flow sources", async () => {
@@ -890,12 +890,12 @@ describe("flow replay with an explicit boundary-resolved flow_path", () => {
         undefined,
         { clientPath: "/tmp/explicit.yaml", presentOnHost: true, viaUpload: false }
       )
-    ).rejects.toThrow("exactly one flow source");
+    ).rejects.toThrow("exactly one e2e test source");
   });
 
   it("rejects direct callers that provide neither flow source", async () => {
     await expect(resolveFlowSource({ project_root: CLIENT_ROOT })).rejects.toThrow(
-      "exactly one flow source"
+      "exactly one e2e test source"
     );
   });
 });

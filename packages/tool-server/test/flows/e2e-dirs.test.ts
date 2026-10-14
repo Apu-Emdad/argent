@@ -1,0 +1,374 @@
+/**
+ * E2e tests are saved in `.argent/e2e`, and `.argent/flows` is still read:
+ * a name is looked up in `.argent/e2e` first, a same-named legacy test is
+ * reported as hidden, a new recording lands in `.argent/e2e`, and `run:`
+ * composes across the two directories, both co-located and over a link.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import {
+  ArtifactStore,
+  Registry,
+  type FileInputMember,
+  type FileInputWire,
+  type ToolDefinition,
+} from "@argent/registry";
+import { resolveFileInputs } from "../../src/file-inputs";
+import {
+  createRunFlowTool,
+  resolveFlowSource,
+  type FlowPrerequisiteNotice,
+  type FlowRunResult,
+} from "../../src/tools/flows/flow-run";
+import { flowStartRecordingTool } from "../../src/tools/flows/flow-start-recording";
+import { flowFinishRecordingTool } from "../../src/tools/flows/flow-finish-recording";
+import { __resetRecordingsForTesting } from "../../src/tools/flows/flow-utils";
+
+let root: string;
+
+beforeEach(async () => {
+  __resetRecordingsForTesting();
+  root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "e2e-dirs-")));
+});
+
+afterEach(async () => {
+  __resetRecordingsForTesting();
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+const e2e = (name: string) => path.join(root, ".argent", "e2e", name);
+const legacy = (name: string) => path.join(root, ".argent", "flows", name);
+
+async function write(file: string, text: string): Promise<string> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, text, "utf8");
+  return file;
+}
+
+const echoes = (...messages: string[]) =>
+  `steps:\n${messages.map((m) => `  - echo: ${m}\n`).join("")}`;
+
+const DEVICE = "00000000-0000-0000-0000-0000000000ab";
+
+/** A registry with flow-execute, so a nested `tool: e2e-execute` step runs. */
+function runTool(): ToolDefinition<Record<string, unknown>, unknown> {
+  const registry = new Registry();
+  registry.registerTool(createRunFlowTool(registry));
+  registry.registerTool({
+    id: "list-devices",
+    description: "",
+    zodSchema: z.object({}),
+    services: () => ({}),
+    execute: async () => ({ devices: [] }),
+  });
+  return registry.getTool("e2e-execute") as unknown as ToolDefinition<
+    Record<string, unknown>,
+    unknown
+  >;
+}
+
+function asRun(result: unknown): FlowRunResult {
+  if (!result || typeof result !== "object" || !("steps" in result)) {
+    throw new Error(`expected a run result, got ${JSON.stringify(result)}`);
+  }
+  return result as FlowRunResult;
+}
+
+/** Each step as `kind status message-or-reason`. */
+function lines(result: FlowRunResult): string[] {
+  return result.steps.map((s) => `${s.kind} ${s.status} ${s.message ?? s.reason ?? ""}`.trim());
+}
+
+async function runColocated(args: Record<string, unknown>): Promise<FlowRunResult> {
+  return asRun(await runTool().execute({}, { project_root: root, device: DEVICE, ...args }));
+}
+
+/** The call as the argent client sends it over a link, from the client's own source. */
+async function clientWire(
+  fileInputs: unknown,
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const client = path.resolve(__dirname, "../../../argent-tools-client/src");
+  const { prepareFileInputs } = (await import(path.join(client, "file-inputs.ts"))) as {
+    prepareFileInputs(specs: unknown, args: unknown, opts: object): Promise<unknown>;
+  };
+  const { collectFlowMembers } = (await import(path.join(client, "flow-files.ts"))) as {
+    collectFlowMembers: unknown;
+  };
+  return (await prepareFileInputs(fileInputs, args, {
+    includeContent: true,
+    collectMembers: collectFlowMembers,
+  })) as Record<string, unknown>;
+}
+
+/** A run over a link: the client's wire, this server's boundary, and the members it sent. */
+async function runLinked(
+  args: Record<string, unknown>
+): Promise<{ result: FlowRunResult; wire: FileInputWire }> {
+  const tool = runTool();
+  const call = { project_root: root, device: DEVICE, ...args };
+  const sent = await clientWire(tool.fileInputs, call);
+  const boundary = await resolveFileInputs(tool, sent);
+  try {
+    const result = asRun(
+      await tool.execute({}, boundary.args, {
+        artifacts: new ArtifactStore(),
+        fileInputs: boundary.fileInputs,
+      })
+    );
+    const wire = (sent.flow_file ?? sent.flow_path) as FileInputWire;
+    return { result, wire };
+  } finally {
+    await boundary.cleanup();
+  }
+}
+
+describe("a test addressed by name", () => {
+  it("runs from .argent/flows when it is saved only there", async () => {
+    await write(legacy("old.yaml"), echoes("legacy"));
+
+    const result = await runColocated({ name: "old" });
+
+    expect(result.ok).toBe(true);
+    expect(lines(result)).toEqual(["echo pass legacy"]);
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("runs from .argent/e2e", async () => {
+    await write(e2e("new.yaml"), echoes("new"));
+
+    expect(lines(await runColocated({ name: "new" }))).toEqual(["echo pass new"]);
+  });
+
+  it("takes .argent/e2e over a same-named .argent/flows test, and names the hidden one", async () => {
+    await write(e2e("both.yaml"), echoes("from e2e"));
+    await write(legacy("both.yaml"), echoes("from flows"));
+
+    const result = await runColocated({ name: "both" });
+
+    expect(lines(result)).toEqual(["echo pass from e2e"]);
+    expect(result.warning).toBe(
+      `${legacy("both.yaml")} is not used: ${e2e("both.yaml")} has the same name and is read first.`
+    );
+  });
+
+  it("names the hidden test with a prerequisite notice too", async () => {
+    await write(e2e("frag.yaml"), "executionPrerequisite: App open\nsteps:\n  - echo: hi\n");
+    await write(legacy("frag.yaml"), echoes("hidden"));
+
+    const notice = (await runTool().execute(
+      {},
+      { name: "frag", project_root: root }
+    )) as FlowPrerequisiteNotice;
+
+    expect(notice.notice).toContain("execution prerequisite");
+    expect(notice.warning).toContain(`${legacy("frag.yaml")} is not used`);
+  });
+
+  it("reports a missing test at the .argent/e2e path", async () => {
+    await expect(resolveFlowSource({ name: "nowhere", project_root: root })).resolves.toEqual({
+      filePath: e2e("nowhere.yaml"),
+      flowName: "nowhere",
+      viaUpload: false,
+    });
+  });
+
+  it("accepts a client-derived flow_file in either directory, and no other path", async () => {
+    await write(e2e("a.yaml"), echoes("a"));
+    await write(legacy("b.yaml"), echoes("b"));
+
+    await expect(
+      resolveFlowSource({ name: "a", project_root: root, flow_file: e2e("a.yaml") })
+    ).resolves.toMatchObject({ filePath: e2e("a.yaml") });
+    await expect(
+      resolveFlowSource({ name: "b", project_root: root, flow_file: legacy("b.yaml") })
+    ).resolves.toMatchObject({ filePath: legacy("b.yaml") });
+    await expect(
+      resolveFlowSource({
+        name: "b",
+        project_root: root,
+        flow_file: path.join(root, "elsewhere", "b.yaml"),
+      })
+    ).rejects.toThrow(`("${e2e("b.yaml")}" or "${legacy("b.yaml")}")`);
+  });
+
+  it("is derived by the client from the first directory that has it", async () => {
+    await write(legacy("old.yaml"), echoes("legacy"));
+    await write(e2e("both.yaml"), echoes("from e2e"));
+    await write(legacy("both.yaml"), echoes("from flows"));
+
+    const old = await runLinked({ name: "old" });
+    const both = await runLinked({ name: "both" });
+
+    expect(old.wire.path).toBe(legacy("old.yaml"));
+    expect(lines(old.result)).toEqual(["echo pass legacy"]);
+    expect(both.wire.path).toBe(e2e("both.yaml"));
+    expect(lines(both.result)).toEqual(["echo pass from e2e"]);
+  });
+});
+
+describe("recording", () => {
+  it("saves a new test in .argent/e2e and leaves a same-named legacy test alone", async () => {
+    await write(legacy("rec.yaml"), echoes("legacy"));
+
+    await flowStartRecordingTool.execute({}, { name: "rec", project_root: root });
+    const finished = await flowFinishRecordingTool.execute({}, { name: "rec", project_root: root });
+
+    expect(finished.path).toBe(e2e("rec.yaml"));
+    await expect(fs.readFile(e2e("rec.yaml"), "utf8")).resolves.toContain("steps: []");
+    await expect(fs.readFile(legacy("rec.yaml"), "utf8")).resolves.toBe(echoes("legacy"));
+  });
+});
+
+describe("run: across the two directories", () => {
+  beforeEach(async () => {
+    await write(e2e("main.yaml"), "steps:\n  - run: login\n  - echo: main done\n");
+    await write(legacy("login.yaml"), echoes("logged in"));
+    await write(legacy("old.yaml"), "steps:\n  - run: helper\n  - echo: old done\n");
+    await write(e2e("helper.yaml"), echoes("helped"));
+    await write(e2e("nested.yaml"), "steps:\n  - run: sub/login\n");
+    await write(legacy("sub/login.yaml"), echoes("never"));
+  });
+
+  it("finds a fragment in .argent/flows from a test in .argent/e2e, and the reverse", async () => {
+    expect(lines(await runColocated({ name: "main" }))).toEqual([
+      "run pass",
+      "echo pass logged in",
+      "echo pass main done",
+    ]);
+    expect(lines(await runColocated({ name: "old" }))).toEqual([
+      "run pass",
+      "echo pass helped",
+      "echo pass old done",
+    ]);
+  });
+
+  it("prefers the fragment beside the file that names it", async () => {
+    await write(e2e("login.yaml"), echoes("beside"));
+
+    expect(lines(await runColocated({ name: "main" }))).toEqual([
+      "run pass",
+      "echo pass beside",
+      "echo pass main done",
+    ]);
+  });
+
+  it("looks only beside the file for a target with a directory", async () => {
+    const result = await runColocated({ name: "nested" });
+
+    expect(result.ok).toBe(false);
+    expect(result.steps[0]!.reason).toContain(
+      `ENOENT: no such file or directory, open '${e2e("sub/login.yaml")}'`
+    );
+  });
+
+  it("composes the same way over a link, with the fragments of both directories sent", async () => {
+    for (const name of ["main", "old"]) {
+      const { result, wire } = await runLinked({ name });
+
+      expect(lines(result)).toEqual(lines(await runColocated({ name })));
+      // The target beside the file, which is missing, then the one found.
+      const members = (wire.members ?? []) as FileInputMember[];
+      expect(members.map((m) => [m.role, m.path, m.state])).toEqual(
+        name === "main"
+          ? [
+              ["flow", e2e("login.yaml"), "missing"],
+              ["flow", legacy("login.yaml"), undefined],
+            ]
+          : [
+              ["flow", legacy("helper.yaml"), "missing"],
+              ["flow", e2e("helper.yaml"), undefined],
+            ]
+      );
+    }
+  });
+
+  it("over a link, fails a missing fragment as the co-located run does", async () => {
+    await fs.rm(legacy("login.yaml"));
+
+    const linked = await runLinked({ name: "main" });
+    const colocated = await runColocated({ name: "main" });
+
+    expect(linked.result.ok).toBe(false);
+    expect(lines(linked.result)).toEqual(lines(colocated));
+  });
+});
+
+describe("a nested tool: e2e-execute step that names a test", () => {
+  it("runs a test saved only in .argent/flows, co-located and over a link", async () => {
+    await write(
+      e2e("outer.yaml"),
+      `steps:\n  - tool: e2e-execute\n    args: { name: inner, project_root: ${JSON.stringify(root)} }\n`
+    );
+    await write(legacy("inner.yaml"), echoes("inner ran"));
+
+    const colocated = await runColocated({ name: "outer" });
+    const { result, wire } = await runLinked({ name: "outer" });
+
+    expect(colocated.ok).toBe(true);
+    expect(result.ok).toBe(true);
+    const nested = result.steps[0]!.result as FlowRunResult;
+    expect(lines(nested)).toEqual(["echo pass inner ran"]);
+    expect(((wire.members ?? []) as FileInputMember[]).map((m) => m.path)).toEqual([
+      legacy("inner.yaml"),
+    ]);
+  });
+
+  it("takes the .argent/e2e test over a same-named legacy one over a link", async () => {
+    await write(
+      e2e("outer.yaml"),
+      `steps:\n  - tool: flow-execute\n    args: { name: inner, project_root: ${JSON.stringify(root)} }\n`
+    );
+    await write(e2e("inner.yaml"), echoes("new inner"));
+    await write(legacy("inner.yaml"), echoes("old inner"));
+
+    const { result } = await runLinked({ name: "outer" });
+
+    expect(lines(result.steps[0]!.result as FlowRunResult)).toEqual(["echo pass new inner"]);
+  });
+});
+
+describe("a fragment found in the other directory", () => {
+  it("goes through POST /upload past the inline budget, as any member does", async () => {
+    const big = `steps:\n  - echo: ${"x".repeat(300 * 1024)}\n`;
+    await write(e2e("main.yaml"), "steps:\n  - run: login\n  - echo: main done\n");
+    await write(legacy("login.yaml"), big);
+    const uploads: string[] = [];
+    const client = path.resolve(__dirname, "../../../argent-tools-client/src");
+    const { prepareFileInputs } = (await import(path.join(client, "file-inputs.ts"))) as {
+      prepareFileInputs(specs: unknown, args: unknown, opts: object): Promise<unknown>;
+    };
+    const { collectFlowMembers } = (await import(path.join(client, "flow-files.ts"))) as {
+      collectFlowMembers: unknown;
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      uploads.push(String(url));
+      return new Response(JSON.stringify({ uploadId: `u${uploads.length}` }), { status: 200 });
+    });
+    try {
+      const tool = runTool();
+      const sent = (await prepareFileInputs(
+        tool.fileInputs,
+        { name: "main", project_root: root },
+        {
+          includeContent: true,
+          collectMembers: collectFlowMembers,
+          uploadEndpoint: { url: "http://tool-server.test", token: "" },
+        }
+      )) as Record<string, unknown>;
+      const members = ((sent.flow_file as FileInputWire).members ?? []) as FileInputMember[];
+
+      expect((sent.flow_file as FileInputWire).path).toBe(e2e("main.yaml"));
+      expect(members).toEqual([
+        expect.objectContaining({ role: "flow", path: e2e("login.yaml"), state: "missing" }),
+        expect.objectContaining({ role: "flow", path: legacy("login.yaml"), uploadId: "u1" }),
+      ]);
+      expect(uploads).toEqual(["http://tool-server.test/upload"]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});

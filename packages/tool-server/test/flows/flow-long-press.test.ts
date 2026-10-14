@@ -113,7 +113,7 @@ describe("long-press: parse/serialize", () => {
         steps: [{ kind: "long-press", selector: { text: "Row 3", loose: true }, duration: 15_000 }],
       })
     ).toThrow(
-      /Cannot serialize flow long-press\.duration: 15000ms - above the maximum long-press duration of 10000ms/
+      /Cannot serialize e2e test long-press\.duration: 15000ms - above the maximum long-press duration of 10000ms/
     );
   });
 
@@ -146,7 +146,9 @@ describe("long-press: parse/serialize", () => {
         executionPrerequisite: "",
         steps: [{ kind: "long-press", selector: { text: "Row 3", loose: true }, duration }],
       })
-    ).toThrow("Cannot serialize flow long-press.duration: needs a positive number of milliseconds");
+    ).toThrow(
+      "Cannot serialize e2e test long-press.duration: needs a positive number of milliseconds"
+    );
   });
 
   it("parses the options form with the usual selector sugar", () => {

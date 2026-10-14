@@ -149,7 +149,10 @@ export interface InstallationCliUninstallCompleteProps extends FailureTelemetryP
 
 export interface ToolInvokeProps extends AiTelemetryProps {
   device_provider?: string;
+  /** The tool's current id, also when it was called by a former one. */
   tool: string;
+  /** True when the tool was called by a former id (a registry alias). */
+  alias_used?: boolean;
   tool_invocation_id: string;
   platform?: Platform;
   /**
@@ -164,6 +167,7 @@ export interface ToolInvokeProps extends AiTelemetryProps {
 export interface ToolCompleteProps extends AiTelemetryProps {
   device_provider?: string;
   tool: string;
+  alias_used?: boolean;
   tool_invocation_id: string;
   platform?: Platform;
   device_kind?: TelemetryDeviceKind;
@@ -173,6 +177,7 @@ export interface ToolCompleteProps extends AiTelemetryProps {
 export interface ToolFailProps extends FailureTelemetryProps, AiTelemetryProps {
   device_provider?: string;
   tool: string;
+  alias_used?: boolean;
   tool_invocation_id?: string;
   platform?: Platform;
   device_kind?: TelemetryDeviceKind;

@@ -320,7 +320,7 @@ describe("flow-execute flow_path over HTTP", () => {
       });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(res.body.error).not.toMatch(/was not found on the tool-server host/);
     expect(steps.invokeTool).not.toHaveBeenCalled();
   });
@@ -353,7 +353,7 @@ describe("flow-execute flow_path over HTTP", () => {
       });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(steps.invokeTool).not.toHaveBeenCalled();
   });
 
@@ -371,7 +371,7 @@ describe("flow-execute flow_path over HTTP", () => {
       });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(steps.invokeTool).not.toHaveBeenCalled();
   });
 
@@ -392,7 +392,7 @@ describe("flow-execute flow_path over HTTP", () => {
       });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(res.body.error).not.toMatch(/was not found on the tool-server host/);
     expect(steps.invokeTool).not.toHaveBeenCalled();
   });
@@ -416,7 +416,7 @@ describe("flow-execute flow_path over HTTP", () => {
       });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(res.body.error).not.toMatch(/was not found on the tool-server host/);
     expect(steps.invokeTool).not.toHaveBeenCalled();
   });
@@ -449,7 +449,7 @@ describe("flow-execute flow_path over HTTP", () => {
       .send({ project_root: projectRoot, device: DEVICE });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(steps.invokeTool).not.toHaveBeenCalled();
   });
 
@@ -706,7 +706,7 @@ describe("flow-read-prerequisite flow_path over HTTP", () => {
       });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Pass exactly one flow source: name or flow_path\./);
+    expect(res.body.error).toMatch(/Pass exactly one e2e test source: name or flow_path\./);
     expect(res.body.error).not.toMatch(/was not found on the tool-server host/);
   });
 
@@ -1032,11 +1032,12 @@ describe("flow-execute over a link, from the real argent client", () => {
     await fs.writeFile(path.join(tmpDir, "capture.png"), capture);
     // The real path, so the recording and its siblings have one key each.
     const project = await fs.realpath(projectRoot);
-    const flows = path.join(project, ".argent", "flows");
-    await write(".argent/flows/child.yaml", "steps:\n  - run: frag\n  - snapshot: snap\n");
-    await write(".argent/flows/frag.yaml", "steps:\n  - echo: frag\n");
-    await write(".argent/flows/unrelated.yaml", "steps:\n  - echo: unrelated\n");
-    await write(".argent/flows/__baselines__/child/other__ios-30x60.png", "another snapshot");
+    // A recording is saved in .argent/e2e, and its siblings beside it.
+    const flows = path.join(project, ".argent", "e2e");
+    await write(".argent/e2e/child.yaml", "steps:\n  - run: frag\n  - snapshot: snap\n");
+    await write(".argent/e2e/frag.yaml", "steps:\n  - echo: frag\n");
+    await write(".argent/e2e/unrelated.yaml", "steps:\n  - echo: unrelated\n");
+    await write(".argent/e2e/__baselines__/child/other__ios-30x60.png", "another snapshot");
     await fs.writeFile(path.join(flows, "__baselines__", "child", "snap__ios-30x60.png"), capture);
     let members: Parameters<typeof memberShape>[0][] = [];
     let onSend = async (_body: string): Promise<void> => {};
@@ -1060,9 +1061,9 @@ describe("flow-execute over a link, from the real argent client", () => {
     await addFlow({ flow_path: path.join(flows, "child.yaml") });
 
     expect(members.map(memberShape)).toEqual([
-      ["flow", "flows/rec.yaml", undefined, "string"],
-      ["flow", "flows/child.yaml", undefined, "string"],
-      ["flow", "flows/frag.yaml", undefined, "string"],
+      ["flow", "e2e/rec.yaml", undefined, "string"],
+      ["flow", "e2e/child.yaml", undefined, "string"],
+      ["flow", "e2e/frag.yaml", undefined, "string"],
       ["baseline", "child/snap__ios-30x60.png", undefined, "string"],
     ]);
     expect(parseFlow(await fs.readFile(path.join(flows, "rec.yaml"), "utf8")).steps).toEqual([
@@ -1130,13 +1131,16 @@ describe("flow-execute over a link, from the real argent client", () => {
     process.chdir(projectRoot);
     try {
       for (const [args, error] of [
-        [{ name: "../../../above" }, 'Invalid flow name "../../../above"'],
+        [{ name: "../../../above" }, 'Invalid e2e test name "../../../above"'],
         [
           { flow_path: nested, project_root: `${projectRoot}/e2e/../..` },
           'project_root must not contain ".." segments',
         ],
-        [{ flow_path: ".argent/flows/relative.yaml" }, "flow paths must be absolute"],
-        [{ name: "keep", flow_path: above }, "Pass exactly one flow source: name or flow_path."],
+        [{ flow_path: ".argent/flows/relative.yaml" }, "e2e test paths must be absolute"],
+        [
+          { name: "keep", flow_path: above },
+          "Pass exactly one e2e test source: name or flow_path.",
+        ],
       ] as const) {
         let wire: { content?: string; members?: unknown } | undefined;
         const client = createToolsClient({

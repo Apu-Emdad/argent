@@ -200,6 +200,13 @@ export type ToolDependency = "adb" | "xcrun" | "emulator" | "sim-remote" | "vega
 
 export interface ToolDefinition<TParams = void, TResult = unknown> {
   id: string;
+  /**
+   * Former ids of this tool. Each resolves to this tool in `getTool` and
+   * `invokeTool`, and `GET /tools` lists it hidden from MCP, so callers and
+   * saved steps that use an old id keep working. Registry events and telemetry
+   * name the tool by `id`.
+   */
+  aliases?: string[];
   interaction?: {
     startedMsg?: (context: { params: TParams }) => string;
     completedMsg?: (context: { params: TParams; result: TResult }) => string;
@@ -298,18 +305,22 @@ export type RegistryEvents = {
   serviceError: (serviceId: string, error: Error) => void;
   serviceRegistered: (serviceId: string) => void;
   toolRegistered: (toolId: string) => void;
-  toolInvoked: (toolId: string, toolInvocationId: string, msg: string) => void;
+  // `toolId` is the tool's own id; `calledAs` is set to the alias when the
+  // caller named the tool by one (see `ToolDefinition.aliases`).
+  toolInvoked: (toolId: string, toolInvocationId: string, msg: string, calledAs?: string) => void;
   toolCompleted: (
     toolId: string,
     toolInvocationId: string,
     durationMs: number,
-    msg: string
+    msg: string,
+    calledAs?: string
   ) => void;
   toolFailed: (
     toolId: string,
     toolInvocationId: string,
     error: Error,
     durationMs: number | undefined,
-    msg: string
+    msg: string,
+    calledAs?: string
   ) => void;
 };

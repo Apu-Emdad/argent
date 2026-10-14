@@ -191,6 +191,8 @@ type InvocationMeta = {
 // never stored or forwarded; invalid_params carries schema-declared parameter
 // NAMES only (see deriveInvalidParams), never values or user-typed keys.
 type HttpFailureMeta = {
+  /** The call named the tool by a former id; `toolId` is the current one. */
+  alias_used?: boolean;
   device_provider?: string;
   platform?: TelemetryPlatform;
   device_kind?: TelemetryDeviceKind;
@@ -666,7 +668,7 @@ export function createHttpApp(registry: Registry, options?: HttpAppOptions): Htt
     const tools = snapshot.tools
       .map((id) => registry.getTool(id))
       .filter((def): def is NonNullable<typeof def> => isToolExposed(def))
-      .map((def) => {
+      .flatMap((def) => {
         const entry: {
           name: string;
           description: string;
@@ -677,6 +679,7 @@ export function createHttpApp(registry: Registry, options?: HttpAppOptions): Htt
           searchHint?: string;
           longRunning?: boolean;
           hideFromMcp?: boolean;
+          aliasOf?: string;
         } = {
           name: def.id,
           description: def.description ?? "",
@@ -688,7 +691,15 @@ export function createHttpApp(registry: Registry, options?: HttpAppOptions): Htt
         if (def.searchHint) entry.searchHint = def.searchHint;
         if (def.longRunning) entry.longRunning = true;
         if (def.hideFromMcp) entry.hideFromMcp = true;
-        return entry;
+        // A former id is listed too, so a client that calls by it finds the
+        // tool's file inputs. Hidden from MCP, so agents see one name.
+        const aliases = (def.aliases ?? []).map((alias) => ({
+          ...entry,
+          name: alias,
+          hideFromMcp: true,
+          aliasOf: def.id,
+        }));
+        return [entry, ...aliases];
       });
     res.json({ tools });
   });
@@ -720,9 +731,11 @@ export function createHttpApp(registry: Registry, options?: HttpAppOptions): Htt
         const failedDeviceArg = extractDeviceArg(parsedDataForMeta);
         const provider = failedDeviceArg ? externalProviderLabel(failedDeviceArg) : undefined;
         const attribution = inferDeviceAttribution(failedDeviceArg);
+        const toolId = registry.getTool(name)?.id ?? name;
         options.recordFailure(
-          name,
+          toolId,
           {
+            ...(toolId !== name ? { alias_used: true } : {}),
             ...(provider ? { device_provider: provider } : {}),
             ...attribution,
             ...(extraMeta?.invalid_params?.length

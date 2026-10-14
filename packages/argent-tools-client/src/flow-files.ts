@@ -22,7 +22,12 @@ import {
   TOOL_FILE_EXTENSIONS,
   baselineKeyFor,
   canonicalFlowPath,
+  canonicalToolId,
   classifyOnDiskSpelling,
+  e2eDirFor,
+  e2eDirProject,
+  e2eDirsFor,
+  e2eRunFallbackDirs,
   collectFlowRequests,
   flowMemberKey,
   hasToolFileExtension,
@@ -47,7 +52,10 @@ import {
  */
 const INLINE_MEMBERS_BYTES = 256 * 1024;
 
-const FLOW_FILES_LOG_ENV = "ARGENT_FLOW_FILES_LOG";
+/** `ARGENT_E2E_FILES_LOG=1` turns the `[flow-files]` lines on; `ARGENT_FLOW_FILES_LOG` is its old name. */
+export function filesLogEnabled(): boolean {
+  return (process.env.ARGENT_E2E_FILES_LOG ?? process.env.ARGENT_FLOW_FILES_LOG) === "1";
+}
 
 /** `inner` is `outer` or lies under it; both absolute and normalized. */
 function isWithin(inner: string, outer: string): boolean {
@@ -87,16 +95,15 @@ function namesValidFlow(args: Record<string, unknown>): boolean {
 }
 
 /**
- * `<P>` for a file under `<P>/.argent/flows/`, the innermost such `<P>`. Null
- * for a relative path, where an empty `<P>` is not the filesystem root.
+ * `<P>` for a file under `<P>/.argent/e2e/` or `<P>/.argent/flows/`, the
+ * innermost such `<P>`. Null for a relative path, where an empty `<P>` is not
+ * the filesystem root.
  */
 function savedFlowProject(file: string): string | null {
   if (!path.isAbsolute(file)) return null;
-  const parts = file.split(path.sep);
-  for (let i = parts.length - 3; i >= 0; i--) {
-    if (parts[i] === ".argent" && parts[i + 1] === "flows") {
-      return parts.slice(0, i).join(path.sep) || path.sep;
-    }
+  for (let dir = path.dirname(file); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const project = e2eDirProject(dir);
+    if (project !== null) return project;
   }
   return null;
 }
@@ -139,10 +146,11 @@ async function landing(
 
 /**
  * The directories a flow's closure may come from, as real paths: the project
- * (`project_root`) and its `.argent/flows` (which may be a symlink to a tree
- * elsewhere), the directory of the root flow as spelled and as its real file,
- * and the project of a root flow saved under `<P>/.argent/flows/`, by either
- * path, since the CLI sends its working directory as `project_root`.
+ * (`project_root`) and its `.argent/e2e` and `.argent/flows` (which may be
+ * symlinks to a tree elsewhere), the directory of the root flow as spelled and
+ * as its real file, and the project of a root flow saved under
+ * `<P>/.argent/e2e/` or `<P>/.argent/flows/`, by either path, since the CLI
+ * sends its working directory as `project_root`.
  */
 async function closureRoots(
   rootPath: string,
@@ -151,7 +159,7 @@ async function closureRoots(
 ): Promise<string[]> {
   const candidates: string[] = [];
   if (typeof projectRoot === "string" && path.isAbsolute(projectRoot)) {
-    candidates.push(projectRoot, path.join(projectRoot, ".argent", "flows"));
+    candidates.push(projectRoot, ...e2eDirsFor(projectRoot));
   }
   candidates.push(path.dirname(rootPath), path.dirname(rootCanonical));
   for (const file of [rootPath, rootCanonical]) {
@@ -371,7 +379,7 @@ function nestedRunUpdates(parentUpdates: boolean, args: Record<string, unknown>)
  * Collects the members of one call: each flow by its key, each file argument
  * of a `tool:` step by its path and each baseline once, in the order they are
  * found, inline while the call's budget lasts and through `POST /upload`
- * after it, and logs each under `ARGENT_FLOW_FILES_LOG=1`.
+ * after it, and logs each under `ARGENT_E2E_FILES_LOG=1`.
  */
 function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
   const members: FileInputMember[] = [];
@@ -382,7 +390,7 @@ function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
   // prefixes a compare run reads, and whether a run of the call updates it.
   const baselineDirs = new Map<string, { prefixes: Set<string>; updates: boolean }>();
   const budget = { inline: 0 };
-  const logging = process.env[FLOW_FILES_LOG_ENV] === "1";
+  const logging = filesLogEnabled();
   const log = opts.log ?? ((line: string) => void process.stderr.write(`${line}\n`));
   const emit = (member: FileInputMember, sent: string): void => {
     members.push(member);
@@ -390,15 +398,30 @@ function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
     if (logging) log(printable(`[flow-files] ${member.role} ${subject}: ${sent}`));
   };
 
-  /** The flow that `target` names beside `anchorDir`, sent once ({@link readFlowMember}). */
+  /**
+   * The flow that `target` names beside `anchorDir`, sent once
+   * ({@link readFlowMember}). With `onlyPresent`, a flow with no bytes to
+   * send is neither sent nor kept, and undefined is returned.
+   */
   async function flow(
     anchorDir: string,
     target: string
-  ): Promise<{ member: FileInputMember; text?: string }> {
+  ): Promise<{ member: FileInputMember; text?: string }>;
+  async function flow(
+    anchorDir: string,
+    target: string,
+    onlyPresent: true
+  ): Promise<{ member: FileInputMember; text: string } | undefined>;
+  async function flow(
+    anchorDir: string,
+    target: string,
+    onlyPresent?: true
+  ): Promise<{ member: FileInputMember; text?: string } | undefined> {
     const key = flowMemberKey(anchorDir, target);
     const known = flows.get(key);
-    if (known !== undefined) return known;
+    if (known !== undefined) return onlyPresent && known.text === undefined ? undefined : known;
     const { member, text, sent } = await readFlowMember(anchorDir, target, roots, budget, opts);
+    if (onlyPresent && text === undefined) return undefined;
     const entry = { member, ...(text === undefined ? {} : { text }) };
     flows.set(key, entry);
     emit(member, sent);
@@ -412,7 +435,7 @@ function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
    * flow is not a file argument the runner reads for its tool.
    */
   async function toolFiles(step: { tool: string; args: Record<string, unknown> }): Promise<void> {
-    if (step.tool === "flow-execute") return;
+    if (canonicalToolId(step.tool) === "e2e-execute") return;
     for (const file of toolStepFiles(opts.toolFileInputs?.(step.tool), step.args)) {
       // An input whose superseding param is also set stays unread: the
       // tool's own validation refuses the call.
@@ -425,6 +448,25 @@ function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
     }
   }
 
+  /**
+   * The saved test a nested step names: the first of its `paths` that has
+   * bytes to send, as the tool-server picks among them.
+   */
+  async function savedTest(
+    target: Extract<NestedFlowTarget, { kind: "name" }>
+  ): Promise<{ member: FileInputMember; text?: string }> {
+    for (const candidate of target.paths) {
+      const found = await flow(path.dirname(candidate), path.basename(candidate), true);
+      if (found !== undefined) return found;
+    }
+    // None has bytes: each is sent, so the tool-server says why.
+    let first: { member: FileInputMember; text?: string } | undefined;
+    for (const candidate of target.paths) {
+      first ??= await flow(path.dirname(candidate), path.basename(candidate));
+    }
+    return first!;
+  }
+
   /** The run of the flow that a nested step names, when the flow was sent and the runner nests that deep. */
   async function nestedRun(
     target: Extract<NestedFlowTarget, { kind: "name" }>,
@@ -432,9 +474,27 @@ function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
     updates: boolean,
     platform: string | undefined
   ): Promise<MemberRun | undefined> {
-    const { member, text } = await flow(path.dirname(target.path), `${target.name}.yaml`);
+    const { member, text } = await savedTest(target);
     if (text === undefined || hop >= MAX_RUN_DEPTH) return undefined;
     return { canonical: member.canonical!, text, flowName: target.name, hop, updates, platform };
+  }
+
+  /**
+   * A `run:` target beside the file that names it, or, when nothing is there,
+   * in the first other e2e test dir of the project that has it
+   * ({@link e2eRunFallbackDirs}), as the runner resolves it.
+   */
+  async function runTarget(
+    anchorDir: string,
+    target: string
+  ): Promise<{ member: FileInputMember; text?: string }> {
+    const found = await flow(anchorDir, target);
+    if (found.member.spelling?.state !== "absent") return found;
+    for (const dir of e2eRunFallbackDirs(anchorDir, target)) {
+      const other = await flow(dir, target, true);
+      if (other !== undefined) return other;
+    }
+    return found;
   }
 
   /**
@@ -473,7 +533,7 @@ function memberCollector(roots: string[], opts: PrepareFileInputsOptions) {
           const key = flowMemberKey(anchorDir, target);
           if (visited.has(key)) continue;
           visited.add(key);
-          const { member, text } = await flow(anchorDir, target);
+          const { member, text } = await runTarget(anchorDir, target);
           if (text !== undefined && file.hop + 1 < MAX_RUN_DEPTH) {
             files.push({ canonical: member.canonical!, text, hop: file.hop + 1 });
           }
@@ -621,7 +681,7 @@ function recordedStep(
  * arguments of the step, and for a nested `flow-execute`, the flow it names
  * with the files of its run ({@link memberCollector}) and the baselines of
  * that run. The recorder also resolves the recording file
- * `<project_root>/.argent/flows/<name>.yaml` for its real directory, and the
+ * `<project_root>/.argent/e2e/<name>.yaml` for its real directory, and the
  * sibling `<name>.yaml` there, which a nested flow is recorded as a `run:`
  * step of only when it is the flow that ran. A `flow_path` the recorder
  * rewrites to that sibling's name (it is a file in the recording's
@@ -645,13 +705,13 @@ export async function collectStepMembers(
   ) {
     return [];
   }
-  const recording = path.join(projectRoot, ".argent", "flows", `${name}.yaml`);
+  const recording = path.join(e2eDirFor(projectRoot), `${name}.yaml`);
   const collector = memberCollector(
     await closureRoots(recording, (await landing(recording)).canonical, projectRoot),
     opts
   );
   await collector.toolFiles(step);
-  if (step.tool === "flow-execute") {
+  if (canonicalToolId(step.tool) === "e2e-execute") {
     const self = await collector.flow(path.dirname(recording), path.basename(recording));
     let runArgs = step.args;
     const named = nestedFlowTarget(runArgs);
