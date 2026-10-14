@@ -72,11 +72,11 @@ type Route = (res: http.ServerResponse) => void | Promise<void>;
  * A stub tool-server. With `token`, a request without that bearer token gets
  * 401. `routes` answers extra paths and `listing` replaces the tool list.
  */
-async function startStub(
-  token?: string,
-  routes: Record<string, Route> = {},
-  listing: unknown = LISTING
-): Promise<Stub> {
+async function startStub({
+  token,
+  routes = {},
+  listing = LISTING,
+}: { token?: string; routes?: Record<string, Route>; listing?: unknown } = {}): Promise<Stub> {
   const requests: Recorded[] = [];
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -255,23 +255,22 @@ describe("startMcpServer screen capture after an interaction", () => {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(payload));
   };
-  const slow = (name: string, answer: (res: http.ServerResponse) => void): Route => {
-    return async (res) => {
+  const slow =
+    (name: string, answer: (res: http.ServerResponse) => void): Route =>
+    async (res) => {
       events.push(`${name} start`);
       await new Promise((r) => setTimeout(r, 100));
       events.push(`${name} end`);
       answer(res);
     };
-  };
 
   beforeEach(async () => {
     events = [];
     settled = true;
     idleStatus = 200;
     screenshotStatus = 200;
-    stub = await startStub(
-      undefined,
-      {
+    stub = await startStub({
+      routes: {
         "/tools/gesture-tap": (res) => send(res, 200, { data: { tapped: true } }),
         "/tools/await-screen-idle": (res) =>
           idleStatus === 200
@@ -290,8 +289,8 @@ describe("startMcpServer screen capture after an interaction", () => {
           res.end(PNG);
         },
       },
-      CAPTURE_LISTING
-    );
+      listing: CAPTURE_LISTING,
+    });
     vi.stubEnv("ARGENT_TOOLS_URL", stub.url);
     vi.stubEnv("ARGENT_MCP_LOG", join(TEST_HOME, "mcp-calls.log"));
     client = await connect({
@@ -385,7 +384,7 @@ describe("startMcpServer with a local tool-server", () => {
   let client: Client;
 
   async function startRecordedStub(token: string): Promise<Stub> {
-    const stub = await startStub(token);
+    const stub = await startStub({ token });
     stubs.push(stub);
     await toolsClient.writeToolsServerState({
       port: stub.port,
