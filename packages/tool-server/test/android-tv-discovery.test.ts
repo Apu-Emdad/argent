@@ -403,3 +403,33 @@ describe("listAndroidDevices on a device that stops answering", () => {
     expect((await listing)[0]?.runtimeKind).toBe("mobile");
   });
 });
+
+describe("listAndroidDevices runtime-kind cache", () => {
+  it("re-lists a known physical phone from the cache without probing it again", async () => {
+    mockEmulator("R58M12345", (shell) => {
+      if (shell.includes("avd_name")) return out("");
+      if (shell === "pm list features") return out(PHONE_FEATURES);
+      return out("1");
+    });
+    expect((await listAndroidDevices({ runtimeKind: true }))[0]?.runtimeKind).toBe("mobile");
+
+    execFileMock.mockClear();
+    expect((await listAndroidDevices({ runtimeKind: true }))[0]?.runtimeKind).toBe("mobile");
+    expect(shellCalls("pm list features")).toHaveLength(0);
+  });
+
+  it("does not cache an indeterminate verdict, so a booting TV is found on the next listing", async () => {
+    const serial = "emulator-5576";
+    let booted = false;
+    mockEmulator(serial, (shell) => {
+      if (shell.includes("avd_name")) return out("TV_API_34");
+      if (shell === "pm list features") return out(booted ? LEANBACK_FEATURES : "");
+      return out("");
+    });
+    expect((await listAndroidDevices({ runtimeKind: true }))[0]?.runtimeKind).toBeUndefined();
+
+    booted = true;
+    expect((await listAndroidDevices({ runtimeKind: true }))[0]?.runtimeKind).toBe("tv");
+    expect(await getAndroidRuntimeKind(serial)).toBe("tv");
+  });
+});

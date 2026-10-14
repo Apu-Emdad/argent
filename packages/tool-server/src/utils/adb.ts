@@ -449,8 +449,9 @@ export function __resetAndroidRuntimeKindCacheForTesting(): void {
 /**
  * Probe (or return the cached) runtime kind for a serial, keyed by its current
  * avdName so a reclaimed emulator slot can't inherit the prior AVD's verdict.
- * Indeterminate probes are not cached. Shared by the `listAndroidDevices`
- * enrichment and `getAndroidRuntimeKind` so both honor the same cache.
+ * Indeterminate probes are not cached. Used by `getAndroidRuntimeKind`;
+ * `listAndroidDevices` goes through {@linkcode resolveRuntimeKindAlongside},
+ * which reads and writes the same cache.
  */
 async function resolveRuntimeKindCached(
   serial: string,
@@ -465,9 +466,13 @@ async function resolveRuntimeKindCached(
 }
 
 /**
- * {@linkcode resolveRuntimeKindCached} without waiting for the avd read first:
- * on a cache miss the feature probe starts at once, so a wedged device costs
- * one ENRICH_TIMEOUT_MS window for the whole enrichment.
+ * Runtime kind for `listAndroidDevices`, from the same cache as
+ * {@linkcode resolveRuntimeKindCached}, with two differences:
+ * - on a cache miss the feature probe starts without waiting for the avd read,
+ *   so a wedged device costs one ENRICH_TIMEOUT_MS window for the whole
+ *   enrichment;
+ * - a cached emulator whose avd read comes back empty gets undefined without a
+ *   probe, where {@linkcode resolveRuntimeKindCached} re-probes it.
  */
 async function resolveRuntimeKindAlongside(
   serial: string,
