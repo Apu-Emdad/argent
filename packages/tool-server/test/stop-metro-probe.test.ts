@@ -28,6 +28,8 @@ describe("stop-metro port probe", () => {
 
   beforeEach(() => {
     execFileSyncMock.mockReset();
+    // The lsof path; the win32 and linux tests switch platform themselves.
+    setPlatform("darwin");
     kill = vi.spyOn(process, "kill").mockReturnValue(true);
   });
   afterEach(() => {
