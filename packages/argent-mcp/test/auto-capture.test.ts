@@ -6,6 +6,7 @@ import { setFlag } from "@argent/configuration-core";
 import {
   AUTO_SCREENSHOT_TOOLS,
   AUTO_SCREENSHOT_DELAY_MS_BY_TOOL,
+  AUTO_DESCRIBE_HEADER,
   compactAutoDescribe,
   autoScreenshotEnabled,
   AUTO_DESCRIBE_TOOLS,
@@ -425,5 +426,15 @@ describe("compactAutoDescribe on formatDescribeTree output", () => {
   it.each(["vega-automation", "xcuitest-runner"])("leaves %s unchanged", (source) => {
     const full = formatDescribeTree(root, { source });
     expect(compactAutoDescribe(full)).toBe(full);
+  });
+
+  it("matches what the argent rule tells agents the attached tree looks like", () => {
+    const rule = fs.readFileSync(new URL("../../skills/rules/argent.md", import.meta.url), "utf8");
+    const legend = compactAutoDescribe(formatDescribeTree(root, { source: "ax-service" })).split(
+      "\n"
+    )[0]!;
+    expect(rule).toContain(`\`${AUTO_DESCRIBE_HEADER}\``);
+    expect(rule).toContain(`\`${legend}\``);
+    expect(rule).not.toContain("the same format `describe` prints");
   });
 });
