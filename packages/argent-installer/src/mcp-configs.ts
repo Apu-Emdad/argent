@@ -1689,8 +1689,7 @@ function formatCopyDestination(
 }
 
 function formatManagedPathLabel(targetPath: string, root: string): string {
-  // Paths built from process.cwd() or realpath are physical, so home matches in
-  // either spelling when $HOME runs through a symlink.
+  // targetPath may be physical (from process.cwd() or realpath) while $HOME is a symlink.
   for (const home of [homedir(), realpathOrSelf(homedir())]) {
     if (targetPath === home || targetPath.startsWith(`${home}${path.sep}`)) {
       return `~${targetPath.slice(home.length)}`;

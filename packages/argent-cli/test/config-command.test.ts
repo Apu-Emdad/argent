@@ -181,8 +181,6 @@ describe("argent config — set/get across scopes", () => {
     expect(globalCfg).toEqual({ lens: { agent: "codex" } });
   });
 
-  // The marker walk climbs the cwd's physical path, while HOME names the same
-  // directory through a link.
   describe.skipIf(process.platform === "win32")("with HOME reached through a symlink", () => {
     it.each([".argent", ".git"])(
       "warns when project scope resolves to the home directory (%s marker)",

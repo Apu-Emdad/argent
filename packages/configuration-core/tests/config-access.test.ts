@@ -343,15 +343,13 @@ describe("ios.additionalDeviceSets — additive union across scopes", () => {
     ]);
   });
 
-  // A home-rooted project reads the global file as its own. The marker walk
-  // climbs the cwd's physical path, while HOME names the same directory through
-  // a link.
   it.skipIf(process.platform === "win32")(
     "resolves a home-rooted project's relative entries once when HOME is a symlink",
     () => {
       const linkedHome = path.join(projectDir, "home");
       fs.symlinkSync(homeDir, linkedHome);
       setConfigValue("ios.additionalDeviceSets", ["sets"], "global", { homeDir: linkedHome });
+      // Physical, like process.cwd().
       const cwd = path.join(homeDir, "Downloads");
       fs.mkdirSync(cwd);
       expect(getAdditionalIosDeviceSets({ homeDir: linkedHome, cwd })).toEqual([

@@ -1762,8 +1762,7 @@ describe("copyRulesAndAgents", () => {
       expect(agentsLine).toContain(`.claude/agents -> ${path.join(".agents", "agents")}`);
     });
 
-    // homedir() is $HOME verbatim, while the project root (from process.cwd())
-    // and a written-through path (from realpath) are physical.
+    // homedir() is the link; project roots and realpath'd targets are physical.
     describe("under a home reached through a symlink", () => {
       let realHome: string;
 

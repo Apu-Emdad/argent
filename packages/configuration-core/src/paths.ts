@@ -31,9 +31,8 @@ export function resolveHomeDir(options: ConfigPathOptions = {}): string {
 }
 
 /**
- * Whether `dir` is the home directory, compared by real path: project roots are
- * walked up from `process.cwd()`, which POSIX reports physically, while HOME
- * may run through a symlink (Fedora Atomic's /home -> /var/home).
+ * Whether `dir` is the home directory, by real path: project roots walked up from
+ * `process.cwd()` are physical, while HOME may run through a symlink.
  */
 export function isHomeDir(dir: string, options: ConfigPathOptions = {}): boolean {
   return realDir(dir) === realDir(resolveHomeDir(options));

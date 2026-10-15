@@ -197,14 +197,13 @@ describe("degradation", () => {
     expect(lookupSecret("APP_PASSWORD", sources)).toBe("shared");
   });
 
-  // The marker walk climbs the cwd's physical path, while HOME names the same
-  // directory through a link.
   it.skipIf(process.platform === "win32")(
     "lists a file shared by both scopes once when HOME is a symlink",
     () => {
       const linkedHome = path.join(projectDir, "home");
       fs.symlinkSync(homeDir, linkedHome);
       write(globalSecrets(), "APP_PASSWORD=shared\n");
+      // Physical, like process.cwd().
       const cwd = path.join(homeDir, "Downloads");
       fs.mkdirSync(cwd);
       const sources = secretSources({ cwd, homeDir: linkedHome, env: NO_ENV });

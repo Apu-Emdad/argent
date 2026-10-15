@@ -214,14 +214,13 @@ describe("consent", () => {
       }
     });
 
-    // A project rooted at home reads the global document as its own. The marker
-    // walk climbs the cwd's physical path, while HOME may name it through a link.
     function expectHomeRootedOptOutCountedOnce(home: string): void {
       const restore = restoreEnv();
       try {
         process.env.HOME = home;
         _resetConsentCacheForTest();
         writeConsentFlag(false, "global");
+        // Physical, like process.cwd().
         const cwd = path.join(fs.realpathSync(home), "Downloads");
         fs.mkdirSync(cwd);
         const state = getConsentState(emptyEnv(), cwd);

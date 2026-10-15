@@ -440,8 +440,7 @@ describe("resolveProjectRoot", () => {
     expect(resolveProjectRoot(home, home)).toBe(home);
   });
 
-  // process.cwd() is the physical path, so the walk climbs the real directories
-  // while HOME can name them through a link.
+  // process.cwd() is physical; HOME may name it through a link.
   describe.skipIf(process.platform === "win32")("home reached through a symlink", () => {
     it.each([
       ["HOME is itself a symlink", "realhome", "realhome", "home"],
