@@ -35,8 +35,7 @@ const capability: ToolCapability = {
 
 // simctl answers the same for an app that is not running and one that is not installed.
 const SIMCTL_NOTHING_TO_TERMINATE = /found nothing to terminate/i;
-// `vega device terminate-app` exits 3 with this for an app that is not installed; a
-// stopped one exits 0.
+// The vega CLI's error for an app that is not installed.
 const VEGA_NOT_INSTALLED = /App could not be determined/i;
 
 async function tolerateNothingToTerminate(

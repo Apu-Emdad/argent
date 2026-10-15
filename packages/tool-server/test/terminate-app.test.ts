@@ -51,11 +51,11 @@ const NOTHING_TO_TERMINATE =
   "found nothing to terminate\nUnderlying error (domain=NSPOSIXErrorDomain, code=3):\n" +
   '\tThe request to terminate "com.example.app" failed. found nothing to terminate';
 
-// Real `vega device terminate-app` stderr (exit 3) for an app that is not installed.
+// Real vega CLI stderr for an app that is not installed.
 const VEGA_NOT_INSTALLED =
   "Vega operation FAILED due to an irrecoverable error: Failed: App could not be determined\n" +
   "Additional logs can be found at /home/user/vega/sdk/vega-sdk/main/0.23.8358/logs";
-// Real stderr (exit 2) when the device is not reachable.
+// Real stderr when the device is not reachable.
 const VEGA_DEVICE_NOT_FOUND =
   "Vega operation FAILED due to an irrecoverable error: Device not found: Cannot find an " +
   "instance of Vega Virtual Device, launch the virtual device and try again.\n" +
