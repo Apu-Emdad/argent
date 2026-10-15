@@ -3,7 +3,6 @@
 // surface it here. Keys with a `manageCommand` (e.g. telemetry) stay read-only
 // and point the user at that command.
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 import pc from "picocolors";
 import { parseCommandArgs, UsageError, type OptionSpecs } from "./command-args.js";
@@ -14,6 +13,7 @@ import {
   getConfigDefinition,
   getConfigValueByKey,
   getConfigValueAtScope,
+  isHomeDir,
   setConfigValue,
   unsetConfigValue,
   listConfig,
@@ -227,16 +227,6 @@ function scopeLabel(scope: FlagScope): string {
   return `project: ${path.dirname(configDir("project"))}`;
 }
 
-// The project root is walked up from the cwd, which POSIX reports as a physical
-// path, while HOME may run through a symlink (/home -> /var/home).
-function realDir(dir: string): string {
-  try {
-    return fs.realpathSync(dir);
-  } catch {
-    return path.resolve(dir);
-  }
-}
-
 /**
  * Warns when "project" resolves somewhere surprising: to the home directory
  * (`~/.argent` is itself a project marker, and there the project file IS the
@@ -247,7 +237,7 @@ function realDir(dir: string): string {
 function degenerateProjectScopeWarning(scope: FlagScope): string | null {
   if (scope !== "project") return null;
   const projDir = configDir("project");
-  if (realDir(path.dirname(projDir)) === realDir(path.dirname(configDir("global")))) {
+  if (isHomeDir(path.dirname(projDir))) {
     return (
       `WARNING: no project found between ${process.cwd()} and your home directory — ` +
       `"project" scope resolved to the home directory, so this writes the GLOBAL ` +

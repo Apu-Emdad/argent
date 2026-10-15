@@ -214,6 +214,42 @@ describe("consent", () => {
       }
     });
 
+    // A project rooted at home reads the global document as its own. The marker
+    // walk climbs the cwd's physical path, while HOME may name it through a link.
+    function expectHomeRootedOptOutCountedOnce(home: string): void {
+      const restore = restoreEnv();
+      try {
+        process.env.HOME = home;
+        _resetConsentCacheForTest();
+        writeConsentFlag(false, "global");
+        const cwd = path.join(fs.realpathSync(home), "Downloads");
+        fs.mkdirSync(cwd);
+        const state = getConsentState(emptyEnv(), cwd);
+        expect(state.enabled).toBe(false);
+        expect(state.source.detail).toBe("config.json (global)");
+      } finally {
+        restore();
+      }
+    }
+
+    it("a project rooted at home counts the shared document once", () => {
+      expectHomeRootedOptOutCountedOnce(fs.realpathSync(tmp()));
+    });
+
+    it.skipIf(process.platform === "win32")(
+      "a project rooted at a symlinked home counts the shared document once",
+      () => {
+        const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), "argent-consent-link-"));
+        try {
+          const linkedHome = path.join(linkDir, "home");
+          fs.symlinkSync(fs.realpathSync(tmp()), linkedHome);
+          expectHomeRootedOptOutCountedOnce(linkedHome);
+        } finally {
+          fs.rmSync(linkDir, { recursive: true, force: true });
+        }
+      }
+    );
+
     it("true in both scopes is enabled from config, not the default", () => {
       const restore = restoreEnv();
       const root = makeProject();
